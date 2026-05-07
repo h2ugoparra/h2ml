@@ -25,6 +25,9 @@ uv run tox
 # Lint
 uv run ruff check h2ml/
 
+# Format
+uv run ruff format h2ml/
+
 # Docs — preview locally
 uv run mkdocs serve
 
