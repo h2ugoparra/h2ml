@@ -45,7 +45,9 @@ import numpy as np
 import pytest
 
 from h2ml.features.feature_store import PipelineData
-from h2ml.preprocessing.transform_stores import build_transform_stores as build_transformed_stores
+from h2ml.preprocessing.transform_stores import (
+    build_transform_stores as build_transformed_stores,
+)
 from h2ml.preprocessing.transforms import Y_TRANSFORMS, log_transform, sqrt_transform
 
 
@@ -65,7 +67,7 @@ def clean_y() -> np.ndarray:
 @pytest.fixture
 def outlier_y() -> np.ndarray:
     """Has clear upper outliers — winsorize-based transforms will run."""
-    rng  = np.random.default_rng(42)
+    rng = np.random.default_rng(42)
     base = rng.uniform(1, 10, size=95)
     return np.concatenate([base, np.array([500.0, 1000.0, 800.0, 750.0, 900.0])])
 
@@ -84,8 +86,8 @@ def X_outlier() -> np.ndarray:
 # Return type and structure
 # ---------------------------------------------------------------------------
 
-class TestReturnTypeAndStructure:
 
+class TestReturnTypeAndStructure:
     def test_returns_dict(self, X, clean_y):
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES)
         assert isinstance(result, dict)
@@ -109,8 +111,8 @@ class TestReturnTypeAndStructure:
 # Feature handling
 # ---------------------------------------------------------------------------
 
-class TestFeatureHandling:
 
+class TestFeatureHandling:
     def test_x_shared_across_stores(self, X, clean_y):
         """All stores should reference the same X array."""
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES)
@@ -137,8 +139,8 @@ class TestFeatureHandling:
 # y transformations — with clean data
 # ---------------------------------------------------------------------------
 
-class TestYTransformationsClean:
 
+class TestYTransformationsClean:
     def test_count_y_equals_original(self, X, clean_y):
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES)
         assert "count" in result
@@ -162,16 +164,16 @@ class TestYTransformationsClean:
         """These three transforms never return None."""
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES)
         assert "count" in result
-        assert "log"   in result
-        assert "sqrt"  in result
+        assert "log" in result
+        assert "sqrt" in result
 
 
 # ---------------------------------------------------------------------------
 # y transformations — with outlier data
 # ---------------------------------------------------------------------------
 
-class TestYTransformationsOutlier:
 
+class TestYTransformationsOutlier:
     def test_wincount_present_when_outliers(self, X_outlier, outlier_y):
         result = build_transformed_stores(X_outlier, outlier_y, FEATURE_NAMES)
         assert "wincount" in result
@@ -189,9 +191,9 @@ class TestYTransformationsOutlier:
         assert result["wincount"].y.max() == pytest.approx(upper_limit, rel=1e-6)
 
     def test_winlog_present_when_outliers_survive_log(self, X_outlier, outlier_y):
-        log_y  = log_transform(outlier_y)
+        log_y = log_transform(outlier_y)
         Q1, Q3 = np.percentile(log_y, [25, 75])
-        upper  = Q3 + 1.5 * (Q3 - Q1)
+        upper = Q3 + 1.5 * (Q3 - Q1)
         has_log_outliers = (log_y > upper).any()
 
         result = build_transformed_stores(X_outlier, outlier_y, FEATURE_NAMES)
@@ -204,7 +206,7 @@ class TestYTransformationsOutlier:
     def test_winsqrt_present_when_outliers_survive_sqrt(self, X_outlier, outlier_y):
         sqrt_y = sqrt_transform(outlier_y)
         Q1, Q3 = np.percentile(sqrt_y, [25, 75])
-        upper  = Q3 + 1.5 * (Q3 - Q1)
+        upper = Q3 + 1.5 * (Q3 - Q1)
         has_sqrt_outliers = (sqrt_y > upper).any()
 
         result = build_transformed_stores(X_outlier, outlier_y, FEATURE_NAMES)
@@ -219,8 +221,8 @@ class TestYTransformationsOutlier:
 # None filtering
 # ---------------------------------------------------------------------------
 
-class TestNoneFiltering:
 
+class TestNoneFiltering:
     def test_none_transforms_excluded(self, X, clean_y):
         """Winsorize-based transforms return None for clean data — excluded."""
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES)
@@ -230,20 +232,20 @@ class TestNoneFiltering:
     def test_result_only_contains_valid_stores(self, X, clean_y):
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES)
         for key, store in result.items():
-            assert isinstance(store, PipelineData), \
+            assert isinstance(store, PipelineData), (
                 f"Store for '{key}' is not a PipelineData"
+            )
 
     def test_empty_result_when_all_skipped(self):
         """
         Edge case: if all requested transforms return None,
         result should be an empty dict, not raise an error.
         """
-        y = np.ones(50) * 5.0   # uniform — winsorize always returns None
+        y = np.ones(50) * 5.0  # uniform — winsorize always returns None
         X = np.ones((50, 3))
         # Only request winsorize-based transforms
         result = build_transformed_stores(
-            X, y, ["f1", "f2", "f3"],
-            transforms=["wincount", "winlog", "winsqrt"]
+            X, y, ["f1", "f2", "f3"], transforms=["wincount", "winlog", "winsqrt"]
         )
         assert result == {}
 
@@ -252,8 +254,8 @@ class TestNoneFiltering:
 # transforms parameter
 # ---------------------------------------------------------------------------
 
-class TestTransformsParameter:
 
+class TestTransformsParameter:
     def test_subset_of_transforms(self, X, clean_y):
         result = build_transformed_stores(
             X, clean_y, FEATURE_NAMES, transforms=["count", "log"]
@@ -270,8 +272,8 @@ class TestTransformsParameter:
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES, transforms=None)
         # All non-None transforms should be present
         assert "count" in result
-        assert "log"   in result
-        assert "sqrt"  in result
+        assert "log" in result
+        assert "sqrt" in result
 
     def test_unknown_transform_raises_key_error(self, X, clean_y):
         with pytest.raises(KeyError, match="unknown_transform"):
@@ -288,14 +290,15 @@ class TestTransformsParameter:
 # PipelineData integrity
 # ---------------------------------------------------------------------------
 
-class TestPipelineDataIntegrity:
 
+class TestPipelineDataIntegrity:
     def test_each_store_passes_shape_validation(self, X, clean_y):
         """PipelineData.__post_init__ validates shape — should not raise."""
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES)
         for name, store in result.items():
-            assert store.X.shape[1] == len(store.feature_names), \
+            assert store.X.shape[1] == len(store.feature_names), (
                 f"Shape mismatch in store '{name}'"
+            )
 
     def test_y_length_matches_n_samples(self, X, clean_y):
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES)
@@ -312,5 +315,6 @@ class TestPipelineDataIntegrity:
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES)
         for name, store in result.items():
             df = store.to_frame()
-            assert list(df.columns) == FEATURE_NAMES, \
+            assert list(df.columns) == FEATURE_NAMES, (
                 f"Column mismatch in store '{name}'"
+            )

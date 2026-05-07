@@ -11,6 +11,7 @@ SPCVSplitter — two-stage method:
   Stage 2: Cluster Ensembles (CE) with HBGF consensus assigns blocks to
            folds by balancing location, covariates, and target variable.
 """
+
 from __future__ import annotations
 
 import math
@@ -26,8 +27,7 @@ def _warn_if_degrees(coords: np.ndarray, metric: str) -> None:
         return
     lat, lon = coords[:, 0], coords[:, 1]
     looks_like_degrees = (
-        -90  <= lat.min() and lat.max() <= 90 and
-        -180 <= lon.min() and lon.max() <= 180
+        -90 <= lat.min() and lat.max() <= 90 and -180 <= lon.min() and lon.max() <= 180
     )
     span = max(lat.max() - lat.min(), lon.max() - lon.min())
     if looks_like_degrees and span > 5:
@@ -66,11 +66,11 @@ class SpatialBlockSplitter:
 
     def __init__(
         self,
-        coords:            np.ndarray,
-        n_splits:          int = 5,
+        coords: np.ndarray,
+        n_splits: int = 5,
         n_blocks_per_fold: int = 5,
-        random_state:      int = 42,
-        metric:            str = "euclidean",
+        random_state: int = 42,
+        metric: str = "euclidean",
     ) -> None:
         coords = np.asarray(coords)
         if coords.ndim != 2 or coords.shape[1] != 2:
@@ -85,12 +85,12 @@ class SpatialBlockSplitter:
                 "Reduce n_splits or n_blocks_per_fold."
             )
         _warn_if_degrees(coords, metric)
-        self.coords            = coords
-        self.n_splits          = n_splits
+        self.coords = coords
+        self.n_splits = n_splits
         self.n_blocks_per_fold = n_blocks_per_fold
-        self.random_state      = random_state
-        self.metric            = metric
-        self._fold_of_sample   = self._assign_blocks()
+        self.random_state = random_state
+        self.metric = metric
+        self._fold_of_sample = self._assign_blocks()
 
     # ------------------------------------------------------------------
     # Sklearn splitter interface
@@ -99,9 +99,7 @@ class SpatialBlockSplitter:
     def get_n_splits(self, X=None, y=None, groups=None) -> int:
         return self.n_splits
 
-    def split(
-        self, X, y=None, groups=None
-    ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+    def split(self, X, y=None, groups=None) -> Iterator[tuple[np.ndarray, np.ndarray]]:
         """Yield (train_idx, test_idx) for each of n_splits folds."""
         n_samples = len(X)
         if n_samples != len(self.coords):
@@ -110,7 +108,7 @@ class SpatialBlockSplitter:
             )
         all_idx = np.arange(n_samples)
         for k in range(self.n_splits):
-            test_idx  = all_idx[self._fold_of_sample == k]
+            test_idx = all_idx[self._fold_of_sample == k]
             train_idx = all_idx[self._fold_of_sample != k]
             if test_idx.size == 0:
                 logger.warning(
@@ -128,11 +126,13 @@ class SpatialBlockSplitter:
     ) -> "SpatialBlockSplitter":
         """Return a new splitter with n_splits folds, reusing the same coords and metric."""
         return SpatialBlockSplitter(
-            coords            = self.coords,
-            n_splits          = n_splits,
-            n_blocks_per_fold = self.n_blocks_per_fold,
-            random_state      = random_state if random_state is not None else self.random_state,
-            metric            = self.metric,
+            coords=self.coords,
+            n_splits=n_splits,
+            n_blocks_per_fold=self.n_blocks_per_fold,
+            random_state=random_state
+            if random_state is not None
+            else self.random_state,
+            metric=self.metric,
         )
 
     def _assign_blocks(self) -> np.ndarray:
@@ -233,21 +233,21 @@ class SPCVSplitter:
 
     def __init__(
         self,
-        coords:           np.ndarray,
-        X:                np.ndarray,
-        y:                np.ndarray,
-        n_splits:         int             = 5,
-        threshold:        Optional[float] = None,
-        linkage:          str             = "ward",
-        random_state:     int             = 42,
-        metric:           str             = "euclidean",
-        pca_components:   float           = 0.95,
-        exact_max_samples: int            = 5_000,
-        knn_neighbors:    int             = 15,
+        coords: np.ndarray,
+        X: np.ndarray,
+        y: np.ndarray,
+        n_splits: int = 5,
+        threshold: Optional[float] = None,
+        linkage: str = "ward",
+        random_state: int = 42,
+        metric: str = "euclidean",
+        pca_components: float = 0.95,
+        exact_max_samples: int = 5_000,
+        knn_neighbors: int = 15,
     ) -> None:
         coords = np.asarray(coords, dtype=float)
-        X      = np.asarray(X,      dtype=float)
-        y      = np.asarray(y,      dtype=float)
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
 
         if coords.ndim != 2 or coords.shape[1] != 2:
             raise ValueError(f"coords must be (n_samples, 2), got {coords.shape}.")
@@ -266,20 +266,20 @@ class SPCVSplitter:
             )
 
         _warn_if_degrees(coords, metric)
-        self.coords             = coords
-        self.X                  = X
-        self.y                  = y
-        self.n_splits           = n_splits
-        self.threshold          = threshold
-        self.linkage            = linkage
-        self.random_state       = random_state
-        self.metric             = metric
-        self.pca_components     = pca_components
-        self.exact_max_samples  = exact_max_samples
-        self.knn_neighbors      = knn_neighbors
+        self.coords = coords
+        self.X = X
+        self.y = y
+        self.n_splits = n_splits
+        self.threshold = threshold
+        self.linkage = linkage
+        self.random_state = random_state
+        self.metric = metric
+        self.pca_components = pca_components
+        self.exact_max_samples = exact_max_samples
+        self.knn_neighbors = knn_neighbors
 
-        block_labels          = self._stage1_blocks()
-        self._fold_of_sample  = self._stage2_folds(block_labels)
+        block_labels = self._stage1_blocks()
+        self._fold_of_sample = self._stage2_folds(block_labels)
 
     # ------------------------------------------------------------------
     # Sklearn splitter interface
@@ -288,9 +288,7 @@ class SPCVSplitter:
     def get_n_splits(self, X=None, y=None, groups=None) -> int:
         return self.n_splits
 
-    def split(
-        self, X, y=None, groups=None
-    ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+    def split(self, X, y=None, groups=None) -> Iterator[tuple[np.ndarray, np.ndarray]]:
         """Yield (train_idx, test_idx) for each of n_splits folds."""
         n_samples = len(X)
         if n_samples != len(self.coords):
@@ -299,7 +297,7 @@ class SPCVSplitter:
             )
         all_idx = np.arange(n_samples)
         for k in range(self.n_splits):
-            test_idx  = all_idx[self._fold_of_sample == k]
+            test_idx = all_idx[self._fold_of_sample == k]
             train_idx = all_idx[self._fold_of_sample != k]
             if test_idx.size == 0:
                 logger.warning(
@@ -319,19 +317,21 @@ class SPCVSplitter:
         so each HPO repeat gets different fold boundaries without repeating AHC.
         """
         clone = object.__new__(SPCVSplitter)
-        clone.coords            = self.coords
-        clone.X                 = self.X
-        clone.y                 = self.y
-        clone.n_splits          = n_splits
-        clone.threshold         = self.threshold
-        clone.linkage           = self.linkage
-        clone.random_state      = random_state if random_state is not None else self.random_state
-        clone.metric            = self.metric
-        clone.pca_components    = self.pca_components
+        clone.coords = self.coords
+        clone.X = self.X
+        clone.y = self.y
+        clone.n_splits = n_splits
+        clone.threshold = self.threshold
+        clone.linkage = self.linkage
+        clone.random_state = (
+            random_state if random_state is not None else self.random_state
+        )
+        clone.metric = self.metric
+        clone.pca_components = self.pca_components
         clone.exact_max_samples = self.exact_max_samples
-        clone.knn_neighbors     = self.knn_neighbors
-        clone.block_id_         = self.block_id_
-        clone._fold_of_sample   = clone._stage2_folds(self.block_id_)
+        clone.knn_neighbors = self.knn_neighbors
+        clone.block_id_ = self.block_id_
+        clone._fold_of_sample = clone._stage2_folds(self.block_id_)
         return clone
 
     # ------------------------------------------------------------------
@@ -363,7 +363,7 @@ class SPCVSplitter:
             labels = self._ahc_approximate()
 
         _, compact = np.unique(labels, return_inverse=True)
-        n_blocks   = int(compact.max()) + 1
+        n_blocks = int(compact.max()) + 1
 
         if n_blocks < self.n_splits:
             raise ValueError(
@@ -387,11 +387,13 @@ class SPCVSplitter:
         if self.metric == "haversine":
             from sklearn.metrics import pairwise_distances
             from scipy.spatial.distance import squareform
+
             coords_rad = np.deg2rad(self.coords)
-            D          = pairwise_distances(coords_rad, metric="haversine")
-            distances  = squareform(D, checks=False)
+            D = pairwise_distances(coords_rad, metric="haversine")
+            distances = squareform(D, checks=False)
         else:
             from scipy.spatial.distance import pdist
+
             distances = pdist(self.coords, metric=self.metric)
 
         linkage = self.linkage
@@ -403,7 +405,7 @@ class SPCVSplitter:
             )
 
         threshold = self._resolve_threshold(distances)
-        Z         = ahc_linkage(distances, method=linkage)
+        Z = ahc_linkage(distances, method=linkage)
         return fcluster(Z, t=threshold, criterion="distance")  # 1-based
 
     def _ahc_approximate(self) -> np.ndarray:
@@ -419,10 +421,10 @@ class SPCVSplitter:
 
         if self.metric == "haversine":
             coords_for_graph = np.deg2rad(self.coords)
-            sklearn_metric   = "haversine"
+            sklearn_metric = "haversine"
         else:
             coords_for_graph = self.coords
-            sklearn_metric   = "euclidean"
+            sklearn_metric = "euclidean"
 
         # ward linkage only supports euclidean; fall back to average for haversine
         linkage = self.linkage
@@ -433,20 +435,25 @@ class SPCVSplitter:
                 "using 'average' for the approximate AHC path."
             )
 
-        k           = min(self.knn_neighbors, coords_for_graph.shape[0] - 1)
+        k = min(self.knn_neighbors, coords_for_graph.shape[0] - 1)
         connectivity = kneighbors_graph(
-            coords_for_graph, n_neighbors=k,
-            metric=sklearn_metric, mode="connectivity", include_self=False,
+            coords_for_graph,
+            n_neighbors=k,
+            metric=sklearn_metric,
+            mode="connectivity",
+            include_self=False,
         )
 
-        threshold = self._resolve_threshold_approximate(coords_for_graph, sklearn_metric)
+        threshold = self._resolve_threshold_approximate(
+            coords_for_graph, sklearn_metric
+        )
 
         clustering = AgglomerativeClustering(
-            n_clusters         = None,
-            distance_threshold = threshold,
-            connectivity       = connectivity,
-            linkage            = linkage,
-            metric             = "euclidean" if linkage == "ward" else sklearn_metric,
+            n_clusters=None,
+            distance_threshold=threshold,
+            connectivity=connectivity,
+            linkage=linkage,
+            metric="euclidean" if linkage == "ward" else sklearn_metric,
         )
         clustering.fit(coords_for_graph)
         return clustering.labels_ + 1  # 1-based to match scipy fcluster
@@ -456,13 +463,17 @@ class SPCVSplitter:
         if self.threshold is None:
             t = float(np.percentile(distances, 10))
             units = "rad" if self.metric == "haversine" else "coord units"
-            logger.debug(f"SPCVSplitter: threshold auto-set to {t:.4f} {units} (10th pct of pairwise distances).")
+            logger.debug(
+                f"SPCVSplitter: threshold auto-set to {t:.4f} {units} (10th pct of pairwise distances)."
+            )
             return t
         if self.metric == "haversine":
             return float(np.deg2rad(self.threshold))
         return float(self.threshold)
 
-    def _resolve_threshold_approximate(self, coords_for_graph: np.ndarray, sklearn_metric: str) -> float:
+    def _resolve_threshold_approximate(
+        self, coords_for_graph: np.ndarray, sklearn_metric: str
+    ) -> float:
         """
         Return threshold for sklearn AgglomerativeClustering.
         When threshold=None, estimate from a sample of pairwise distances to
@@ -476,14 +487,20 @@ class SPCVSplitter:
             return float(self.threshold)
 
         # Estimate 10th percentile from a random subsample of 1,000 points
-        rng  = np.random.default_rng(self.random_state)
-        idx  = rng.choice(coords_for_graph.shape[0], size=min(1_000, coords_for_graph.shape[0]), replace=False)
-        sub  = coords_for_graph[idx]
+        rng = np.random.default_rng(self.random_state)
+        idx = rng.choice(
+            coords_for_graph.shape[0],
+            size=min(1_000, coords_for_graph.shape[0]),
+            replace=False,
+        )
+        sub = coords_for_graph[idx]
         dists = cdist(sub, sub, metric=sklearn_metric)
         upper = dists[np.triu_indices_from(dists, k=1)]
-        t     = float(np.percentile(upper, 10))
+        t = float(np.percentile(upper, 10))
         units = "rad" if self.metric == "haversine" else "coord units"
-        logger.debug(f"SPCVSplitter: threshold auto-set to {t:.4f} {units} (10th pct, subsample of 1000).")
+        logger.debug(
+            f"SPCVSplitter: threshold auto-set to {t:.4f} {units} (10th pct, subsample of 1000)."
+        )
         return t
 
     # ------------------------------------------------------------------
@@ -506,19 +523,19 @@ class SPCVSplitter:
         """
         from sklearn.cluster import KMeans, SpectralClustering
 
-        n_blocks  = int(block_labels.max()) + 1
-        k         = self.n_splits
-        rs        = self.random_state
+        n_blocks = int(block_labels.max()) + 1
+        k = self.n_splits
+        rs = self.random_state
 
         # --- per-block representative values ---
         block_coords = np.zeros((n_blocks, 2))
-        block_X      = np.zeros((n_blocks, self.X.shape[1]))
-        block_y      = np.zeros((n_blocks, 1))
+        block_X = np.zeros((n_blocks, self.X.shape[1]))
+        block_y = np.zeros((n_blocks, 1))
         for b in range(n_blocks):
-            mask           = block_labels == b
+            mask = block_labels == b
             block_coords[b] = self.coords[mask].mean(axis=0)
-            block_X[b]      = self.X[mask].mean(axis=0)
-            block_y[b, 0]   = self.y[mask].mean()
+            block_X[b] = self.X[mask].mean(axis=0)
+            block_y[b, 0] = self.y[mask].mean()
 
         # --- PCA on block covariates to remove redundancy before clustering ---
         from sklearn.decomposition import PCA
@@ -526,8 +543,10 @@ class SPCVSplitter:
 
         if block_X.shape[1] > 1:
             block_X_scaled = StandardScaler().fit_transform(block_X)
-            n_components   = min(self.pca_components, block_X.shape[0], block_X.shape[1])
-            block_X_proj   = PCA(n_components=n_components, random_state=rs).fit_transform(block_X_scaled)
+            n_components = min(self.pca_components, block_X.shape[0], block_X.shape[1])
+            block_X_proj = PCA(
+                n_components=n_components, random_state=rs
+            ).fit_transform(block_X_scaled)
             logger.debug(
                 f"SPCVSplitter stage 2: PCA reduced {block_X.shape[1]} covariates → "
                 f"{block_X_proj.shape[1]} components ({self.pca_components} variance threshold)."
@@ -545,8 +564,8 @@ class SPCVSplitter:
 
         # --- HBGF: build co-occurrence affinity ---
         eye = np.eye(k)
-        H   = np.hstack([eye[labels_L], eye[labels_C], eye[labels_T]])  # (n_blocks, 3k)
-        S   = H @ H.T                                                     # (n_blocks, n_blocks)
+        H = np.hstack([eye[labels_L], eye[labels_C], eye[labels_T]])  # (n_blocks, 3k)
+        S = H @ H.T  # (n_blocks, n_blocks)
 
         # Regularise: two blocks that share no KMeans cluster in any view have
         # S[i,j]=0 and form isolated components in the spectral graph, causing
@@ -559,15 +578,15 @@ class SPCVSplitter:
                 "HBGF affinity may be nearly disconnected — fold assignments could be "
                 "suboptimal. Lower the AHC threshold to produce more blocks."
             )
-        S  += 1.0 / (n_blocks + 1)
-        S  /= S.max()                                                     # normalise to [0, 1]
+        S += 1.0 / (n_blocks + 1)
+        S /= S.max()  # normalise to [0, 1]
 
         # --- spectral clustering on affinity ---
         fold_per_block = SpectralClustering(
-            n_clusters       = k,
-            affinity         = "precomputed",
-            random_state     = rs,
-            assign_labels    = "kmeans",
+            n_clusters=k,
+            affinity="precomputed",
+            random_state=rs,
+            assign_labels="kmeans",
         ).fit_predict(S)
 
         return fold_per_block[block_labels].astype(np.int32)

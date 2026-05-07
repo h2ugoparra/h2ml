@@ -32,6 +32,7 @@ from h2ml.pipeline.base import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _infer_task_type(estimator: Any) -> TaskType:
     """Infer TaskType from a sklearn estimator."""
     if is_classifier(estimator):
@@ -44,9 +45,11 @@ def _infer_task_type(estimator: Any) -> TaskType:
 def _has_predict_proba(estimator: Any) -> bool:
     return hasattr(estimator, "predict_proba")
 
+
 # ---------------------------------------------------------------------------
 # ModelWrapper — wraps a classifier or regressor
 # ---------------------------------------------------------------------------
+
 
 class ModelWrapper(BaseClassifier, BaseRegressor):
     """
@@ -71,17 +74,17 @@ class ModelWrapper(BaseClassifier, BaseRegressor):
 
     def __init__(
         self,
-        estimator:            Any,
-        name:                 Optional[str]  = None,
-        requires_scaling:     bool           = False,
-        verbose:              bool           = False,
+        estimator: Any,
+        name: Optional[str] = None,
+        requires_scaling: bool = False,
+        verbose: bool = False,
     ):
         # Resolve name before super().__init__ so _check_fitted messages are clean
         resolved_name = name or estimator.__class__.__name__
         super().__init__(name=resolved_name, verbose=verbose)
 
-        self.estimator            = estimator
-        self.requires_scaling     = requires_scaling
+        self.estimator = estimator
+        self.requires_scaling = requires_scaling
 
         # Infer task type from the wrapped estimator
         self.task_type = _infer_task_type(estimator)
@@ -95,7 +98,9 @@ class ModelWrapper(BaseClassifier, BaseRegressor):
             self.estimator.fit(X, y)
             self._fitted = True
         if self.verbose:
-            logger.info(f"[{self.name}] Fitted on {X.shape[0]} samples, {X.shape[1]} features.")
+            logger.info(
+                f"[{self.name}] Fitted on {X.shape[0]} samples, {X.shape[1]} features."
+            )
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -109,7 +114,9 @@ class ModelWrapper(BaseClassifier, BaseRegressor):
             transformed = self.estimator.transform(X)
             # sklearn transformers may return arrays — wrap back to DataFrame
             if isinstance(transformed, np.ndarray):
-                return pd.DataFrame(transformed, columns=self._get_out_columns(X, transformed))
+                return pd.DataFrame(
+                    transformed, columns=self._get_out_columns(X, transformed)
+                )
             return transformed
 
         # Classifier / regressor — pass-through
@@ -156,7 +163,9 @@ class ModelWrapper(BaseClassifier, BaseRegressor):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _get_out_columns(self, X_in: pd.DataFrame, transformed: np.ndarray) -> list[str]:
+    def _get_out_columns(
+        self, X_in: pd.DataFrame, transformed: np.ndarray
+    ) -> list[str]:
         """Resolve output column names after a transform step."""
         names = self.get_feature_names_out()
         if names:
@@ -181,10 +190,11 @@ class ModelWrapper(BaseClassifier, BaseRegressor):
 # Convenience factory functions
 # ---------------------------------------------------------------------------
 
+
 def make_classifier(
-    estimator:            Any,
-    name:                 Optional[str] = None,
-    requires_scaling:     bool          = False,
+    estimator: Any,
+    name: Optional[str] = None,
+    requires_scaling: bool = False,
 ) -> ModelWrapper:
     """
     Shorthand for wrapping a sklearn classifier.
@@ -194,16 +204,16 @@ def make_classifier(
         >>> step = make_classifier(SVC(), requires_scaling=True)
     """
     return ModelWrapper(
-        estimator            = estimator,
-        name                 = name,
-        requires_scaling     = requires_scaling,
+        estimator=estimator,
+        name=name,
+        requires_scaling=requires_scaling,
     )
 
 
 def make_regressor(
-    estimator:        Any,
-    name:             Optional[str] = None,
-    requires_scaling: bool          = False,
+    estimator: Any,
+    name: Optional[str] = None,
+    requires_scaling: bool = False,
 ) -> ModelWrapper:
     """
     Shorthand for wrapping a sklearn regressor.
@@ -213,15 +223,15 @@ def make_regressor(
         >>> step = make_regressor(Ridge(), requires_scaling=True)
     """
     return ModelWrapper(
-        estimator        = estimator,
-        name             = name,
-        requires_scaling = requires_scaling,
+        estimator=estimator,
+        name=name,
+        requires_scaling=requires_scaling,
     )
 
 
 def make_preprocessor(
     estimator: Any,
-    name:      Optional[str] = None,
+    name: Optional[str] = None,
 ) -> ModelWrapper:
     """
     Shorthand for wrapping a sklearn transformer.

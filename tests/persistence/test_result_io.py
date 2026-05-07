@@ -11,9 +11,9 @@ Covers:
     - Overwrite behaviour (save_result replaces existing directory)
     - FileNotFoundError on load from missing path
 """
+
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -28,6 +28,7 @@ from h2ml.pipeline.pipeline import PipelineResult
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_store(n: int = 50, f: int = 4, seed: int = 0) -> PipelineData:
     rng = np.random.default_rng(seed)
     return PipelineData(
@@ -38,19 +39,23 @@ def _make_store(n: int = 50, f: int = 4, seed: int = 0) -> PipelineData:
 
 
 def _make_fold_df(stage: str = "default") -> pd.DataFrame:
-    return pd.DataFrame({
-        "Model": ["LR", "LR", "LR"],
-        "Stage": [stage] * 3,
-        "AUC_Test_Mean": [0.8, 0.82, 0.79],
-    })
+    return pd.DataFrame(
+        {
+            "Model": ["LR", "LR", "LR"],
+            "Stage": [stage] * 3,
+            "AUC_Test_Mean": [0.8, 0.82, 0.79],
+        }
+    )
 
 
 def _make_agg_df() -> pd.DataFrame:
-    return pd.DataFrame({
-        "Model": ["LR"],
-        "AUC_Test_Mean": [0.80],
-        "AUC_Test_Std": [0.01],
-    })
+    return pd.DataFrame(
+        {
+            "Model": ["LR"],
+            "AUC_Test_Mean": [0.80],
+            "AUC_Test_Std": [0.01],
+        }
+    )
 
 
 def _full_result() -> PipelineResult:
@@ -76,8 +81,8 @@ def _full_result() -> PipelineResult:
 # Scalar metadata
 # ---------------------------------------------------------------------------
 
-class TestScalarRoundTrip:
 
+class TestScalarRoundTrip:
     def test_best_model_name_preserved(self, tmp_path):
         result = _full_result()
         save_result(result, tmp_path / "run")
@@ -155,6 +160,7 @@ class TestScalarRoundTrip:
         save_result(result, tmp_path / "run")
         # Simulate old save by removing cv_type from the JSON
         import json
+
         meta_path = tmp_path / "run" / "metadata.json"
         meta = json.loads(meta_path.read_text())
         meta.pop("cv_type", None)
@@ -186,6 +192,7 @@ class TestScalarRoundTrip:
     def test_metric_none_when_absent_in_old_save(self, tmp_path):
         """Results saved before metric was persisted should load with metric=None."""
         import json
+
         result = _full_result()
         save_result(result, tmp_path / "run")
         p = tmp_path / "run" / "metadata.json"
@@ -199,13 +206,19 @@ class TestScalarRoundTrip:
 # DataFrames
 # ---------------------------------------------------------------------------
 
-class TestDataFrameRoundTrip:
 
-    @pytest.mark.parametrize("attr", [
-        "step1_fold_df", "step1_agg_df",
-        "step3_fold_df", "step3_agg_df",
-        "step4_fold_df", "step4_agg_df",
-    ])
+class TestDataFrameRoundTrip:
+    @pytest.mark.parametrize(
+        "attr",
+        [
+            "step1_fold_df",
+            "step1_agg_df",
+            "step3_fold_df",
+            "step3_agg_df",
+            "step4_fold_df",
+            "step4_agg_df",
+        ],
+    )
     def test_dataframe_not_none(self, tmp_path, attr):
         result = _full_result()
         save_result(result, tmp_path / "run")
@@ -229,8 +242,8 @@ class TestDataFrameRoundTrip:
 # PipelineData
 # ---------------------------------------------------------------------------
 
-class TestPipelineDataRoundTrip:
 
+class TestPipelineDataRoundTrip:
     def test_features_X_preserved(self, tmp_path):
         result = _full_result()
         save_result(result, tmp_path / "run")
@@ -261,7 +274,9 @@ class TestPipelineDataRoundTrip:
         result.features.y_true = rng.standard_normal(50).astype(np.float32)
         save_result(result, tmp_path / "run")
         loaded = load_result(tmp_path / "run")
-        np.testing.assert_array_almost_equal(loaded.features.y_true, result.features.y_true)
+        np.testing.assert_array_almost_equal(
+            loaded.features.y_true, result.features.y_true
+        )
 
     def test_y_true_none_when_absent(self, tmp_path):
         result = _full_result()
@@ -275,8 +290,8 @@ class TestPipelineDataRoundTrip:
 # Partial results (optional fields absent)
 # ---------------------------------------------------------------------------
 
-class TestPartialResult:
 
+class TestPartialResult:
     def test_partial_result_saves_without_error(self, tmp_path):
         """A result with only step 1 completed should save cleanly."""
         result = PipelineResult(
@@ -307,8 +322,8 @@ class TestPartialResult:
 # Edge cases
 # ---------------------------------------------------------------------------
 
-class TestEdgeCases:
 
+class TestEdgeCases:
     def test_load_missing_path_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             load_result(tmp_path / "does_not_exist")

@@ -17,6 +17,7 @@ Strategy:
     - Step 4 is either skipped (LR has opt_enabled=False in registry)
       or mocked via a run_study patch when testing opt behaviour
 """
+
 from __future__ import annotations
 
 import re
@@ -74,25 +75,33 @@ def _make_positive_reg_store(seed: int = 7) -> PipelineData:
 
 def _lr_only() -> list:
     """Single LR — opt_enabled=False in registry, so step 4 skips Optuna automatically."""
-    return [make_classifier(LogisticRegression(max_iter=200, random_state=42), name="LR")]
+    return [
+        make_classifier(LogisticRegression(max_iter=200, random_state=42), name="LR")
+    ]
 
 
 def _clf_steps() -> list:
     return [
         make_classifier(LogisticRegression(max_iter=200, random_state=42), name="LR"),
-        make_classifier(RandomForestClassifier(n_estimators=10, random_state=42), name="RF"),
+        make_classifier(
+            RandomForestClassifier(n_estimators=10, random_state=42), name="RF"
+        ),
     ]
 
 
 def _reg_steps() -> list:
     return [
         make_regressor(Ridge(), name="Ridge"),
-        make_regressor(RandomForestRegressor(n_estimators=10, random_state=42), name="RF"),
+        make_regressor(
+            RandomForestRegressor(n_estimators=10, random_state=42), name="RF"
+        ),
     ]
 
 
 def _clf_config(**kwargs) -> PipelineConfig:
-    defaults = dict(task_type=TaskType.CLASSIFICATION, metric="AUC", n_splits=3, n_trials=1)
+    defaults = dict(
+        task_type=TaskType.CLASSIFICATION, metric="AUC", n_splits=3, n_trials=1
+    )
     defaults.update(kwargs)
     return PipelineConfig(**defaults)
 
@@ -106,6 +115,7 @@ def _reg_config(**kwargs) -> PipelineConfig:
 # ---------------------------------------------------------------------------
 # Mock helpers
 # ---------------------------------------------------------------------------
+
 
 def _mock_selector(selected: list[str] = None):
     """Patches FeatureSelector so step 2 runs without real SHAP."""
@@ -142,6 +152,7 @@ def _mock_optimizer(best_params: dict = None):
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def clf_store() -> PipelineData:
     return _make_clf_store()
@@ -172,8 +183,8 @@ def reg_pipeline() -> H2MLPipeline:
 # PipelineConfig
 # ---------------------------------------------------------------------------
 
-class TestPipelineConfig:
 
+class TestPipelineConfig:
     def test_default_task_type(self):
         assert PipelineConfig().task_type == TaskType.CLASSIFICATION
 
@@ -203,6 +214,7 @@ class TestPipelineConfig:
     def test_opt_n_splits_below_half_n_splits_warns(self):
         """opt_n_splits < n_splits // 2 should emit a loguru warning."""
         from loguru import logger
+
         warned = []
         handler_id = logger.add(lambda msg: warned.append(msg), level="WARNING")
         try:
@@ -214,6 +226,7 @@ class TestPipelineConfig:
     def test_opt_n_splits_at_half_n_splits_no_warn(self):
         """opt_n_splits == n_splits // 2 should NOT warn."""
         from loguru import logger
+
         warned = []
         handler_id = logger.add(lambda msg: warned.append(msg), level="WARNING")
         try:
@@ -258,9 +271,11 @@ class TestPipelineConfig:
 # handle_imbalance — class weight injection
 # ---------------------------------------------------------------------------
 
-class TestHandleImbalance:
 
-    def _make_imbalanced_store(self, minority_n: int = 5, majority_n: int = 95) -> PipelineData:
+class TestHandleImbalance:
+    def _make_imbalanced_store(
+        self, minority_n: int = 5, majority_n: int = 95
+    ) -> PipelineData:
         rng = np.random.default_rng(0)
         n = minority_n + majority_n
         X = rng.standard_normal((n, 3))
@@ -269,7 +284,6 @@ class TestHandleImbalance:
 
     def test_class_weight_set_on_supporting_models(self):
         """handle_imbalance=True should set class_weight='balanced' on RFC."""
-        from h2ml.utils.registry import build_models
         config = PipelineConfig(handle_imbalance=True)
         pipeline = H2MLPipeline(config=config)
         rf = next(m for m in pipeline.models if m.name == "RandomForestClassifier")
@@ -293,10 +307,11 @@ class TestHandleImbalance:
     def test_imbalance_warning_fires(self):
         """minority ratio < 0.1 should emit a loguru warning."""
         from loguru import logger
-        store   = self._make_imbalanced_store(minority_n=5, majority_n=95)
-        config  = PipelineConfig(handle_imbalance=False)
+
+        store = self._make_imbalanced_store(minority_n=5, majority_n=95)
+        config = PipelineConfig(handle_imbalance=False)
         pipeline = H2MLPipeline(config=config)
-        warned  = []
+        warned = []
         handler = logger.add(lambda msg: warned.append(msg), level="WARNING")
         try:
             pipeline._validate_store(store)
@@ -307,15 +322,16 @@ class TestHandleImbalance:
     def test_no_imbalance_warning_when_balanced(self):
         """Balanced classes must not trigger a warning."""
         from loguru import logger
+
         rng = np.random.default_rng(0)
         store = PipelineData(
             X=rng.standard_normal((100, 3)),
             feature_names=["a", "b", "c"],
             y=np.array([0] * 50 + [1] * 50),
         )
-        config  = PipelineConfig(handle_imbalance=False)
+        config = PipelineConfig(handle_imbalance=False)
         pipeline = H2MLPipeline(config=config)
-        warned  = []
+        warned = []
         handler = logger.add(lambda msg: warned.append(msg), level="WARNING")
         try:
             pipeline._validate_store(store)
@@ -328,13 +344,17 @@ class TestHandleImbalance:
 # PipelineResult
 # ---------------------------------------------------------------------------
 
+
 def _tiny_store() -> PipelineData:
     rng = np.random.default_rng(0)
-    return PipelineData(X=rng.standard_normal((10, 3)), feature_names=["a", "b", "c"], y=rng.integers(0, 2, 10))
+    return PipelineData(
+        X=rng.standard_normal((10, 3)),
+        feature_names=["a", "b", "c"],
+        y=rng.integers(0, 2, 10),
+    )
 
 
 class TestPipelineResult:
-
     def test_all_fields_none_on_init(self):
         result = PipelineResult()
         assert result.step1_fold_df is None
@@ -355,24 +375,29 @@ class TestPipelineResult:
 
     def test_completed_steps_after_step2(self):
         result = PipelineResult(
-            step1_agg_df=pd.DataFrame(), best_model_name="RF",
+            step1_agg_df=pd.DataFrame(),
+            best_model_name="RF",
             features_reduced=_tiny_store(),
         )
         assert 2 in result.completed_steps
 
     def test_completed_steps_after_step3(self):
         result = PipelineResult(
-            step1_agg_df=pd.DataFrame(), best_model_name="RF",
+            step1_agg_df=pd.DataFrame(),
+            best_model_name="RF",
             features_reduced=_tiny_store(),
-            step3_agg_df=pd.DataFrame(), best_stage="default",
+            step3_agg_df=pd.DataFrame(),
+            best_stage="default",
         )
         assert 3 in result.completed_steps
 
     def test_completed_steps_after_step4(self):
         result = PipelineResult(
-            step1_agg_df=pd.DataFrame(), best_model_name="RF",
+            step1_agg_df=pd.DataFrame(),
+            best_model_name="RF",
             features_reduced=_tiny_store(),
-            step3_agg_df=pd.DataFrame(), best_stage="default",
+            step3_agg_df=pd.DataFrame(),
+            best_stage="default",
             best_params={"C": 0.5},
         )
         assert 4 in result.completed_steps
@@ -407,14 +432,18 @@ class TestPipelineResult:
 
     def test_summary_sort_by_metric_descending(self):
         result = PipelineResult(
-            step1_agg_df=pd.DataFrame({"Model": ["LR", "RF"], "AUC_Test_Mean": [0.75, 0.85]})
+            step1_agg_df=pd.DataFrame(
+                {"Model": ["LR", "RF"], "AUC_Test_Mean": [0.75, 0.85]}
+            )
         )
         df = result.summary(metric="AUC_Test_Mean")
         assert df.iloc[0]["AUC_Test_Mean"] >= df.iloc[1]["AUC_Test_Mean"]
 
     def test_summary_sort_ascending_for_loss_metric(self):
         result = PipelineResult(
-            step1_agg_df=pd.DataFrame({"Model": ["LR", "RF"], "RMSE_Test_Mean": [0.5, 0.3]})
+            step1_agg_df=pd.DataFrame(
+                {"Model": ["LR", "RF"], "RMSE_Test_Mean": [0.5, 0.3]}
+            )
         )
         df = result.summary(metric="RMSE_Test_Mean", ascending=True)
         assert df.iloc[0]["RMSE_Test_Mean"] <= df.iloc[1]["RMSE_Test_Mean"]
@@ -437,8 +466,8 @@ class TestPipelineResult:
 # H2MLPipeline construction
 # ---------------------------------------------------------------------------
 
-class TestConstruction:
 
+class TestConstruction:
     def test_empty_models_raises(self):
         with pytest.raises(ValueError, match="empty"):
             H2MLPipeline(models=[], config=_clf_config())
@@ -457,8 +486,8 @@ class TestConstruction:
 # Step 1 — run_step1_only()
 # ---------------------------------------------------------------------------
 
-class TestRunStep1Only:
 
+class TestRunStep1Only:
     def test_fold_df_populated(self, clf_pipeline, clf_store):
         result = clf_pipeline.run_step1_only(clf_store)
         assert result.step1_fold_df is not None
@@ -513,6 +542,7 @@ class TestRunStep1Only:
 # Step 1 with y-transform sweep
 # ---------------------------------------------------------------------------
 
+
 class TestStep1WithTransforms:
     """
     Tests for the transforms= argument on partial-run methods.
@@ -531,38 +561,54 @@ class TestStep1WithTransforms:
         return H2MLPipeline(models=_reg_steps(), config=_reg_config())
 
     def test_fold_df_has_y_transform_column(self, reg_pipeline_2models, pos_reg_store):
-        result = reg_pipeline_2models.run_step1_only(pos_reg_store, transforms=["log", "count"])
+        result = reg_pipeline_2models.run_step1_only(
+            pos_reg_store, transforms=["log", "count"]
+        )
         assert "Y_transform" in result.step1_fold_df.columns
 
     def test_fold_df_row_count_equals_models_times_transforms_times_folds(
         self, reg_pipeline_2models, pos_reg_store
     ):
-        result = reg_pipeline_2models.run_step1_only(pos_reg_store, transforms=["log", "count"])
+        result = reg_pipeline_2models.run_step1_only(
+            pos_reg_store, transforms=["log", "count"]
+        )
         n_models, n_transforms, n_folds = (
-            len(reg_pipeline_2models.models), 2, reg_pipeline_2models.config.n_splits
+            len(reg_pipeline_2models.models),
+            2,
+            reg_pipeline_2models.config.n_splits,
         )
         assert len(result.step1_fold_df) == n_models * n_transforms * n_folds
 
     def test_agg_df_has_one_row_per_model_per_transform(
         self, reg_pipeline_2models, pos_reg_store
     ):
-        result = reg_pipeline_2models.run_step1_only(pos_reg_store, transforms=["log", "count"])
+        result = reg_pipeline_2models.run_step1_only(
+            pos_reg_store, transforms=["log", "count"]
+        )
         assert len(result.step1_agg_df) == len(reg_pipeline_2models.models) * 2
 
     def test_cv_result_count_equals_models_times_transforms(
         self, reg_pipeline_2models, pos_reg_store
     ):
-        result = reg_pipeline_2models.run_step1_only(pos_reg_store, transforms=["log", "count"])
+        result = reg_pipeline_2models.run_step1_only(
+            pos_reg_store, transforms=["log", "count"]
+        )
         assert len(result.step1_cv_result) == len(reg_pipeline_2models.models) * 2
 
     def test_y_transform_set_to_one_of_the_input_transforms(
         self, reg_pipeline_2models, pos_reg_store
     ):
-        result = reg_pipeline_2models.run_step1_only(pos_reg_store, transforms=["log", "count"])
+        result = reg_pipeline_2models.run_step1_only(
+            pos_reg_store, transforms=["log", "count"]
+        )
         assert result.y_transform in ("log", "count")
 
-    def test_both_transforms_appear_in_agg_df(self, reg_pipeline_2models, pos_reg_store):
-        result = reg_pipeline_2models.run_step1_only(pos_reg_store, transforms=["log", "count"])
+    def test_both_transforms_appear_in_agg_df(
+        self, reg_pipeline_2models, pos_reg_store
+    ):
+        result = reg_pipeline_2models.run_step1_only(
+            pos_reg_store, transforms=["log", "count"]
+        )
         assert set(result.step1_agg_df["Y_transform"]) == {"log", "count"}
 
     def test_run_step1_to_step3_with_transforms_completes(
@@ -591,8 +637,8 @@ class TestStep1WithTransforms:
 # Steps 1–2 — run_step1_to_step2()
 # ---------------------------------------------------------------------------
 
-class TestRunStep1ToStep2:
 
+class TestRunStep1ToStep2:
     def test_features_reduced_populated(self, clf_pipeline, clf_store):
         with _mock_selector():
             result = clf_pipeline.run_step1_to_step2(clf_store)
@@ -636,8 +682,8 @@ class TestRunStep1ToStep2:
 # Steps 1–3 — run_step1_to_step3()
 # ---------------------------------------------------------------------------
 
-class TestRunStep1ToStep3:
 
+class TestRunStep1ToStep3:
     def test_step3_agg_df_populated(self, clf_pipeline, clf_store):
         with _mock_selector():
             result = clf_pipeline.run_step1_to_step3(clf_store)
@@ -677,8 +723,8 @@ class TestRunStep1ToStep3:
 # run_from_step3()
 # ---------------------------------------------------------------------------
 
-class TestRunFromStep3:
 
+class TestRunFromStep3:
     @pytest.fixture
     def partial_result(self, lr_pipeline, clf_store) -> PipelineResult:
         with _mock_selector():
@@ -711,9 +757,13 @@ class TestRunFromStep3:
         """selector.selected_features_ matches the winning stage's feature set."""
         result = lr_pipeline.run_from_step3(partial_result)
         if result.best_stage == "default":
-            assert result.selector.selected_features_ == list(result.features.feature_names)
+            assert result.selector.selected_features_ == list(
+                result.features.feature_names
+            )
         else:
-            assert result.selector.selected_features_ == list(result.features_reduced.feature_names)
+            assert result.selector.selected_features_ == list(
+                result.features_reduced.feature_names
+            )
 
     def test_best_feature_stage_preserved(self, lr_pipeline, partial_result):
         """best_feature_stage is never overwritten to 'optimized'."""
@@ -730,8 +780,8 @@ class TestRunFromStep3:
 # Step 4 — optimisation behaviour
 # ---------------------------------------------------------------------------
 
-class TestStep4Optimisation:
 
+class TestStep4Optimisation:
     def test_step4_skipped_for_lr_model(self, lr_pipeline, clf_store):
         """LR has opt_enabled=False — step 4 sets best_params without running CV."""
         with _mock_selector():
@@ -742,7 +792,11 @@ class TestStep4Optimisation:
     def test_step4_fold_df_populated_when_opt_runs(self, clf_store):
         """RF has opt_enabled=True — step 4 runs CV with the optimised params."""
         rf_pipeline = H2MLPipeline(
-            models=[make_classifier(RandomForestClassifier(n_estimators=10, random_state=42), name="RF")],
+            models=[
+                make_classifier(
+                    RandomForestClassifier(n_estimators=10, random_state=42), name="RF"
+                )
+            ],
             config=_clf_config(),
         )
         with _mock_selector(), _mock_optimizer({"n_estimators": 10, "max_depth": 3}):
@@ -759,8 +813,8 @@ class TestStep4Optimisation:
 # Full run()
 # ---------------------------------------------------------------------------
 
-class TestFullRun:
 
+class TestFullRun:
     def test_all_four_steps_completed(self, lr_pipeline, clf_store):
         with _mock_selector():
             result = lr_pipeline.run(clf_store)
@@ -786,7 +840,10 @@ class TestFullRun:
 
     def test_regression_full_run(self, reg_pipeline, reg_store):
         # Ridge/RF are not in the registry, so patch _is_opt_enabled to skip Optuna
-        with _mock_selector(), patch.object(H2MLPipeline, "_is_opt_enabled", return_value=False):
+        with (
+            _mock_selector(),
+            patch.object(H2MLPipeline, "_is_opt_enabled", return_value=False),
+        ):
             result = reg_pipeline.run(reg_store)
         assert result.completed_steps == [1, 2, 3, 4]
 
@@ -795,8 +852,8 @@ class TestFullRun:
 # _get_model()
 # ---------------------------------------------------------------------------
 
-class TestGetModel:
 
+class TestGetModel:
     def test_returns_correct_model(self, clf_pipeline):
         model = clf_pipeline._get_model("LR")
         assert model.name == "LR"
@@ -814,8 +871,8 @@ class TestGetModel:
 # _metadata_with()
 # ---------------------------------------------------------------------------
 
-class TestMetadataWith:
 
+class TestMetadataWith:
     def test_returns_run_metadata(self, clf_pipeline):
         meta = clf_pipeline._metadata_with(stage="default")
         assert isinstance(meta, RunMetadata)
@@ -855,8 +912,8 @@ class TestMetadataWith:
 # _validate_store() — input validation
 # ---------------------------------------------------------------------------
 
-class TestValidateStore:
 
+class TestValidateStore:
     def test_raises_on_nan_in_X(self, clf_pipeline):
         store = _make_clf_store()
         store.X[0, 0] = float("nan")
@@ -935,20 +992,20 @@ class TestValidateStore:
 
     def test_x_error_reports_affected_feature_name(self, clf_pipeline):
         store = _make_clf_store()
-        store.X[0, 1] = float("nan")   # second feature column
+        store.X[0, 1] = float("nan")  # second feature column
         with pytest.raises(ValueError, match=store.feature_names[1]):
             clf_pipeline._validate_store(store)
 
     def test_x_error_reports_row_count(self, clf_pipeline):
         store = _make_clf_store()
         store.X[0, 0] = float("nan")
-        store.X[1, 0] = float("nan")   # 2 distinct rows affected
+        store.X[1, 0] = float("nan")  # 2 distinct rows affected
         with pytest.raises(ValueError, match=rf"2/{N_SAMPLES}"):
             clf_pipeline._validate_store(store)
 
     def test_x_error_reports_percentage(self, clf_pipeline):
         store = _make_clf_store()
-        store.X[0, 0] = float("nan")   # 1 / N_SAMPLES rows
+        store.X[0, 0] = float("nan")  # 1 / N_SAMPLES rows
         expected_pct = f"{100 / N_SAMPLES:.1f}%"
         with pytest.raises(ValueError, match=re.escape(expected_pct)):
             clf_pipeline._validate_store(store)
@@ -965,11 +1022,11 @@ class TestValidateStore:
 # cv_warnings — fold failure tracking
 # ---------------------------------------------------------------------------
 
-class TestCVWarnings:
 
+class TestCVWarnings:
     def test_cv_warnings_empty_on_successful_run(self):
         """A clean run should produce no cv_warnings."""
-        store  = _make_clf_store()
+        store = _make_clf_store()
         result = PipelineResult()
         assert result.cv_warnings == []
 
@@ -990,12 +1047,16 @@ class TestCVWarnings:
             return results
 
         mock_sel = MagicMock(spec=FeatureSelector)
-        mock_sel.fit_transform.side_effect = lambda s, y=None: s.select(s.feature_names[:4])
+        mock_sel.fit_transform.side_effect = lambda s, y=None: s.select(
+            s.feature_names[:4]
+        )
         mock_sel.transform.side_effect = lambda s: s.select(s.feature_names[:4])
 
-        with patch.object(clf_pipeline._cv, "run_all", side_effect=patched_run_all), \
-             patch("h2ml.pipeline.pipeline.FeatureSelector", return_value=mock_sel), \
-             patch.object(H2MLPipeline, "_is_opt_enabled", return_value=False):
+        with (
+            patch.object(clf_pipeline._cv, "run_all", side_effect=patched_run_all),
+            patch("h2ml.pipeline.pipeline.FeatureSelector", return_value=mock_sel),
+            patch.object(H2MLPipeline, "_is_opt_enabled", return_value=False),
+        ):
             result = clf_pipeline.run(store)
 
         assert any("2/" in w and "fold(s) failed" in w for w in result.cv_warnings)
@@ -1004,6 +1065,7 @@ class TestCVWarnings:
 # ---------------------------------------------------------------------------
 # Spatial block CV — pipeline integration
 # ---------------------------------------------------------------------------
+
 
 def _make_spatial_store(seed: int = 42) -> PipelineData:
     """Classification store with spatial coordinates attached."""
@@ -1021,7 +1083,9 @@ class TestSpatialCVPipeline:
 
     def test_full_run_with_coords_completes_all_steps(self):
         store = _make_spatial_store()
-        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(n_blocks_per_fold=3))
+        pipeline = H2MLPipeline(
+            models=_lr_only(), config=_clf_config(n_blocks_per_fold=3)
+        )
         with _mock_selector():
             result = pipeline.run(store)
         assert result.completed_steps == [1, 2, 3, 4]
@@ -1029,9 +1093,11 @@ class TestSpatialCVPipeline:
     def test_result_has_same_structure_as_without_coords(self):
         store_no_coords = _make_clf_store()
         store_with_coords = _make_spatial_store()
-        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(n_blocks_per_fold=3))
+        pipeline = H2MLPipeline(
+            models=_lr_only(), config=_clf_config(n_blocks_per_fold=3)
+        )
         with _mock_selector():
-            result_plain   = pipeline.run(store_no_coords)
+            result_plain = pipeline.run(store_no_coords)
             result_spatial = pipeline.run(store_with_coords)
         # Both should complete the same 4 steps
         assert result_plain.completed_steps == result_spatial.completed_steps
@@ -1039,16 +1105,21 @@ class TestSpatialCVPipeline:
     def test_coords_forwarded_to_cv_run_all(self):
         """Verify coords are passed through to CrossValidator.run_all."""
         store = _make_spatial_store()
-        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(n_blocks_per_fold=2))
+        pipeline = H2MLPipeline(
+            models=_lr_only(), config=_clf_config(n_blocks_per_fold=2)
+        )
         coords_seen = []
 
         original_run_all = pipeline._cv.run_all
+
         def spy_run_all(steps, X, y, **kwargs):
             coords_seen.append(kwargs.get("coords"))
             return original_run_all(steps, X, y, n_jobs=1, **kwargs)
 
-        with _mock_selector(), \
-             patch.object(pipeline._cv, "run_all", side_effect=spy_run_all):
+        with (
+            _mock_selector(),
+            patch.object(pipeline._cv, "run_all", side_effect=spy_run_all),
+        ):
             pipeline.run(store)
 
         assert any(c is not None for c in coords_seen), (
@@ -1073,8 +1144,11 @@ class TestSpatialCVPipeline:
         """step 1 uses a SpatialBlockSplitter (not KFold) when coords are present.
         This verifies the flat-parallel path in _run_step1 forwards coords correctly."""
         from h2ml.features.spatial_cv import SpatialBlockSplitter
+
         store = _make_spatial_store()
-        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(n_blocks_per_fold=2))
+        pipeline = H2MLPipeline(
+            models=_lr_only(), config=_clf_config(n_blocks_per_fold=2)
+        )
         result = pipeline.run_step1_only(store)
         assert isinstance(result.splitter, SpatialBlockSplitter)
 
@@ -1082,13 +1156,17 @@ class TestSpatialCVPipeline:
         """build_transform_stores must receive and forward coords."""
         store = _make_spatial_store()
         store = PipelineData(
-            X=store.X, feature_names=store.feature_names,
+            X=store.X,
+            feature_names=store.feature_names,
             y=np.abs(store.y.astype(float)) + 0.1,  # positive regression target
             coords=store.coords,
         )
         from h2ml.preprocessing.transform_stores import build_transform_stores
+
         stores = build_transform_stores(
-            store.X, store.y, store.feature_names,
+            store.X,
+            store.y,
+            store.feature_names,
             transforms=["log", "sqrt"],
             coords=store.coords,
         )

@@ -50,7 +50,7 @@ Coverage:
 from __future__ import annotations
 from typing import Optional
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -93,8 +93,8 @@ def _mock_shap(selected: Optional[list[str]] = None, use_oof: bool = True):
 
     shap_target = (
         "h2ml.features.selector.get_oof_shap_values"
-        if use_oof else
-        "h2ml.features.selector.get_shap_values"
+        if use_oof
+        else "h2ml.features.selector.get_shap_values"
     )
     patch_shap = patch(shap_target, return_value=(fake_shap_arr, fake_importance))
     patch_corr = patch(
@@ -107,6 +107,7 @@ def _mock_shap(selected: Optional[list[str]] = None, use_oof: bool = True):
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def store() -> PipelineData:
@@ -126,9 +127,9 @@ def reg_step():
 @pytest.fixture
 def selector(clf_step) -> FeatureSelector:
     return FeatureSelector(
-        step           = clf_step,
-        task_type      = TaskType.CLASSIFICATION,
-        corr_threshold = 0.7,
+        step=clf_step,
+        task_type=TaskType.CLASSIFICATION,
+        corr_threshold=0.7,
     )
 
 
@@ -144,8 +145,8 @@ def fitted_selector(selector, store) -> FeatureSelector:
 # Construction
 # ---------------------------------------------------------------------------
 
-class TestConstruction:
 
+class TestConstruction:
     def test_task_type_set(self, selector):
         assert selector.task_type == TaskType.CLASSIFICATION
 
@@ -169,8 +170,8 @@ class TestConstruction:
 # fit()
 # ---------------------------------------------------------------------------
 
-class TestFit:
 
+class TestFit:
     def test_fit_sets_fitted_flag(self, selector, store):
         patch_shap, patch_corr = _mock_shap()
         with patch_shap, patch_corr:
@@ -206,13 +207,17 @@ class TestFit:
 
     def test_fit_passes_corr_threshold(self, clf_step, store):
         """corr_threshold should be forwarded to remove_correlated_features."""
-        selector = FeatureSelector(clf_step, TaskType.CLASSIFICATION, corr_threshold=0.5)
+        selector = FeatureSelector(
+            clf_step, TaskType.CLASSIFICATION, corr_threshold=0.5
+        )
         patch_shap, patch_corr = _mock_shap()
         with patch_shap, patch_corr as mock_corr:
             selector.fit(store)
             _, call_kwargs = mock_corr.call_args
-            assert call_kwargs.get("corr_threshold") == 0.5 or \
-                   mock_corr.call_args[0][2] == 0.5  # positional fallback
+            assert (
+                call_kwargs.get("corr_threshold") == 0.5
+                or mock_corr.call_args[0][2] == 0.5
+            )  # positional fallback
 
     def test_fit_calls_oof_shap_by_default(self, clf_step, store):
         """Default use_oof=True should call get_oof_shap_values with step=self.step."""
@@ -236,8 +241,8 @@ class TestFit:
 # transform()
 # ---------------------------------------------------------------------------
 
-class TestTransform:
 
+class TestTransform:
     def test_transform_raises_before_fit(self, selector, store):
         with pytest.raises(RuntimeError, match="not been fitted"):
             selector.transform(store)
@@ -274,8 +279,8 @@ class TestTransform:
 # fit_transform()
 # ---------------------------------------------------------------------------
 
-class TestFitTransform:
 
+class TestFitTransform:
     def test_fit_transform_returns_feature_store(self, selector, store):
         patch_shap, patch_corr = _mock_shap(["feat_a", "feat_c"])
         with patch_shap, patch_corr:
@@ -289,12 +294,12 @@ class TestFitTransform:
         sel_b = FeatureSelector(clf_step, TaskType.CLASSIFICATION, corr_threshold=0.7)
 
         with patch_shap, patch_corr:
-            result_ft    = sel_a.fit_transform(store)
+            result_ft = sel_a.fit_transform(store)
             _ = sel_b.fit(store)
 
         # Re-patch for the second transform call
         with patch_shap, patch_corr:
-            result_f_t   = sel_b.transform(store)
+            result_f_t = sel_b.transform(store)
 
         assert result_ft.feature_names == result_f_t.feature_names
 
@@ -309,8 +314,8 @@ class TestFitTransform:
 # Inspection helpers
 # ---------------------------------------------------------------------------
 
-class TestInspectionHelpers:
 
+class TestInspectionHelpers:
     def test_n_selected_matches_selected_features(self, fitted_selector):
         assert fitted_selector.n_selected == len(fitted_selector.selected_features_)
 
@@ -326,8 +331,8 @@ class TestInspectionHelpers:
 
     def test_removed_plus_selected_equals_all(self, fitted_selector):
         all_features = set(fitted_selector.feature_importance_.index)
-        selected     = set(fitted_selector.selected_features_)
-        removed      = set(fitted_selector.removed_features)
+        selected = set(fitted_selector.selected_features_)
+        removed = set(fitted_selector.removed_features)
         assert selected | removed == all_features
         assert selected & removed == set()
 
@@ -360,8 +365,8 @@ class TestInspectionHelpers:
 # __repr__
 # ---------------------------------------------------------------------------
 
-class TestRepr:
 
+class TestRepr:
     def test_repr_contains_task_type(self, selector):
         assert "classification" in repr(selector)
 
@@ -382,13 +387,16 @@ class TestRepr:
 # min_features guarantee
 # ---------------------------------------------------------------------------
 
-class TestMinFeatures:
 
-    def _make_selector(self, clf_step, min_features: int, selected: list[str]) -> FeatureSelector:
+class TestMinFeatures:
+    def _make_selector(
+        self, clf_step, min_features: int, selected: list[str]
+    ) -> FeatureSelector:
         """Build a selector whose corr filter would return `selected`, then fit with mocks."""
         selector = FeatureSelector(
-            clf_step, TaskType.CLASSIFICATION,
-            corr_threshold=0.01,   # very low — triggers the guard
+            clf_step,
+            TaskType.CLASSIFICATION,
+            corr_threshold=0.01,  # very low — triggers the guard
             min_features=min_features,
         )
         patch_shap, patch_corr = _mock_shap(selected=selected)
@@ -417,12 +425,16 @@ class TestMinFeatures:
     def test_order_preserved_by_importance(self, clf_step):
         """Selected features maintain importance order after restoration."""
         sel = self._make_selector(clf_step, min_features=3, selected=["feat_a"])
-        expected_order = [f for f in sel.feature_importance_.index if f in set(sel.selected_features_)]
+        expected_order = [
+            f for f in sel.feature_importance_.index if f in set(sel.selected_features_)
+        ]
         assert sel.selected_features_ == expected_order
 
     def test_no_restoration_when_already_above_min(self, clf_step):
         """When corr filter keeps enough features, no restoration occurs."""
-        sel = self._make_selector(clf_step, min_features=2, selected=["feat_a", "feat_b", "feat_c"])
+        sel = self._make_selector(
+            clf_step, min_features=2, selected=["feat_a", "feat_b", "feat_c"]
+        )
         assert len(sel.selected_features_) == 3
 
     def test_min_features_exceeds_total_features(self, clf_step):

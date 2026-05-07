@@ -38,6 +38,7 @@ Coverage:
         - n_samples < n_splits raises ValueError
         - Row mismatch at split() time raises ValueError
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -82,8 +83,8 @@ def splitter(coords, X, y) -> SPCVSplitter:
 # Interface
 # ---------------------------------------------------------------------------
 
-class TestInterface:
 
+class TestInterface:
     def test_get_n_splits_matches_constructor(self, splitter):
         assert splitter.get_n_splits() == 5
 
@@ -113,8 +114,8 @@ class TestInterface:
 # Index integrity
 # ---------------------------------------------------------------------------
 
-class TestIndexIntegrity:
 
+class TestIndexIntegrity:
     def test_train_test_disjoint_per_fold(self, splitter, X, y):
         for train_idx, test_idx in splitter.split(X, y):
             assert len(np.intersect1d(train_idx, test_idx)) == 0
@@ -137,8 +138,8 @@ class TestIndexIntegrity:
 # Stage 1 — AHC blocks
 # ---------------------------------------------------------------------------
 
-class TestStage1Blocks:
 
+class TestStage1Blocks:
     def test_block_id_attribute_set(self, splitter):
         assert hasattr(splitter, "block_id_")
         assert splitter.block_id_.shape == (N,)
@@ -153,7 +154,7 @@ class TestStage1Blocks:
         assert sp.block_id_.shape == (N,)
 
     def test_small_threshold_produces_more_blocks(self, coords, X, y):
-        sp_fine   = SPCVSplitter(coords, X, y, n_splits=5, threshold=0.5)
+        sp_fine = SPCVSplitter(coords, X, y, n_splits=5, threshold=0.5)
         sp_coarse = SPCVSplitter(coords, X, y, n_splits=5, threshold=5.0)
         assert np.unique(sp_fine.block_id_).size >= np.unique(sp_coarse.block_id_).size
 
@@ -166,7 +167,9 @@ class TestStage1Blocks:
         """Samples within a tiny spatial cluster should all share the same block ID."""
         rng = np.random.default_rng(0)
         centers = np.array([[0.1, 0.1], [0.9, 0.1], [0.1, 0.9], [0.9, 0.9]])
-        coords = np.vstack([center + rng.normal(0, 0.002, (25, 2)) for center in centers])
+        coords = np.vstack(
+            [center + rng.normal(0, 0.002, (25, 2)) for center in centers]
+        )
         X = rng.standard_normal((100, 3))
         y = rng.standard_normal(100)
         # threshold small enough to keep tight clusters intact
@@ -182,8 +185,8 @@ class TestStage1Blocks:
 # Stage 2 — CE fold assignment
 # ---------------------------------------------------------------------------
 
-class TestStage2Folds:
 
+class TestStage2Folds:
     def test_produces_exactly_n_splits_fold_labels(self, splitter):
         fold_labels = np.unique(splitter._fold_of_sample)
         assert len(fold_labels) == 5
@@ -220,8 +223,8 @@ class TestStage2Folds:
 # Reproducibility
 # ---------------------------------------------------------------------------
 
-class TestReproducibility:
 
+class TestReproducibility:
     def test_two_splitters_same_args_identical_folds(self, coords, X, y):
         sp1 = SPCVSplitter(coords, X, y, n_splits=5, random_state=42)
         sp2 = SPCVSplitter(coords, X, y, n_splits=5, random_state=42)
@@ -241,8 +244,8 @@ class TestReproducibility:
 # Validation
 # ---------------------------------------------------------------------------
 
-class TestValidation:
 
+class TestValidation:
     def test_1d_coords_raises(self, X, y):
         with pytest.raises(ValueError, match="coords"):
             SPCVSplitter(np.zeros(N), X, y, n_splits=5)

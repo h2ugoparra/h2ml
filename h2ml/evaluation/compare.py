@@ -6,6 +6,7 @@ compare_results() — compare multiple PipelineResult objects in one DataFrame.
 Each row represents one pipeline run. Useful for selecting the best configuration
 across runs with different PipelineConfig settings, feature schemas, or datasets.
 """
+
 from __future__ import annotations
 
 from typing import Optional, TYPE_CHECKING
@@ -22,9 +23,9 @@ if TYPE_CHECKING:
 
 def compare_results(
     results: list["PipelineResult"],
-    labels:  Optional[list[str]] = None,
-    metric:  Optional[str]       = None,
-    n_folds: Optional[int]       = None,
+    labels: Optional[list[str]] = None,
+    metric: Optional[str] = None,
+    n_folds: Optional[int] = None,
 ) -> pd.DataFrame:
     """
     Summarise multiple PipelineResult objects as a single comparison DataFrame.
@@ -98,15 +99,15 @@ def compare_results(
 
     rows = []
     for i, result in enumerate(results):
-        label        = labels[i] if labels is not None else f"Run_{i}"
-        fold_count   = n_folds if n_folds is not None else _infer_n_folds(result)
+        label = labels[i] if labels is not None else f"Run_{i}"
+        fold_count = n_folds if n_folds is not None else _infer_n_folds(result)
 
         if metric is not None:
             score_mean, score_std = _get_score_for_metric(result, metric)
             display_metric = metric
         else:
-            score_mean     = result.best_model_value
-            score_std      = result.best_model_std
+            score_mean = result.best_model_value
+            score_std = result.best_model_std
             display_metric = result.metric
 
         minimize = _MINIMIZE.get(display_metric, False) if display_metric else False
@@ -114,22 +115,26 @@ def compare_results(
         conservative_bound: Optional[float] = None
         if score_mean is not None and score_std is not None and fold_count:
             penalty = score_std / np.sqrt(fold_count)
-            conservative_bound = score_mean + penalty if minimize else score_mean - penalty
+            conservative_bound = (
+                score_mean + penalty if minimize else score_mean - penalty
+            )
 
-        rows.append({
-            "Run":                label,
-            "Metric":             display_metric,
-            "Best_Model":         result.best_model_name,
-            "Best_Stage":         result.best_stage,
-            "Y_Transform":        result.y_transform,
-            "Score_Mean":         score_mean,
-            "Score_Std":          score_std,
-            "Conservative_Bound": conservative_bound,
-            "Brier_Mean":         _get_brier_from_agg(result),
-            "OOF_Brier":          _get_oof_brier(result),
-            "N_Features":         _get_n_features(result),
-            "Completed_Steps":    result.completed_steps,
-        })
+        rows.append(
+            {
+                "Run": label,
+                "Metric": display_metric,
+                "Best_Model": result.best_model_name,
+                "Best_Stage": result.best_stage,
+                "Y_Transform": result.y_transform,
+                "Score_Mean": score_mean,
+                "Score_Std": score_std,
+                "Conservative_Bound": conservative_bound,
+                "Brier_Mean": _get_brier_from_agg(result),
+                "OOF_Brier": _get_oof_brier(result),
+                "N_Features": _get_n_features(result),
+                "Completed_Steps": result.completed_steps,
+            }
+        )
 
     df = pd.DataFrame(rows)
     if df.empty:
@@ -140,7 +145,7 @@ def compare_results(
         sort_ascending = _MINIMIZE.get(metric, False)
     else:
         unique_minimize = {_MINIMIZE.get(r.metric, False) for r in results if r.metric}
-        sort_ascending  = unique_minimize.pop() if len(unique_minimize) == 1 else False
+        sort_ascending = unique_minimize.pop() if len(unique_minimize) == 1 else False
 
     if df["Conservative_Bound"].isna().all():
         logger.warning(
@@ -162,13 +167,14 @@ def compare_results(
 # Private helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_score_for_metric(
     result: "PipelineResult",
     metric: str,
 ) -> tuple[Optional[float], Optional[float]]:
     """Return (mean, std) for *metric* from the winning stage's agg DataFrame."""
     mean_col = f"{metric}_Test_Mean"
-    std_col  = f"{metric}_Test_Std"
+    std_col = f"{metric}_Test_Std"
 
     stage = result.best_stage
     if stage == "optimized":
@@ -195,9 +201,9 @@ def _get_score_for_metric(
     if subset.empty:
         return None, None
 
-    row      = subset.iloc[0]
+    row = subset.iloc[0]
     mean_val = float(row[mean_col])
-    std_val  = float(row[std_col]) if std_col in subset.columns else None
+    std_val = float(row[std_col]) if std_col in subset.columns else None
     return mean_val, std_val
 
 
@@ -262,13 +268,15 @@ def _get_oof_brier(result: "PipelineResult") -> Optional[float]:
     if cv is None or cv.task_type != TaskType.CLASSIFICATION:
         return None
 
-    oof_pred   = result.oof_predictions
+    oof_pred = result.oof_predictions
     oof_labels = result.oof_labels
     if oof_pred is None or oof_labels is None:
         return None
     # Drop missing positions (failed folds); use pd.isnull to handle both
     # float NaN (numeric labels) and None (string/object labels from oof_labels)
-    valid = ~(np.isnan(oof_pred) if oof_pred.ndim == 1 else np.isnan(oof_pred).any(axis=1))
+    valid = ~(
+        np.isnan(oof_pred) if oof_pred.ndim == 1 else np.isnan(oof_pred).any(axis=1)
+    )
     valid &= ~pd.isnull(oof_labels)
     if not valid.any():
         return None
@@ -277,7 +285,8 @@ def _get_oof_brier(result: "PipelineResult") -> Optional[float]:
     if y_prob.ndim == 2:
         # Multiclass Brier
         from sklearn.preprocessing import label_binarize
+
         classes = np.unique(y_true.astype(int))
-        y_bin   = label_binarize(y_true, classes=classes)
+        y_bin = label_binarize(y_true, classes=classes)
         return float(np.mean(np.sum((y_bin - y_prob) ** 2, axis=1)))
     return float(brier_score_loss(y_true, y_prob))

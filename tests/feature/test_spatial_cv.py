@@ -30,6 +30,7 @@ Coverage:
         - coords row count != X row count raises ValueError
         - n_splits * n_blocks_per_fold > n_samples raises ValueError
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -67,8 +68,8 @@ def X_dummy() -> np.ndarray:
 # Interface
 # ---------------------------------------------------------------------------
 
-class TestInterface:
 
+class TestInterface:
     def test_get_n_splits_matches_constructor(self, splitter):
         assert splitter.get_n_splits() == 5
 
@@ -104,8 +105,8 @@ class TestInterface:
 # Index integrity
 # ---------------------------------------------------------------------------
 
-class TestIndexIntegrity:
 
+class TestIndexIntegrity:
     def test_train_test_disjoint_per_fold(self, splitter, X_dummy):
         for train_idx, test_idx in splitter.split(X_dummy):
             overlap = np.intersect1d(train_idx, test_idx)
@@ -131,17 +132,16 @@ class TestIndexIntegrity:
 # Spatial integrity
 # ---------------------------------------------------------------------------
 
-class TestSpatialIntegrity:
 
+class TestSpatialIntegrity:
     def test_tight_cluster_members_share_fold(self):
         """Samples within the same tiny cluster must all be assigned to the same fold."""
         rng = np.random.default_rng(1)
         # 4 clusters, 20 samples each — clusters far apart so each maps to one block
         cluster_centers = np.array([[0.1, 0.1], [0.9, 0.1], [0.1, 0.9], [0.9, 0.9]])
-        coords = np.vstack([
-            center + rng.normal(0, 0.005, size=(20, 2))
-            for center in cluster_centers
-        ])  # shape (80, 2)
+        coords = np.vstack(
+            [center + rng.normal(0, 0.005, size=(20, 2)) for center in cluster_centers]
+        )  # shape (80, 2)
         splitter = SpatialBlockSplitter(coords, n_splits=4, n_blocks_per_fold=1)
         fold_assignments = splitter._fold_of_sample
 
@@ -160,14 +160,18 @@ class TestSpatialIntegrity:
         """
         n = 100
         # North half: lat in [0.6, 1.0]; south half: lat in [0.0, 0.4]
-        north = np.column_stack([
-            np.linspace(0.6, 1.0, n),
-            np.zeros(n),
-        ])
-        south = np.column_stack([
-            np.linspace(0.0, 0.4, n),
-            np.zeros(n),
-        ])
+        north = np.column_stack(
+            [
+                np.linspace(0.6, 1.0, n),
+                np.zeros(n),
+            ]
+        )
+        south = np.column_stack(
+            [
+                np.linspace(0.0, 0.4, n),
+                np.zeros(n),
+            ]
+        )
         coords = np.vstack([north, south])  # (200, 2)
         X_dummy = np.zeros((200, 1))
 
@@ -189,8 +193,8 @@ class TestSpatialIntegrity:
 # Reproducibility
 # ---------------------------------------------------------------------------
 
-class TestReproducibility:
 
+class TestReproducibility:
     def test_two_splitters_same_args_identical_folds(self, uniform_coords, X_dummy):
         s1 = SpatialBlockSplitter(uniform_coords, n_splits=5, n_blocks_per_fold=5)
         s2 = SpatialBlockSplitter(uniform_coords, n_splits=5, n_blocks_per_fold=5)
@@ -210,17 +214,19 @@ class TestReproducibility:
 # Quantile binning robustness
 # ---------------------------------------------------------------------------
 
-class TestQuantileBinningRobustness:
 
+class TestQuantileBinningRobustness:
     def test_skewed_distribution_completes_without_error(self):
         """90% of points in one corner should not crash the splitter."""
         rng = np.random.default_rng(7)
         n = 200
         # 180 points near (0, 0), 20 points scattered elsewhere
-        coords = np.vstack([
-            rng.uniform(0.0, 0.05, size=(180, 2)),
-            rng.uniform(0.0, 1.0,  size=(20,  2)),
-        ])
+        coords = np.vstack(
+            [
+                rng.uniform(0.0, 0.05, size=(180, 2)),
+                rng.uniform(0.0, 1.0, size=(20, 2)),
+            ]
+        )
         splitter = SpatialBlockSplitter(coords, n_splits=4, n_blocks_per_fold=3)
         X_dummy = np.zeros((n, 1))
         all_test = np.concatenate([te for _, te in splitter.split(X_dummy)])
@@ -230,10 +236,12 @@ class TestQuantileBinningRobustness:
         """All points on the same latitude line — axis 0 is constant."""
         rng = np.random.default_rng(3)
         n = 100
-        coords = np.column_stack([
-            np.zeros(n),              # constant lat
-            rng.uniform(0, 1, n),     # varying lon
-        ])
+        coords = np.column_stack(
+            [
+                np.zeros(n),  # constant lat
+                rng.uniform(0, 1, n),  # varying lon
+            ]
+        )
         splitter = SpatialBlockSplitter(coords, n_splits=2, n_blocks_per_fold=2)
         X_dummy = np.zeros((n, 1))
         all_test = np.concatenate([te for _, te in splitter.split(X_dummy)])
@@ -244,10 +252,10 @@ class TestQuantileBinningRobustness:
 # n_blocks_per_fold effect
 # ---------------------------------------------------------------------------
 
-class TestNBlocksPerFold:
 
+class TestNBlocksPerFold:
     def test_different_n_blocks_produces_different_assignments(self, uniform_coords):
-        s_fine   = SpatialBlockSplitter(uniform_coords, n_splits=5, n_blocks_per_fold=10)
+        s_fine = SpatialBlockSplitter(uniform_coords, n_splits=5, n_blocks_per_fold=10)
         s_coarse = SpatialBlockSplitter(uniform_coords, n_splits=5, n_blocks_per_fold=2)
         # The fold assignments will generally differ with different granularity
         assert not np.array_equal(s_fine._fold_of_sample, s_coarse._fold_of_sample)
@@ -262,8 +270,8 @@ class TestNBlocksPerFold:
 # Validation
 # ---------------------------------------------------------------------------
 
-class TestValidation:
 
+class TestValidation:
     def test_1d_coords_raises(self):
         with pytest.raises(ValueError, match="shape"):
             SpatialBlockSplitter(np.zeros(100), n_splits=2)

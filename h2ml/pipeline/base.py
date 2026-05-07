@@ -18,15 +18,17 @@ import numpy as np
 # Task type
 # ---------------------------------------------------------------------------
 
+
 class TaskType(str, Enum):
     CLASSIFICATION = "classification"
-    REGRESSION     = "regression"
-    TRANSFORM      = "transform"   # preprocessing steps — no predict()
+    REGRESSION = "regression"
+    TRANSFORM = "transform"  # preprocessing steps — no predict()
 
 
 # ---------------------------------------------------------------------------
 # Base step
 # ---------------------------------------------------------------------------
+
 
 class BaseStep(ABC):
     """
@@ -45,7 +47,7 @@ class BaseStep(ABC):
     task_type: TaskType
 
     def __init__(self, name: Optional[str] = None, verbose: bool = False):
-        self.name    = name or self.__class__.__name__
+        self.name = name or self.__class__.__name__
         self.verbose = verbose
         self._fitted = False
 
@@ -96,6 +98,7 @@ class BaseStep(ABC):
 # Predictor mixin — shared by classifiers AND regressors
 # ---------------------------------------------------------------------------
 
+
 class PredictorMixin(ABC):
     """
     Adds predict() to any BaseStep subclass.
@@ -120,6 +123,7 @@ class PredictorMixin(ABC):
 # ---------------------------------------------------------------------------
 # Concrete base classes
 # ---------------------------------------------------------------------------
+
 
 class BaseClassifier(BaseStep, PredictorMixin):
     """
@@ -184,8 +188,9 @@ class BasePreprocessor(BaseStep):
 @runtime_checkable
 class PredictorStep(Protocol):
     """Structural type for any step that can predict."""
-    name:          str
-    task_type:     TaskType
+
+    name: str
+    task_type: TaskType
     requires_scaling: bool
     estimator: Any
 

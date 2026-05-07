@@ -31,12 +31,14 @@ class PipelineData:
         >>> store.n_features   # 10
     """
 
-    X:             np.ndarray
+    X: np.ndarray
     feature_names: list[str]
-    y:             np.ndarray
-    y_true:        Optional[np.ndarray] = None  # original-scale y for back-transformed metrics
-    y_transform:   Optional[str]        = None  # transform name, used to look up inverse fn
-    coords:        Optional[np.ndarray] = None  # spatial coordinates (n_samples, 2) — lat/lon or x/y
+    y: np.ndarray
+    y_true: Optional[np.ndarray] = None  # original-scale y for back-transformed metrics
+    y_transform: Optional[str] = None  # transform name, used to look up inverse fn
+    coords: Optional[np.ndarray] = (
+        None  # spatial coordinates (n_samples, 2) — lat/lon or x/y
+    )
 
     def __post_init__(self):
         n = self.X.shape[0]
@@ -46,9 +48,7 @@ class PipelineData:
                 f"{len(self.feature_names)} feature names were provided."
             )
         if self.y.shape[0] != n:
-            raise ValueError(
-                f"y has {self.y.shape[0]} rows but X has {n} rows."
-            )
+            raise ValueError(f"y has {self.y.shape[0]} rows but X has {n} rows.")
         if self.y_true is not None and self.y_true.shape[0] != n:
             raise ValueError(
                 f"y_true has {self.y_true.shape[0]} rows but X has {n} rows."
@@ -74,20 +74,20 @@ class PipelineData:
     @classmethod
     def from_frame(
         cls,
-        df:          pd.DataFrame,
-        y:           np.ndarray,
-        y_true:      Optional[np.ndarray] = None,
-        y_transform: Optional[str]        = None,
-        coords:      Optional[np.ndarray] = None,
+        df: pd.DataFrame,
+        y: np.ndarray,
+        y_true: Optional[np.ndarray] = None,
+        y_transform: Optional[str] = None,
+        coords: Optional[np.ndarray] = None,
     ) -> "PipelineData":
         """Build a PipelineData directly from a DataFrame."""
         return cls(
-            X             = df.to_numpy(),
-            feature_names = df.columns.tolist(),
-            y             = y,
-            y_true        = y_true,
-            y_transform   = y_transform,
-            coords        = coords,
+            X=df.to_numpy(),
+            feature_names=df.columns.tolist(),
+            y=y,
+            y_true=y_true,
+            y_transform=y_transform,
+            coords=coords,
         )
 
     # ------------------------------------------------------------------
@@ -106,12 +106,12 @@ class PipelineData:
 
         idx = [name_to_idx[f] for f in features]
         return PipelineData(
-            X             = self.X[:, idx],
-            feature_names = features,
-            y             = self.y,
-            y_true        = self.y_true,
-            y_transform   = self.y_transform,
-            coords        = self.coords,
+            X=self.X[:, idx],
+            feature_names=features,
+            y=self.y,
+            y_true=self.y_true,
+            y_transform=self.y_transform,
+            coords=self.coords,
         )
 
     # ------------------------------------------------------------------

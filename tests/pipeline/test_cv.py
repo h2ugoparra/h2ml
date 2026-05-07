@@ -25,21 +25,23 @@ Coverage:
 
 import numpy as np
 import pytest
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.svm import SVC
 
 try:
     from lightgbm import LGBMClassifier
     from xgboost import XGBRegressor
+
     HAS_BOOSTING = True
 except ImportError:
     LGBMClassifier = None  # type: ignore[assignment,misc]
-    XGBRegressor   = None  # type: ignore[assignment,misc]
-    HAS_BOOSTING   = False
+    XGBRegressor = None  # type: ignore[assignment,misc]
+    HAS_BOOSTING = False
 
 requires_boosting = pytest.mark.skipif(
-    not HAS_BOOSTING, reason="lightgbm and xgboost not installed (install the [boosting] extra)"
+    not HAS_BOOSTING,
+    reason="lightgbm and xgboost not installed (install the [boosting] extra)",
 )
 
 from h2ml.pipeline.base import TaskType
@@ -50,6 +52,7 @@ from h2ml.pipeline.step import make_classifier, make_regressor
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def cv() -> CrossValidator:
@@ -65,7 +68,10 @@ def cv_3fold() -> CrossValidator:
 # Classifiers
 @pytest.fixture
 def svc_step():
-    return make_classifier(SVC(random_state=42, probability=True), requires_scaling=True)
+    return make_classifier(
+        SVC(random_state=42, probability=True), requires_scaling=True
+    )
+
 
 @pytest.fixture
 def lgbm_step():
@@ -73,14 +79,17 @@ def lgbm_step():
         pytest.skip("lightgbm not installed")
     return make_classifier(LGBMClassifier(random_state=42, verbose=-1))
 
+
 # Regressors
 @pytest.fixture
 def lr_step():
     return make_regressor(LogisticRegression(random_state=42))
 
+
 @pytest.fixture
 def ridge_step():
     return make_regressor(Ridge())
+
 
 @pytest.fixture
 def xgb_step():
@@ -89,15 +98,12 @@ def xgb_step():
     return make_regressor(XGBRegressor(random_state=42))
 
 
-
-
-
 # ---------------------------------------------------------------------------
 # FoldResult
 # ---------------------------------------------------------------------------
 
-class TestFoldResult:
 
+class TestFoldResult:
     def test_task_type_classification_when_proba_present(self):
         fold = FoldResult(
             fold_id=0,
@@ -150,23 +156,25 @@ class TestFoldResult:
 # CVResult
 # ---------------------------------------------------------------------------
 
-class TestCVResult:
 
+class TestCVResult:
     @pytest.fixture
     def cv_result_with_folds(self) -> CVResult:
         """CVResult pre-populated with 3 dummy folds."""
         result = CVResult(model_name="DummyModel", task_type=TaskType.CLASSIFICATION)
         for i in range(3):
-            result.folds.append(FoldResult(
-                fold_id=i,
-                model_name="DummyModel",
-                y_train=np.array([0, 1, 0]),
-                y_test=np.array([1, 0]),
-                y_pred_train=np.array([0, 1, 0]),
-                y_pred_test=np.array([1, 0]),
-                y_prob_test=np.array([0.8, 0.3]),
-                fit_time=float(i),
-            ))
+            result.folds.append(
+                FoldResult(
+                    fold_id=i,
+                    model_name="DummyModel",
+                    y_train=np.array([0, 1, 0]),
+                    y_test=np.array([1, 0]),
+                    y_pred_train=np.array([0, 1, 0]),
+                    y_pred_test=np.array([1, 0]),
+                    y_prob_test=np.array([0.8, 0.3]),
+                    fit_time=float(i),
+                )
+            )
         return result
 
     def test_n_folds(self, cv_result_with_folds):
@@ -194,27 +202,35 @@ class TestCVResult:
         """CVResult with 2 folds that partition 6 samples."""
         result = CVResult(model_name="M", task_type=TaskType.CLASSIFICATION)
         # Fold 0: samples 0,2,4 → test; 1,3,5 → train
-        result.folds.append(FoldResult(
-            fold_id=0, model_name="M",
-            y_train=np.array([0, 1, 0]),
-            y_test =np.array([1, 0, 1]),
-            y_pred_train=np.zeros(3), y_pred_test=np.ones(3),
-            y_prob_train=np.array([0.2, 0.8, 0.3]),
-            y_prob_test =np.array([0.9, 0.1, 0.8]),
-            train_idx=np.array([1, 3, 5]),
-            test_idx =np.array([0, 2, 4]),
-        ))
+        result.folds.append(
+            FoldResult(
+                fold_id=0,
+                model_name="M",
+                y_train=np.array([0, 1, 0]),
+                y_test=np.array([1, 0, 1]),
+                y_pred_train=np.zeros(3),
+                y_pred_test=np.ones(3),
+                y_prob_train=np.array([0.2, 0.8, 0.3]),
+                y_prob_test=np.array([0.9, 0.1, 0.8]),
+                train_idx=np.array([1, 3, 5]),
+                test_idx=np.array([0, 2, 4]),
+            )
+        )
         # Fold 1: samples 1,3,5 → test; 0,2,4 → train
-        result.folds.append(FoldResult(
-            fold_id=1, model_name="M",
-            y_train=np.array([1, 0, 1]),
-            y_test =np.array([0, 1, 0]),
-            y_pred_train=np.ones(3), y_pred_test=np.zeros(3),
-            y_prob_train=np.array([0.9, 0.1, 0.8]),
-            y_prob_test =np.array([0.2, 0.7, 0.3]),
-            train_idx=np.array([0, 2, 4]),
-            test_idx =np.array([1, 3, 5]),
-        ))
+        result.folds.append(
+            FoldResult(
+                fold_id=1,
+                model_name="M",
+                y_train=np.array([1, 0, 1]),
+                y_test=np.array([0, 1, 0]),
+                y_pred_train=np.ones(3),
+                y_pred_test=np.zeros(3),
+                y_prob_train=np.array([0.9, 0.1, 0.8]),
+                y_prob_test=np.array([0.2, 0.7, 0.3]),
+                train_idx=np.array([0, 2, 4]),
+                test_idx=np.array([1, 3, 5]),
+            )
+        )
         return result
 
     def test_oof_predictions_none_when_no_folds(self):
@@ -252,16 +268,20 @@ class TestCVResult:
 
     def test_oof_labels_string_dtype_uses_object_with_none(self):
         result = CVResult(model_name="M", task_type=TaskType.CLASSIFICATION)
-        result.folds.append(FoldResult(
-            fold_id=0, model_name="M",
-            y_train=np.array(["cat", "dog"]),
-            y_test =np.array(["bird", "cat"]),
-            y_pred_train=np.zeros(2), y_pred_test=np.zeros(2),
-            y_prob_train=np.array([0.3, 0.7]),
-            y_prob_test =np.array([0.4, 0.6]),
-            train_idx=np.array([0, 1]),
-            test_idx =np.array([2, 3]),
-        ))
+        result.folds.append(
+            FoldResult(
+                fold_id=0,
+                model_name="M",
+                y_train=np.array(["cat", "dog"]),
+                y_test=np.array(["bird", "cat"]),
+                y_pred_train=np.zeros(2),
+                y_pred_test=np.zeros(2),
+                y_prob_train=np.array([0.3, 0.7]),
+                y_prob_test=np.array([0.4, 0.6]),
+                train_idx=np.array([0, 1]),
+                test_idx=np.array([2, 3]),
+            )
+        )
         labels = result.oof_labels
         assert labels is not None
         assert labels.dtype == object
@@ -271,15 +291,18 @@ class TestCVResult:
 
     def test_oof_regression_uses_predictions_not_proba(self):
         result = CVResult(model_name="R", task_type=TaskType.REGRESSION)
-        result.folds.append(FoldResult(
-            fold_id=0, model_name="R",
-            y_train=np.array([1.0, 2.0]),
-            y_test =np.array([3.0, 4.0]),
-            y_pred_train=np.array([1.1, 2.1]),
-            y_pred_test =np.array([3.1, 4.1]),
-            train_idx=np.array([0, 1]),
-            test_idx =np.array([2, 3]),
-        ))
+        result.folds.append(
+            FoldResult(
+                fold_id=0,
+                model_name="R",
+                y_train=np.array([1.0, 2.0]),
+                y_test=np.array([3.0, 4.0]),
+                y_pred_train=np.array([1.1, 2.1]),
+                y_pred_test=np.array([3.1, 4.1]),
+                train_idx=np.array([0, 1]),
+                test_idx=np.array([2, 3]),
+            )
+        )
         oof = result.oof_predictions
         assert oof is not None
         np.testing.assert_allclose(oof[[2, 3]], [3.1, 4.1])
@@ -289,14 +312,16 @@ class TestCVResult:
 # CrossValidator.run() — fold count and structure
 # ---------------------------------------------------------------------------
 
-class TestCrossValidatorRun:
 
+class TestCrossValidatorRun:
     def test_correct_number_of_folds(self, cv, lgbm_step, classification_data):
         X, y = classification_data
         result = cv.run(lgbm_step, X, y)
         assert result.n_folds == 5
 
-    def test_correct_number_of_folds_3fold(self, cv_3fold, lgbm_step, classification_data):
+    def test_correct_number_of_folds_3fold(
+        self, cv_3fold, lgbm_step, classification_data
+    ):
         X, y = classification_data
         result = cv_3fold.run(lgbm_step, X, y)
         assert result.n_folds == 3
@@ -306,7 +331,7 @@ class TestCrossValidatorRun:
         result = cv.run(lgbm_step, X, y)
         assert result.model_name == lgbm_step.name
 
-    def test_result_task_type_classification(self, cv,lgbm_step, classification_data):
+    def test_result_task_type_classification(self, cv, lgbm_step, classification_data):
         X, y = classification_data
         result = cv.run(lgbm_step, X, y)
         assert result.task_type == TaskType.CLASSIFICATION
@@ -321,8 +346,8 @@ class TestCrossValidatorRun:
 # CrossValidator.run() — array shapes
 # ---------------------------------------------------------------------------
 
-class TestCrossValidatorArrayShapes:
 
+class TestCrossValidatorArrayShapes:
     def test_y_pred_test_shape(self, cv, lr_step, classification_data):
         X, y = classification_data
         result = cv.run(lr_step, X, y)
@@ -359,8 +384,8 @@ class TestCrossValidatorArrayShapes:
 # CrossValidator.run() — probabilities
 # ---------------------------------------------------------------------------
 
-class TestCrossValidatorProbabilities:
 
+class TestCrossValidatorProbabilities:
     def test_y_prob_is_none_for_regressor(self, cv, ridge_step, regression_data):
         X, y = regression_data
         result = cv.run(ridge_step, X, y)
@@ -387,8 +412,8 @@ class TestCrossValidatorProbabilities:
 # CrossValidator.run() — fold index integrity
 # ---------------------------------------------------------------------------
 
-class TestFoldIndexIntegrity:
 
+class TestFoldIndexIntegrity:
     def test_train_test_indices_are_disjoint(self, cv, lr_step, classification_data):
         X, y = classification_data
         result = cv.run(lr_step, X, y)
@@ -413,8 +438,8 @@ class TestFoldIndexIntegrity:
 # CrossValidator.run() — scaling
 # ---------------------------------------------------------------------------
 
-class TestCrossValidatorScaling:
 
+class TestCrossValidatorScaling:
     def test_scaling_applied_when_required(self, cv, svc_step, classification_data):
         """SVC with requires_scaling=True should run without errors."""
         X, y = classification_data
@@ -427,7 +452,9 @@ class TestCrossValidatorScaling:
         result = cv.run(lr_step, X, y)
         assert result.n_folds == 5
 
-    def test_scaling_does_not_leak_across_folds(self, cv, svc_step, classification_data):
+    def test_scaling_does_not_leak_across_folds(
+        self, cv, svc_step, classification_data
+    ):
         """Each fold should produce valid probabilities — sign that scaler was fit per fold."""
         X, y = classification_data
         result = cv.run(svc_step, X, y)
@@ -441,8 +468,8 @@ class TestCrossValidatorScaling:
 # CrossValidator.run() — best_params
 # ---------------------------------------------------------------------------
 
-class TestCrossValidatorBestParams:
 
+class TestCrossValidatorBestParams:
     def test_best_params_applied(self, cv, lgbm_step, classification_data):
         """Running with best_params should succeed and produce same fold count."""
         X, y = classification_data
@@ -460,14 +487,16 @@ class TestCrossValidatorBestParams:
 # CrossValidator.run_all()
 # ---------------------------------------------------------------------------
 
+
 @requires_boosting
 class TestCrossValidatorRunAll:
-
     def test_run_all_returns_one_result_per_step(self, cv, classification_data):
         X, y = classification_data
         steps = [
             make_classifier(LGBMClassifier(random_state=42, verbosa=-1), name="LGBM"),
-            make_classifier(RandomForestClassifier(n_estimators=10, random_state=42), name="RF"),
+            make_classifier(
+                RandomForestClassifier(n_estimators=10, random_state=42), name="RF"
+            ),
         ]
         results = cv.run_all(steps, X, y)
         assert len(results) == 2
@@ -476,7 +505,9 @@ class TestCrossValidatorRunAll:
         X, y = classification_data
         steps = [
             make_classifier(LGBMClassifier(random_state=42, verbosa=-1), name="LGBM"),
-            make_classifier(RandomForestClassifier(n_estimators=10, random_state=42), name="RF"),
+            make_classifier(
+                RandomForestClassifier(n_estimators=10, random_state=42), name="RF"
+            ),
         ]
         results = cv.run_all(steps, X, y)
         names = [r.model_name for r in results]
@@ -508,8 +539,8 @@ class TestCrossValidatorRunAll:
 # Multiclass classification
 # ---------------------------------------------------------------------------
 
-class TestMulticlassClassification:
 
+class TestMulticlassClassification:
     def test_y_prob_is_2d_for_multiclass(self, cv, multiclass_data):
         """For a 3-class target, y_prob_test should be a 2D array (n_samples, n_classes)."""
         X, y = multiclass_data
@@ -550,6 +581,7 @@ class TestMulticlassClassification:
 # Spatial block CV
 # ---------------------------------------------------------------------------
 
+
 class TestSpatialBlockCV:
     """CrossValidator wired up with SpatialBlockSplitter via coords kwarg."""
 
@@ -577,11 +609,17 @@ class TestSpatialBlockCV:
         result = cv5.run(step, X, y, coords=spatial_coords)
         assert result.n_folds == 5
 
-    def test_run_all_with_coords_returns_one_result_per_step(self, cv5, spatial_data, spatial_coords):
+    def test_run_all_with_coords_returns_one_result_per_step(
+        self, cv5, spatial_data, spatial_coords
+    ):
         X, y = spatial_data
         steps = [
-            make_classifier(RandomForestClassifier(n_estimators=5, random_state=42), name="RF1"),
-            make_classifier(RandomForestClassifier(n_estimators=5, random_state=0),  name="RF2"),
+            make_classifier(
+                RandomForestClassifier(n_estimators=5, random_state=42), name="RF1"
+            ),
+            make_classifier(
+                RandomForestClassifier(n_estimators=5, random_state=0), name="RF2"
+            ),
         ]
         results = cv5.run_all(steps, X, y, coords=spatial_coords)
         assert len(results) == 2
@@ -592,16 +630,27 @@ class TestSpatialBlockCV:
         result = cv5.run(step, X, y, coords=None)
         assert result.n_folds == 5
 
-    def test_spatial_splitter_used_when_coords_provided(self, cv5, spatial_data, spatial_coords):
-        from unittest.mock import patch, MagicMock
+    def test_spatial_splitter_used_when_coords_provided(
+        self, cv5, spatial_data, spatial_coords
+    ):
+        from unittest.mock import patch
+
         X, y = spatial_data
         step = make_classifier(RandomForestClassifier(n_estimators=5, random_state=42))
-        with patch("h2ml.features.spatial_cv.SpatialBlockSplitter.__init__",
-                   return_value=None) as mock_init, \
-             patch("h2ml.features.spatial_cv.SpatialBlockSplitter.split",
-                   return_value=iter([])), \
-             patch("h2ml.features.spatial_cv.SpatialBlockSplitter.get_n_splits",
-                   return_value=5):
+        with (
+            patch(
+                "h2ml.features.spatial_cv.SpatialBlockSplitter.__init__",
+                return_value=None,
+            ) as mock_init,
+            patch(
+                "h2ml.features.spatial_cv.SpatialBlockSplitter.split",
+                return_value=iter([]),
+            ),
+            patch(
+                "h2ml.features.spatial_cv.SpatialBlockSplitter.get_n_splits",
+                return_value=5,
+            ),
+        ):
             try:
                 cv5.run(step, X, y, coords=spatial_coords)
             except Exception:
@@ -610,6 +659,7 @@ class TestSpatialBlockCV:
 
     def test_random_splitter_used_when_no_coords(self, cv5, classification_data):
         from unittest.mock import patch
+
         X, y = classification_data
         step = make_classifier(RandomForestClassifier(n_estimators=5, random_state=42))
         with patch("h2ml.pipeline.cv.StratifiedKFold") as mock_skf:
@@ -620,7 +670,9 @@ class TestSpatialBlockCV:
                 pass
             mock_skf.assert_called_once()
 
-    def test_train_test_disjoint_with_spatial_coords(self, cv5, spatial_data, spatial_coords):
+    def test_train_test_disjoint_with_spatial_coords(
+        self, cv5, spatial_data, spatial_coords
+    ):
         X, y = spatial_data
         step = make_classifier(RandomForestClassifier(n_estimators=5, random_state=42))
         result = cv5.run(step, X, y, coords=spatial_coords)
@@ -628,7 +680,9 @@ class TestSpatialBlockCV:
             overlap = np.intersect1d(fold.train_idx, fold.test_idx)
             assert len(overlap) == 0
 
-    def test_all_indices_covered_with_spatial_coords(self, cv5, spatial_data, spatial_coords):
+    def test_all_indices_covered_with_spatial_coords(
+        self, cv5, spatial_data, spatial_coords
+    ):
         X, y = spatial_data
         step = make_classifier(RandomForestClassifier(n_estimators=5, random_state=42))
         result = cv5.run(step, X, y, coords=spatial_coords)
@@ -636,7 +690,8 @@ class TestSpatialBlockCV:
         assert sorted(all_test) == list(range(self.N))
 
     def test_n_blocks_per_fold_forwarded(self, spatial_data, spatial_coords):
-        from unittest.mock import patch, call
+        from unittest.mock import patch
+
         X, y = spatial_data
         cv = CrossValidator(n_splits=5)
         step = make_classifier(RandomForestClassifier(n_estimators=5, random_state=42))
@@ -648,14 +703,18 @@ class TestSpatialBlockCV:
             except Exception:
                 pass
             MockSplitter.assert_called_once_with(
-                coords=spatial_coords, n_splits=5, n_blocks_per_fold=3,
-                random_state=42, metric="euclidean",
+                coords=spatial_coords,
+                n_splits=5,
+                n_blocks_per_fold=3,
+                random_state=42,
+                metric="euclidean",
             )
 
 
 # ---------------------------------------------------------------------------
 # _scaled_folds parameter
 # ---------------------------------------------------------------------------
+
 
 class TestScaledFolds:
     """
@@ -670,33 +729,43 @@ class TestScaledFolds:
         """Build fold-level scaled arrays using the same splitter params as cv."""
         from sklearn.model_selection import StratifiedKFold
         from sklearn.preprocessing import StandardScaler
-        kf = StratifiedKFold(n_splits=cv.n_splits, shuffle=cv.shuffle,
-                             random_state=cv.random_state)
+
+        kf = StratifiedKFold(
+            n_splits=cv.n_splits, shuffle=cv.shuffle, random_state=cv.random_state
+        )
         folds = []
         for tr, te in kf.split(X, y):
             sc = StandardScaler()
             folds.append((sc.fit_transform(X[tr]), sc.transform(X[te])))
         return folds
 
-    def test_correct_fold_count_with_scaled_folds(self, cv, svc_step, classification_data):
+    def test_correct_fold_count_with_scaled_folds(
+        self, cv, svc_step, classification_data
+    ):
         """run() with _scaled_folds returns the same number of folds as without."""
         X, y = classification_data
         scaled = self._precompute(cv, X, y)
         result = cv.run(svc_step, X, y, _scaled_folds=scaled)
         assert result.n_folds == cv.n_splits
 
-    def test_maybe_scale_not_called_when_scaled_folds_provided(self, cv, svc_step, classification_data):
+    def test_maybe_scale_not_called_when_scaled_folds_provided(
+        self, cv, svc_step, classification_data
+    ):
         """_maybe_scale must be bypassed entirely when _scaled_folds is given."""
         from unittest.mock import patch
+
         X, y = classification_data
         scaled = self._precompute(cv, X, y)
         with patch.object(cv, "_maybe_scale", wraps=cv._maybe_scale) as mock:
             cv.run(svc_step, X, y, _scaled_folds=scaled)
         mock.assert_not_called()
 
-    def test_maybe_scale_called_when_scaled_folds_is_none(self, cv, svc_step, classification_data):
+    def test_maybe_scale_called_when_scaled_folds_is_none(
+        self, cv, svc_step, classification_data
+    ):
         """When _scaled_folds=None (default), _maybe_scale is called once per fold."""
         from unittest.mock import patch
+
         X, y = classification_data
         with patch.object(cv, "_maybe_scale", wraps=cv._maybe_scale) as mock:
             cv.run(svc_step, X, y, _scaled_folds=None)
@@ -705,6 +774,7 @@ class TestScaledFolds:
     def test_scaled_folds_none_is_default(self, cv, svc_step, classification_data):
         """Omitting _scaled_folds is equivalent to passing None."""
         from unittest.mock import patch
+
         X, y = classification_data
         with patch.object(cv, "_maybe_scale", wraps=cv._maybe_scale) as mock:
             cv.run(svc_step, X, y)

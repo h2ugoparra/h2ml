@@ -24,8 +24,10 @@ import numpy as np
 def log_transform(y: np.ndarray) -> np.ndarray:
     return np.log1p(y)
 
+
 def sqrt_transform(y: np.ndarray) -> np.ndarray:
     return np.sqrt(y)
+
 
 def winsorize(y: np.ndarray) -> Optional[np.ndarray]:
     """
@@ -43,21 +45,21 @@ def winsorize(y: np.ndarray) -> Optional[np.ndarray]:
 
 # Transform registry — extend freely
 Y_TRANSFORMS = {
-    "count":    lambda y: y,
-    "log":      log_transform,
-    "sqrt":     sqrt_transform,
+    "count": lambda y: y,
+    "log": log_transform,
+    "sqrt": sqrt_transform,
     "wincount": winsorize,
-    "winlog":   lambda y: winsorize(log_transform(y)),
-    "winsqrt":  lambda y: winsorize(sqrt_transform(y)),
+    "winlog": lambda y: winsorize(log_transform(y)),
+    "winsqrt": lambda y: winsorize(sqrt_transform(y)),
 }
 
 # Inverse transform registry — mirrors Y_TRANSFORMS
 # Winsorize clipping is not reversible; the log/sqrt step underneath is reversed instead.
 INVERSE_TRANSFORMS: dict[str, callable] = {
-    "count":    lambda y: y,
-    "log":      np.expm1,      # inverse of log1p
-    "sqrt":     np.square,     # inverse of sqrt
+    "count": lambda y: y,
+    "log": np.expm1,  # inverse of log1p
+    "sqrt": np.square,  # inverse of sqrt
     "wincount": lambda y: y,
-    "winlog":   np.expm1,
-    "winsqrt":  np.square,
+    "winlog": np.expm1,
+    "winsqrt": np.square,
 }

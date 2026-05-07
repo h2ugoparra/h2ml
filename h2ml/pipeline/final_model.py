@@ -15,6 +15,7 @@ Separation of concerns
 PipelineResult  — evaluation artifact (CV metrics, SHAP, stage selection)
 FinalModel      — deployment artifact (fitted estimator ready for prediction)
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -36,6 +37,7 @@ from h2ml.pipeline.base import TaskType
 # Conformal calibration
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ConformalCalibration:
     """
@@ -52,8 +54,9 @@ class ConformalCalibration:
     n:         Number of calibration samples (len(scores)).
     task_type: TaskType of the calibrated model.
     """
-    scores:    np.ndarray
-    n:         int
+
+    scores: np.ndarray
+    n: int
     task_type: TaskType
 
     def threshold(self, alpha: float) -> float:
@@ -90,15 +93,15 @@ class FinalModel:
     >>> final = FinalModel.load("models/final_model.pkl")
     """
 
-    estimator:        Any
-    feature_names:    list[str]
-    task_type:        TaskType
-    requires_scaling: bool                           = False
-    scaler:           Optional[Any]                  = None
-    best_model_name:  Optional[str]                  = None
-    best_params:      Optional[dict]                 = field(default=None)
-    conformal:        Optional[ConformalCalibration] = field(default=None)
-    y_transform:      Optional[str]                  = None
+    estimator: Any
+    feature_names: list[str]
+    task_type: TaskType
+    requires_scaling: bool = False
+    scaler: Optional[Any] = None
+    best_model_name: Optional[str] = None
+    best_params: Optional[dict] = field(default=None)
+    conformal: Optional[ConformalCalibration] = field(default=None)
+    y_transform: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Inference
@@ -126,7 +129,9 @@ class FinalModel:
             Multiclass: 2-D array of shape (n_samples, n_classes).
         """
         if self.task_type != TaskType.CLASSIFICATION:
-            raise ValueError("predict_proba is only available for classification tasks.")
+            raise ValueError(
+                "predict_proba is only available for classification tasks."
+            )
         proba = self.estimator.predict_proba(self._prepare(X))
         if proba.shape[1] == 2:
             return proba[:, 1]
@@ -134,7 +139,7 @@ class FinalModel:
 
     def predict_interval(
         self,
-        X:     pd.DataFrame | np.ndarray,
+        X: pd.DataFrame | np.ndarray,
         alpha: float = 0.10,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -167,7 +172,7 @@ class FinalModel:
 
     def predict_set(
         self,
-        X:     pd.DataFrame | np.ndarray,
+        X: pd.DataFrame | np.ndarray,
         alpha: float = 0.10,
     ) -> list[np.ndarray]:
         """
@@ -197,7 +202,7 @@ class FinalModel:
                 "No conformal calibration available. "
                 "Rebuild FinalModel via result.build_final_model() after a full pipeline run."
             )
-        p = self.predict_proba(X)   # 1-D for binary, 2-D for multiclass
+        p = self.predict_proba(X)  # 1-D for binary, 2-D for multiclass
         q = self.conformal.threshold(alpha)
         classes = self.estimator.classes_
         sets = []
@@ -263,7 +268,10 @@ class FinalModel:
 # Factory
 # ---------------------------------------------------------------------------
 
-def _build_conformal_calibration(result, classes=None) -> Optional[ConformalCalibration]:
+
+def _build_conformal_calibration(
+    result, classes=None
+) -> Optional[ConformalCalibration]:
     """
     Build a ConformalCalibration from the out-of-fold predictions in best_cv_result.
 
@@ -284,9 +292,7 @@ def _build_conformal_calibration(result, classes=None) -> Optional[ConformalCali
     task_type = cv.task_type
 
     if task_type == TaskType.REGRESSION:
-        scores = np.concatenate([
-            np.abs(f.y_test - f.y_pred_test) for f in cv.folds
-        ])
+        scores = np.concatenate([np.abs(f.y_test - f.y_pred_test) for f in cv.folds])
     else:
         sample_scores = []
         for f in cv.folds:
@@ -318,9 +324,9 @@ def _build_conformal_calibration(result, classes=None) -> Optional[ConformalCali
         scores = np.concatenate(sample_scores)
 
     return ConformalCalibration(
-        scores    = np.sort(scores),
-        n         = len(scores),
-        task_type = task_type,
+        scores=np.sort(scores),
+        n=len(scores),
+        task_type=task_type,
     )
 
 
@@ -344,11 +350,7 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     task_type = result.step1_cv_result[0].task_type
 
     feature_stage = result.best_feature_stage or result.best_stage
-    store = (
-        result.features_reduced
-        if feature_stage == "reduced"
-        else result.features
-    )
+    store = result.features_reduced if feature_stage == "reduced" else result.features
 
     registry = (
         CLASSIFIER_REGISTRY
@@ -380,13 +382,13 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     classes = getattr(estimator, "classes_", None)
 
     return FinalModel(
-        estimator        = estimator,
-        feature_names    = store.feature_names,
-        task_type        = task_type,
-        requires_scaling = entry.requires_scaling,
-        scaler           = scaler,
-        best_model_name  = result.best_model_name,
-        best_params      = result.best_params,
-        conformal        = _build_conformal_calibration(result, classes=classes),
-        y_transform      = result.y_transform,
+        estimator=estimator,
+        feature_names=store.feature_names,
+        task_type=task_type,
+        requires_scaling=entry.requires_scaling,
+        scaler=scaler,
+        best_model_name=result.best_model_name,
+        best_params=result.best_params,
+        conformal=_build_conformal_calibration(result, classes=classes),
+        y_transform=result.y_transform,
     )

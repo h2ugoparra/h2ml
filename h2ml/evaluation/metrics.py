@@ -6,6 +6,7 @@ Responsibilities:
     - Attach domain metadata (species, setting, batch, schema)
     - Detect overfitting gap between train and test metrics
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -23,7 +24,7 @@ from sklearn.metrics import (
     # Regression
     mean_absolute_error,
     mean_squared_error,
-    r2_score
+    r2_score,
 )
 
 from h2ml.pipeline.base import TaskType
@@ -32,6 +33,7 @@ from h2ml.pipeline.cv import CVResult, FoldResult
 # ---------------------------------------------------------------------------
 # Metadata container — replaces PipelineSpecs fields in results
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class RunMetadata:
@@ -49,17 +51,18 @@ class RunMetadata:
         batch:    Optional batch/run identifier.
         schema:   Optional feature schema label.
     """
+
     # Experiment ID
-    schema:  Optional[str] = None
+    schema: Optional[str] = None
     target: Optional[str] = None
 
     # Pipeline stage — set automatically by pipeline._metadata_with()
     stage: str = "default"  # "default" | "reduced" | "optimized"
 
     # Optional grouping
-    batch:       Optional[str] = None   # run ID, date, or any grouping label
-    y_transform: Optional[str] = None   # y-transform name, set by run_transform_sweep()
-    notes:       Optional[str] = None   # free text — useful for experiments log
+    batch: Optional[str] = None  # run ID, date, or any grouping label
+    y_transform: Optional[str] = None  # y-transform name, set by run_transform_sweep()
+    notes: Optional[str] = None  # free text — useful for experiments log
 
     def to_dict(self) -> dict:
         return {k.capitalize(): v for k, v in self.__dict__.items() if v is not None}
@@ -68,6 +71,7 @@ class RunMetadata:
 # ---------------------------------------------------------------------------
 # Per-fold metric rows
 # ---------------------------------------------------------------------------
+
 
 def _classification_metrics(fold: FoldResult) -> dict:
     """Compute classification metrics for a single fold.
@@ -89,75 +93,126 @@ def _classification_metrics(fold: FoldResult) -> dict:
 
     # All classes seen across both splits — needed to keep metric calls stable
     # even when one split is missing a class (common with spatial CV + imbalance).
-    all_classes = sorted(np.unique(np.concatenate([fold.y_train, fold.y_test])).tolist())
-    single_class_test  = len(np.unique(fold.y_test))  < 2
+    all_classes = sorted(
+        np.unique(np.concatenate([fold.y_train, fold.y_test])).tolist()
+    )
+    single_class_test = len(np.unique(fold.y_test)) < 2
     single_class_train = len(np.unique(fold.y_train)) < 2
 
     if is_multiclass:
         from sklearn.preprocessing import label_binarize
-        y_test_bin  = label_binarize(fold.y_test,  classes=all_classes)
+
+        y_test_bin = label_binarize(fold.y_test, classes=all_classes)
         y_train_bin = label_binarize(fold.y_train, classes=all_classes)
-        auc_test  = (np.nan if single_class_test  else
-                     roc_auc_score(fold.y_test,  fold.y_prob_test,  multi_class="ovr", average="weighted"))
-        auc_train = (np.nan if single_class_train else
-                     roc_auc_score(fold.y_train, fold.y_prob_train, multi_class="ovr", average="weighted"))
-        auc_pr_test  = (np.nan if single_class_test  else
-                        average_precision_score(y_test_bin,  fold.y_prob_test,  average="weighted"))
-        auc_pr_train = (np.nan if single_class_train else
-                        average_precision_score(y_train_bin, fold.y_prob_train, average="weighted"))
-        logloss_test  = log_loss(fold.y_test,  fold.y_prob_test,  labels=all_classes)
+        auc_test = (
+            np.nan
+            if single_class_test
+            else roc_auc_score(
+                fold.y_test, fold.y_prob_test, multi_class="ovr", average="weighted"
+            )
+        )
+        auc_train = (
+            np.nan
+            if single_class_train
+            else roc_auc_score(
+                fold.y_train, fold.y_prob_train, multi_class="ovr", average="weighted"
+            )
+        )
+        auc_pr_test = (
+            np.nan
+            if single_class_test
+            else average_precision_score(
+                y_test_bin, fold.y_prob_test, average="weighted"
+            )
+        )
+        auc_pr_train = (
+            np.nan
+            if single_class_train
+            else average_precision_score(
+                y_train_bin, fold.y_prob_train, average="weighted"
+            )
+        )
+        logloss_test = log_loss(fold.y_test, fold.y_prob_test, labels=all_classes)
         logloss_train = log_loss(fold.y_train, fold.y_prob_train, labels=all_classes)
-        f1_test  = f1_score(fold.y_test,  fold.y_pred_test,  average="weighted", zero_division=0)
-        f1_train = f1_score(fold.y_train, fold.y_pred_train, average="weighted", zero_division=0)
+        f1_test = f1_score(
+            fold.y_test, fold.y_pred_test, average="weighted", zero_division=0
+        )
+        f1_train = f1_score(
+            fold.y_train, fold.y_pred_train, average="weighted", zero_division=0
+        )
         # Multiclass Brier: mean over samples of sum-of-squared probability errors
-        brier_test  = float(np.mean(np.sum((y_test_bin  - fold.y_prob_test)**2, axis=1)))
-        brier_train = float(np.mean(np.sum((y_train_bin - fold.y_prob_train)**2, axis=1)))
+        brier_test = float(
+            np.mean(np.sum((y_test_bin - fold.y_prob_test) ** 2, axis=1))
+        )
+        brier_train = float(
+            np.mean(np.sum((y_train_bin - fold.y_prob_train) ** 2, axis=1))
+        )
     else:
-        auc_test  = (np.nan if single_class_test  else roc_auc_score(fold.y_test,  fold.y_prob_test))
-        auc_train = (np.nan if single_class_train else roc_auc_score(fold.y_train, fold.y_prob_train))
-        auc_pr_test  = (np.nan if single_class_test  else average_precision_score(fold.y_test,  fold.y_prob_test))
-        auc_pr_train = (np.nan if single_class_train else average_precision_score(fold.y_train, fold.y_prob_train))
-        logloss_test  = log_loss(fold.y_test,  fold.y_prob_test,  labels=all_classes)
+        auc_test = (
+            np.nan
+            if single_class_test
+            else roc_auc_score(fold.y_test, fold.y_prob_test)
+        )
+        auc_train = (
+            np.nan
+            if single_class_train
+            else roc_auc_score(fold.y_train, fold.y_prob_train)
+        )
+        auc_pr_test = (
+            np.nan
+            if single_class_test
+            else average_precision_score(fold.y_test, fold.y_prob_test)
+        )
+        auc_pr_train = (
+            np.nan
+            if single_class_train
+            else average_precision_score(fold.y_train, fold.y_prob_train)
+        )
+        logloss_test = log_loss(fold.y_test, fold.y_prob_test, labels=all_classes)
         logloss_train = log_loss(fold.y_train, fold.y_prob_train, labels=all_classes)
-        f1_test  = f1_score(fold.y_test,  fold.y_pred_test,  zero_division=0, labels=all_classes)
-        f1_train = f1_score(fold.y_train, fold.y_pred_train, zero_division=0, labels=all_classes)
-        brier_test  = float(brier_score_loss(fold.y_test,  fold.y_prob_test))
+        f1_test = f1_score(
+            fold.y_test, fold.y_pred_test, zero_division=0, labels=all_classes
+        )
+        f1_train = f1_score(
+            fold.y_train, fold.y_pred_train, zero_division=0, labels=all_classes
+        )
+        brier_test = float(brier_score_loss(fold.y_test, fold.y_prob_test))
         brier_train = float(brier_score_loss(fold.y_train, fold.y_prob_train))
 
     return {
-        "AUC_Test":      auc_test,
-        "AUC_Train":     auc_train,
-        "AUC_PR_Test":   auc_pr_test,
-        "AUC_PR_Train":  auc_pr_train,
-        "LogLoss_Test":  logloss_test,
+        "AUC_Test": auc_test,
+        "AUC_Train": auc_train,
+        "AUC_PR_Test": auc_pr_test,
+        "AUC_PR_Train": auc_pr_train,
+        "LogLoss_Test": logloss_test,
         "LogLoss_Train": logloss_train,
-        "F1_Test":       f1_test,
-        "F1_Train":      f1_train,
-        "Brier_Test":    brier_test,
-        "Brier_Train":   brier_train,
-        "Fit_Time":      fold.fit_time,
+        "F1_Test": f1_test,
+        "F1_Train": f1_train,
+        "Brier_Test": brier_test,
+        "Brier_Train": brier_train,
+        "Fit_Time": fold.fit_time,
     }
 
 
 def _regression_metrics(fold: FoldResult) -> dict:
     """Compute regression metrics for a single fold."""
-    mse_test  = mean_squared_error(fold.y_test,  fold.y_pred_test)
+    mse_test = mean_squared_error(fold.y_test, fold.y_pred_test)
     mse_train = mean_squared_error(fold.y_train, fold.y_pred_train)
     return {
-        "R2_Test":    r2_score(fold.y_test,  fold.y_pred_test),
-        "R2_Train":   r2_score(fold.y_train, fold.y_pred_train),
-        "MAE_Test":   mean_absolute_error(fold.y_test,  fold.y_pred_test),
-        "MAE_Train":  mean_absolute_error(fold.y_train, fold.y_pred_train),
-        "RMSE_Test":  np.sqrt(mse_test),
+        "R2_Test": r2_score(fold.y_test, fold.y_pred_test),
+        "R2_Train": r2_score(fold.y_train, fold.y_pred_train),
+        "MAE_Test": mean_absolute_error(fold.y_test, fold.y_pred_test),
+        "MAE_Train": mean_absolute_error(fold.y_train, fold.y_pred_train),
+        "RMSE_Test": np.sqrt(mse_test),
         "RMSE_Train": np.sqrt(mse_train),
-        "Fit_Time":   fold.fit_time,
+        "Fit_Time": fold.fit_time,
     }
 
 
 # Dispatcher — routes to the right metric function by task type
 _METRIC_FN = {
     TaskType.CLASSIFICATION: _classification_metrics,
-    TaskType.REGRESSION:     _regression_metrics,
+    TaskType.REGRESSION: _regression_metrics,
 }
 
 
@@ -171,15 +226,15 @@ _METRIC_FN = {
 #   minimize metrics (LogLoss, MAE):  gap = test  - train  → positive = overfitting
 _OVERFIT_PAIRS = {
     TaskType.CLASSIFICATION: [
-        ("AUC_Test",     "AUC_Train",     False),
-        ("AUC_PR_Test",  "AUC_PR_Train",  False),
-        ("F1_Test",      "F1_Train",      False),
+        ("AUC_Test", "AUC_Train", False),
+        ("AUC_PR_Test", "AUC_PR_Train", False),
+        ("F1_Test", "F1_Train", False),
         ("LogLoss_Test", "LogLoss_Train", True),
-        ("Brier_Test",   "Brier_Train",   True),
+        ("Brier_Test", "Brier_Train", True),
     ],
     TaskType.REGRESSION: [
-        ("R2_Test",   "R2_Train",   False),
-        ("MAE_Test",  "MAE_Train",  True),
+        ("R2_Test", "R2_Train", False),
+        ("MAE_Test", "MAE_Train", True),
         ("RMSE_Test", "RMSE_Train", True),
     ],
 }
@@ -194,7 +249,8 @@ def _add_overfit_gap(df: pd.DataFrame, task_type: TaskType) -> pd.DataFrame:
         if test_col in df.columns and train_col in df.columns:
             metric_name = test_col.replace("_Test", "")
             df[f"{metric_name}_Gap"] = (
-                df[test_col] - df[train_col] if minimize
+                df[test_col] - df[train_col]
+                if minimize
                 else df[train_col] - df[test_col]
             )
     return df
@@ -204,9 +260,10 @@ def _add_overfit_gap(df: pd.DataFrame, task_type: TaskType) -> pd.DataFrame:
 # Main public API
 # ---------------------------------------------------------------------------
 
+
 def compute_metrics(
     cv_result: CVResult,
-    metadata:  Optional[RunMetadata] = None,
+    metadata: Optional[RunMetadata] = None,
 ) -> pd.DataFrame:
     """
     Compute per-fold metrics for a single CVResult.
@@ -237,7 +294,7 @@ def compute_metrics(
 
 def compute_metrics_all(
     cv_results: list[CVResult],
-    metadata:   Optional[RunMetadata] = None,
+    metadata: Optional[RunMetadata] = None,
 ) -> pd.DataFrame:
     """
     Compute per-fold metrics for a list of CVResults (all models).
@@ -256,9 +313,8 @@ def compute_metrics_all(
 
 
 def aggregate_metrics(
-        fold_df: pd.DataFrame,
-        group_by_stage: bool = True
-        ) -> pd.DataFrame:
+    fold_df: pd.DataFrame, group_by_stage: bool = True
+) -> pd.DataFrame:
     """
     Aggregate per-fold results into mean ± std per model.
 
@@ -281,15 +337,14 @@ def aggregate_metrics(
         group_cols += [c for c in meta_fields if c in fold_df.columns]
     else:
         # Exclude Stage — pool all folds across stages per model/transform
-        group_cols += [c for c in meta_fields if c in fold_df.columns
-                       and c != "Stage"]
+        group_cols += [c for c in meta_fields if c in fold_df.columns and c != "Stage"]
 
     numeric_cols = fold_df.select_dtypes(include=np.number).columns.tolist()
     # Exclude fold id from aggregation
     numeric_cols = [c for c in numeric_cols if c != "Fold"]
 
     mean_df = fold_df.groupby(group_cols)[numeric_cols].mean().add_suffix("_Mean")
-    std_df  = fold_df.groupby(group_cols)[numeric_cols].std().add_suffix("_Std")
+    std_df = fold_df.groupby(group_cols)[numeric_cols].std().add_suffix("_Std")
 
     agg_df = pd.concat([mean_df, std_df], axis=1).reset_index()
 
@@ -303,10 +358,10 @@ def aggregate_metrics(
 
 
 def select_best(
-    agg_df:   pd.DataFrame,
-    metric:   str           = "AUC_Test_Mean",
-    minimize: bool          = False,
-    n_folds:  Optional[int] = None,
+    agg_df: pd.DataFrame,
+    metric: str = "AUC_Test_Mean",
+    minimize: bool = False,
+    n_folds: Optional[int] = None,
 ) -> dict:
     """
     Select the best model from an aggregated metrics DataFrame.
@@ -339,7 +394,7 @@ def select_best(
     std_col = metric.replace("_Mean", "_Std")
     if n_folds is not None and std_col in agg_df.columns:
         penalty = agg_df[std_col] / np.sqrt(n_folds)
-        score   = agg_df[metric] + penalty if minimize else agg_df[metric] - penalty
+        score = agg_df[metric] + penalty if minimize else agg_df[metric] - penalty
     else:
         score = agg_df[metric]
 
@@ -348,12 +403,12 @@ def select_best(
             f"select_best: all values in column '{metric}' are NaN. "
             "Every model may have failed all CV folds. Check cv_warnings on the result."
         )
-    idx      = score.idxmin() if minimize else score.idxmax()
+    idx = score.idxmin() if minimize else score.idxmax()
     best_row = agg_df.loc[idx]
 
     return {
         "model_name": best_row["Model"],
-        "metric":     metric,
-        "value":      best_row[metric],
-        "row":        best_row,
+        "metric": metric,
+        "value": best_row[metric],
+        "row": best_row,
     }

@@ -3,13 +3,12 @@ tests/utils/test_registry.py
 
 Tests for ModelEntry, CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY, and build_models().
 """
+
 from __future__ import annotations
 
 import pytest
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.naive_bayes import GaussianNB
-from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 
 from h2ml.utils.registry import (
     ModelEntry,
@@ -24,8 +23,8 @@ from h2ml.pipeline.step import ModelWrapper
 # ModelEntry
 # ---------------------------------------------------------------------------
 
-class TestModelEntry:
 
+class TestModelEntry:
     def test_build_model_returns_model_wrapper(self):
         entry = CLASSIFIER_REGISTRY["RandomForestClassifier"]
         assert isinstance(entry.build_model(), ModelWrapper)
@@ -37,7 +36,9 @@ class TestModelEntry:
 
     def _entry_with_param_fn(self, **kwargs) -> ModelEntry:
         """Minimal valid entry: param_fn provided so opt_enabled=True is legal."""
-        return ModelEntry(model_cls=RandomForestClassifier, param_fn=lambda t: {}, **kwargs)
+        return ModelEntry(
+            model_cls=RandomForestClassifier, param_fn=lambda t: {}, **kwargs
+        )
 
     def test_requires_scaling_false_by_default(self):
         entry = self._entry_with_param_fn()
@@ -54,11 +55,15 @@ class TestModelEntry:
     def test_opt_enabled_true_without_param_fn_raises(self):
         """opt_enabled=True with param_fn=None is an invalid combination."""
         with pytest.raises(ValueError, match="param_fn"):
-            ModelEntry(model_cls=RandomForestClassifier, opt_enabled=True, param_fn=None)
+            ModelEntry(
+                model_cls=RandomForestClassifier, opt_enabled=True, param_fn=None
+            )
 
     def test_opt_enabled_false_without_param_fn_is_valid(self):
         """opt_enabled=False with param_fn=None is the legitimate disabled state."""
-        entry = ModelEntry(model_cls=LogisticRegression, opt_enabled=False, param_fn=None)
+        entry = ModelEntry(
+            model_cls=LogisticRegression, opt_enabled=False, param_fn=None
+        )
         assert entry.opt_enabled is False
 
 
@@ -66,8 +71,8 @@ class TestModelEntry:
 # CLASSIFIER_REGISTRY
 # ---------------------------------------------------------------------------
 
-class TestClassifierRegistry:
 
+class TestClassifierRegistry:
     def test_contains_logistic_regression(self):
         assert "LogisticRegression" in CLASSIFIER_REGISTRY
 
@@ -116,8 +121,8 @@ class TestClassifierRegistry:
 # REGRESSOR_REGISTRY
 # ---------------------------------------------------------------------------
 
-class TestRegressorRegistry:
 
+class TestRegressorRegistry:
     def test_contains_random_forest_regressor(self):
         assert "RandomForestRegressor" in REGRESSOR_REGISTRY
 
@@ -151,8 +156,8 @@ class TestRegressorRegistry:
 # build_models()
 # ---------------------------------------------------------------------------
 
-class TestBuildModels:
 
+class TestBuildModels:
     def test_classification_returns_list(self):
         models = build_models("classification")
         assert isinstance(models, list)

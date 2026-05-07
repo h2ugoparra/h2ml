@@ -56,6 +56,7 @@ from h2ml.preprocessing.transforms import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def clean_y() -> np.ndarray:
     """Array with no outliers — IQR-based upper limit not exceeded."""
@@ -66,7 +67,7 @@ def clean_y() -> np.ndarray:
 @pytest.fixture
 def outlier_y() -> np.ndarray:
     """Array with clear upper outliers."""
-    rng  = np.random.default_rng(42)
+    rng = np.random.default_rng(42)
     base = rng.uniform(0, 10, size=95)
     outliers = np.array([1000.0, 2000.0, 1500.0, 900.0, 800.0])
     return np.concatenate([base, outliers])
@@ -87,8 +88,8 @@ def single_outlier_y() -> np.ndarray:
 # log_transform
 # ---------------------------------------------------------------------------
 
-class TestLogTransform:
 
+class TestLogTransform:
     def test_returns_numpy_array(self, clean_y):
         result = log_transform(clean_y)
         assert isinstance(result, np.ndarray)
@@ -116,7 +117,7 @@ class TestLogTransform:
     def test_monotonic_with_input(self, clean_y):
         """log1p is monotonically increasing — larger input → larger output."""
         y_sorted = np.sort(clean_y)
-        result   = log_transform(y_sorted)
+        result = log_transform(y_sorted)
         assert (np.diff(result) >= 0).all()
 
 
@@ -124,8 +125,8 @@ class TestLogTransform:
 # sqrt_transform
 # ---------------------------------------------------------------------------
 
-class TestSqrtTransform:
 
+class TestSqrtTransform:
     def test_returns_numpy_array(self, clean_y):
         result = sqrt_transform(clean_y)
         assert isinstance(result, np.ndarray)
@@ -148,13 +149,13 @@ class TestSqrtTransform:
 
     def test_monotonic_with_input(self, clean_y):
         y_sorted = np.sort(clean_y)
-        result   = sqrt_transform(y_sorted)
+        result = sqrt_transform(y_sorted)
         assert (np.diff(result) >= 0).all()
 
     def test_sqrt_compresses_range(self, outlier_y):
         """sqrt should reduce the range of values with outliers."""
         original_range = outlier_y.max() - outlier_y.min()
-        result_range   = sqrt_transform(outlier_y).max() - sqrt_transform(outlier_y).min()
+        result_range = sqrt_transform(outlier_y).max() - sqrt_transform(outlier_y).min()
         assert result_range < original_range
 
 
@@ -162,8 +163,8 @@ class TestSqrtTransform:
 # winsorize
 # ---------------------------------------------------------------------------
 
-class TestWinsorize:
 
+class TestWinsorize:
     def test_returns_none_when_no_outliers(self, clean_y):
         result = winsorize(clean_y)
         assert result is None
@@ -188,7 +189,7 @@ class TestWinsorize:
         Q1, Q3 = np.percentile(outlier_y, [25, 75])
         upper_limit = Q3 + 1.5 * (Q3 - Q1)
         result = winsorize(outlier_y)
-        mask   = outlier_y <= upper_limit
+        mask = outlier_y <= upper_limit
         np.testing.assert_array_equal(result[mask], outlier_y[mask])
 
     def test_upper_limit_computed_correctly(self, outlier_y):
@@ -209,9 +210,9 @@ class TestWinsorize:
     def test_multiple_outliers_all_clipped(self, outlier_y):
         Q1, Q3 = np.percentile(outlier_y, [25, 75])
         upper_limit = Q3 + 1.5 * (Q3 - Q1)
-        result  = winsorize(outlier_y)
+        result = winsorize(outlier_y)
         n_above = (outlier_y > upper_limit).sum()
-        assert n_above > 1   # confirm fixture has multiple outliers
+        assert n_above > 1  # confirm fixture has multiple outliers
         assert (result > upper_limit).sum() == 0
 
     def test_all_same_value_returns_none(self):
@@ -229,8 +230,8 @@ class TestWinsorize:
 # Y_TRANSFORMS registry
 # ---------------------------------------------------------------------------
 
-class TestYTransformsRegistry:
 
+class TestYTransformsRegistry:
     def test_all_expected_keys_present(self):
         expected = {"count", "log", "sqrt", "wincount", "winlog", "winsqrt"}
         assert expected.issubset(set(Y_TRANSFORMS.keys()))
@@ -240,12 +241,12 @@ class TestYTransformsRegistry:
         np.testing.assert_array_equal(result, clean_y)
 
     def test_log_matches_log_transform(self, clean_y):
-        result   = Y_TRANSFORMS["log"](clean_y)
+        result = Y_TRANSFORMS["log"](clean_y)
         expected = log_transform(clean_y)
         np.testing.assert_array_almost_equal(result, expected)
 
     def test_sqrt_matches_sqrt_transform(self, clean_y):
-        result   = Y_TRANSFORMS["sqrt"](clean_y)
+        result = Y_TRANSFORMS["sqrt"](clean_y)
         expected = sqrt_transform(clean_y)
         np.testing.assert_array_almost_equal(result, expected)
 
@@ -262,8 +263,8 @@ class TestYTransformsRegistry:
 
     def test_winlog_applies_log_then_winsorize(self, outlier_y):
         """winlog = winsorize(log1p(y)) — verify chain."""
-        log_y  = log_transform(outlier_y)
-        win_y  = winsorize(log_y)
+        log_y = log_transform(outlier_y)
+        win_y = winsorize(log_y)
         result = Y_TRANSFORMS["winlog"](outlier_y)
         if win_y is None:
             assert result is None
@@ -273,7 +274,7 @@ class TestYTransformsRegistry:
     def test_winsqrt_applies_sqrt_then_winsorize(self, outlier_y):
         """winsqrt = winsorize(sqrt(y)) — verify chain."""
         sqrt_y = sqrt_transform(outlier_y)
-        win_y  = winsorize(sqrt_y)
+        win_y = winsorize(sqrt_y)
         result = Y_TRANSFORMS["winsqrt"](outlier_y)
         if win_y is None:
             assert result is None

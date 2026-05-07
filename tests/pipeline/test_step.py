@@ -21,11 +21,9 @@ import numpy as np
 import pytest
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
 
 from h2ml.pipeline.base import TaskType
 from h2ml.pipeline.step import (
-    ModelWrapper,
     make_classifier,
     make_preprocessor,
     make_regressor,
@@ -36,8 +34,8 @@ from h2ml.pipeline.step import (
 # Task type inference
 # ---------------------------------------------------------------------------
 
-class TestTaskTypeInference:
 
+class TestTaskTypeInference:
     def test_classifier_inferred(self, rf_classifier_step):
         assert rf_classifier_step.task_type == TaskType.CLASSIFICATION
 
@@ -52,8 +50,8 @@ class TestTaskTypeInference:
 # fit()
 # ---------------------------------------------------------------------------
 
-class TestFit:
 
+class TestFit:
     def test_fit_sets_fitted_flag(self, rf_classifier_step, classification_data):
         X, y = classification_data
         assert rf_classifier_step._fitted is False
@@ -80,8 +78,8 @@ class TestFit:
 # _check_fitted guard
 # ---------------------------------------------------------------------------
 
-class TestCheckFitted:
 
+class TestCheckFitted:
     def test_predict_raises_before_fit(self, rf_classifier_step, classification_data):
         X, _ = classification_data
         with pytest.raises(RuntimeError, match="not been fitted"):
@@ -92,7 +90,9 @@ class TestCheckFitted:
         with pytest.raises(RuntimeError, match="not been fitted"):
             rf_classifier_step.transform(X)
 
-    def test_predict_proba_raises_before_fit(self, rf_classifier_step, classification_data):
+    def test_predict_proba_raises_before_fit(
+        self, rf_classifier_step, classification_data
+    ):
         X, _ = classification_data
         with pytest.raises(RuntimeError, match="not been fitted"):
             rf_classifier_step.predict_proba(X)
@@ -102,8 +102,8 @@ class TestCheckFitted:
 # predict()
 # ---------------------------------------------------------------------------
 
-class TestPredict:
 
+class TestPredict:
     def test_predict_classifier_shape(self, fitted_rf_classifier, classification_data):
         X, y = classification_data
         preds = fitted_rf_classifier.predict(X)
@@ -119,7 +119,9 @@ class TestPredict:
         preds = fitted_rf_regressor.predict(X)
         assert preds.shape == (100,)
 
-    def test_predict_regressor_is_continuous(self, fitted_rf_regressor, regression_data):
+    def test_predict_regressor_is_continuous(
+        self, fitted_rf_regressor, regression_data
+    ):
         X, _ = regression_data
         preds = fitted_rf_regressor.predict(X)
         assert preds.dtype in [np.float32, np.float64]
@@ -129,9 +131,11 @@ class TestPredict:
 # predict_proba()
 # ---------------------------------------------------------------------------
 
-class TestPredictProba:
 
-    def test_predict_proba_classifier_shape(self, fitted_rf_classifier, classification_data):
+class TestPredictProba:
+    def test_predict_proba_classifier_shape(
+        self, fitted_rf_classifier, classification_data
+    ):
         X, _ = classification_data
         proba = fitted_rf_classifier.predict_proba(X)
         assert proba.shape == (100, 2)
@@ -141,45 +145,52 @@ class TestPredictProba:
         proba = fitted_rf_classifier.predict_proba(X)
         np.testing.assert_allclose(proba.sum(axis=1), np.ones(100), atol=1e-6)
 
-    def test_predict_proba_raises_on_regressor(self, fitted_rf_regressor, regression_data):
+    def test_predict_proba_raises_on_regressor(
+        self, fitted_rf_regressor, regression_data
+    ):
         X, _ = regression_data
         with pytest.raises(TypeError, match="only available for classifiers"):
             fitted_rf_regressor.predict_proba(X)
-
 
 
 # ---------------------------------------------------------------------------
 # transform()
 # ---------------------------------------------------------------------------
 
-class TestTransform:
 
-    def test_transform_classifier_passthrough(self, fitted_rf_classifier, classification_data):
+class TestTransform:
+    def test_transform_classifier_passthrough(
+        self, fitted_rf_classifier, classification_data
+    ):
         X, _ = classification_data
         result = fitted_rf_classifier.transform(X)
         np.testing.assert_array_equal(result, X)
 
-    def test_transform_regressor_passthrough(self, fitted_rf_regressor, regression_data):
+    def test_transform_regressor_passthrough(
+        self, fitted_rf_regressor, regression_data
+    ):
         X, _ = regression_data
         result = fitted_rf_regressor.transform(X)
         np.testing.assert_array_equal(result, X)
 
-    def test_transform_preprocessor_changes_data(self, scaler_step, classification_data):
+    def test_transform_preprocessor_changes_data(
+        self, scaler_step, classification_data
+    ):
         X, y = classification_data
         scaler_step.fit(X, y)
         result = scaler_step.transform(X)
         assert result.shape == X.shape
         # Scaled output should have near-zero mean and unit variance
         np.testing.assert_allclose(result.mean(axis=0), np.zeros(5), atol=0.1)
-        np.testing.assert_allclose(result.std(axis=0),  np.ones(5),  atol=0.1)
+        np.testing.assert_allclose(result.std(axis=0), np.ones(5), atol=0.1)
 
 
 # ---------------------------------------------------------------------------
 # requires_scaling flag
 # ---------------------------------------------------------------------------
 
-class TestRequiresScaling:
 
+class TestRequiresScaling:
     def test_requires_scaling_default_false(self, rf_classifier_step):
         assert rf_classifier_step.requires_scaling is False
 
@@ -194,8 +205,8 @@ class TestRequiresScaling:
 # __repr__
 # ---------------------------------------------------------------------------
 
-class TestRepr:
 
+class TestRepr:
     def test_repr_contains_name(self, rf_classifier_step):
         assert "RandomForestClassifier" in repr(rf_classifier_step)
 
@@ -213,8 +224,8 @@ class TestRepr:
 # Factory functions
 # ---------------------------------------------------------------------------
 
-class TestFactoryFunctions:
 
+class TestFactoryFunctions:
     def test_make_classifier_task_type(self):
         step = make_classifier(RandomForestClassifier())
         assert step.task_type == TaskType.CLASSIFICATION

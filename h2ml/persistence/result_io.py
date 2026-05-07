@@ -21,6 +21,7 @@ Layout
     step3_cv_result.pkl    — list[CVResult]
     step4_cv_result.pkl     — CVResult
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -42,31 +43,50 @@ from h2ml.features.feature_store import PipelineData
 # ---------------------------------------------------------------------------
 
 # Fields intentionally excluded from persistence (transient / derived / expensive).
-_UNSAVED_FIELDS = frozenset({
-    "step3_reduced_stores",  # step-4 cache; rebuilt from selector on demand
-    "splitter",              # rebuilt from coords on demand
-    "_final_shap_cache",     # plot cache; not needed across sessions
-})
+_UNSAVED_FIELDS = frozenset(
+    {
+        "step3_reduced_stores",  # step-4 cache; rebuilt from selector on demand
+        "splitter",  # rebuilt from coords on demand
+        "_final_shap_cache",  # plot cache; not needed across sessions
+    }
+)
 
-_SAVED_FIELDS = frozenset({
-    # metadata.json
-    "best_model_name", "best_model_value", "best_model_std",
-    "best_stage", "best_feature_stage", "best_params",
-    "y_transform", "cv_type", "cv_warnings", "metric",
-    # parquet
-    "step1_fold_df", "step1_agg_df",
-    "step3_fold_df", "step3_agg_df",
-    "step4_fold_df", "step4_agg_df",
-    # feature stores
-    "features", "features_reduced",
-    # pickles
-    "selector", "step1_cv_result", "step3_cv_result", "step4_cv_result",
-})
+_SAVED_FIELDS = frozenset(
+    {
+        # metadata.json
+        "best_model_name",
+        "best_model_value",
+        "best_model_std",
+        "best_stage",
+        "best_feature_stage",
+        "best_params",
+        "y_transform",
+        "cv_type",
+        "cv_warnings",
+        "metric",
+        # parquet
+        "step1_fold_df",
+        "step1_agg_df",
+        "step3_fold_df",
+        "step3_agg_df",
+        "step4_fold_df",
+        "step4_agg_df",
+        # feature stores
+        "features",
+        "features_reduced",
+        # pickles
+        "selector",
+        "step1_cv_result",
+        "step3_cv_result",
+        "step4_cv_result",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def save_result(result, path: str | Path) -> None:
     """
@@ -84,16 +104,16 @@ def save_result(result, path: str | Path) -> None:
     # Scalars
     _save_json(
         {
-            "best_model_name":    result.best_model_name,
-            "best_model_value":   result.best_model_value,
-            "best_model_std":     result.best_model_std,
-            "best_stage":         result.best_stage,
+            "best_model_name": result.best_model_name,
+            "best_model_value": result.best_model_value,
+            "best_model_std": result.best_model_std,
+            "best_stage": result.best_stage,
             "best_feature_stage": result.best_feature_stage,
-            "best_params":        result.best_params,
-            "y_transform":        result.y_transform,
-            "cv_type":            result.cv_type,
-            "cv_warnings":        result.cv_warnings,
-            "metric":             result.metric,
+            "best_params": result.best_params,
+            "y_transform": result.y_transform,
+            "cv_type": result.cv_type,
+            "cv_warnings": result.cv_warnings,
+            "metric": result.metric,
         },
         root / "metadata.json",
     )
@@ -101,11 +121,11 @@ def save_result(result, path: str | Path) -> None:
     # DataFrames
     _df_map = {
         "step1_fold": result.step1_fold_df,
-        "step1_agg":  result.step1_agg_df,
+        "step1_agg": result.step1_agg_df,
         "step3_fold": result.step3_fold_df,
-        "step3_agg":  result.step3_agg_df,
+        "step3_agg": result.step3_agg_df,
         "step4_fold": result.step4_fold_df,
-        "step4_agg":  result.step4_agg_df,
+        "step4_agg": result.step4_agg_df,
     }
     for name, df in _df_map.items():
         if df is not None:
@@ -151,7 +171,9 @@ def load_result(path: str | Path):
     Raises:
         FileNotFoundError: If *path* does not exist.
     """
-    from h2ml.pipeline.pipeline import PipelineResult  # local import — avoids circular dep
+    from h2ml.pipeline.pipeline import (
+        PipelineResult,
+    )  # local import — avoids circular dep
 
     root = Path(path)
     if not root.exists():
@@ -161,30 +183,30 @@ def load_result(path: str | Path):
 
     dfs = {
         "step1_fold_df": _load_parquet(root / "step1_fold.parquet"),
-        "step1_agg_df":  _load_parquet(root / "step1_agg.parquet"),
+        "step1_agg_df": _load_parquet(root / "step1_agg.parquet"),
         "step3_fold_df": _load_parquet(root / "step3_fold.parquet"),
-        "step3_agg_df":  _load_parquet(root / "step3_agg.parquet"),
+        "step3_agg_df": _load_parquet(root / "step3_agg.parquet"),
         "step4_fold_df": _load_parquet(root / "step4_fold.parquet"),
-        "step4_agg_df":  _load_parquet(root / "step4_agg.parquet"),
+        "step4_agg_df": _load_parquet(root / "step4_agg.parquet"),
     }
 
     return PipelineResult(
-        features          = _load_feature_store(root / "features"),
-        features_reduced  = _load_feature_store(root / "features_reduced"),
-        selector          = _load_pkl(root / "selector.pkl"),
-        step1_cv_result  = _load_pkl(root / "step1_cv_result.pkl"),
-        step3_cv_result  = _load_pkl(root / "step3_cv_result.pkl"),
-        step4_cv_result   = _load_pkl(root / "step4_cv_result.pkl"),
-        best_model_name    = meta.get("best_model_name"),
-        best_model_value   = meta.get("best_model_value"),
-        best_model_std     = meta.get("best_model_std"),
-        best_stage         = meta.get("best_stage"),
-        best_feature_stage = meta.get("best_feature_stage"),
-        best_params        = meta.get("best_params"),
-        y_transform        = meta.get("y_transform"),
-        cv_type            = meta.get("cv_type", "random"),
-        cv_warnings        = meta.get("cv_warnings", []),
-        metric             = meta.get("metric"),
+        features=_load_feature_store(root / "features"),
+        features_reduced=_load_feature_store(root / "features_reduced"),
+        selector=_load_pkl(root / "selector.pkl"),
+        step1_cv_result=_load_pkl(root / "step1_cv_result.pkl"),
+        step3_cv_result=_load_pkl(root / "step3_cv_result.pkl"),
+        step4_cv_result=_load_pkl(root / "step4_cv_result.pkl"),
+        best_model_name=meta.get("best_model_name"),
+        best_model_value=meta.get("best_model_value"),
+        best_model_std=meta.get("best_model_std"),
+        best_stage=meta.get("best_stage"),
+        best_feature_stage=meta.get("best_feature_stage"),
+        best_params=meta.get("best_params"),
+        y_transform=meta.get("y_transform"),
+        cv_type=meta.get("cv_type", "random"),
+        cv_warnings=meta.get("cv_warnings", []),
+        metric=meta.get("metric"),
         **dfs,
     )
 
@@ -192,6 +214,7 @@ def load_result(path: str | Path):
 # ---------------------------------------------------------------------------
 # PipelineData helpers
 # ---------------------------------------------------------------------------
+
 
 def _save_feature_store(store: PipelineData, path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
@@ -210,16 +233,16 @@ def _save_feature_store(store: PipelineData, path: Path) -> None:
 def _load_feature_store(path: Path) -> Optional[PipelineData]:
     if not path.exists():
         return None
-    meta        = _load_json(path / "meta.json") or {}
+    meta = _load_json(path / "meta.json") or {}
     y_true_path = path / "y_true.npy"
     coords_path = path / "coords.npy"
     return PipelineData(
-        X             = np.load(path / "X.npy"),
-        y             = np.load(path / "y.npy"),
-        y_true        = np.load(y_true_path) if y_true_path.exists() else None,
-        coords        = np.load(coords_path) if coords_path.exists() else None,
-        feature_names = meta.get("feature_names", []),
-        y_transform   = meta.get("y_transform"),
+        X=np.load(path / "X.npy"),
+        y=np.load(path / "y.npy"),
+        y_true=np.load(y_true_path) if y_true_path.exists() else None,
+        coords=np.load(coords_path) if coords_path.exists() else None,
+        feature_names=meta.get("feature_names", []),
+        y_transform=meta.get("y_transform"),
     )
 
 
@@ -227,8 +250,10 @@ def _load_feature_store(path: Path) -> Optional[PipelineData]:
 # Generic helpers
 # ---------------------------------------------------------------------------
 
+
 class _NumpyEncoder(json.JSONEncoder):
     """JSON encoder that handles numpy scalars and arrays from Optuna params."""
+
     def default(self, obj):
         if isinstance(obj, np.integer):
             return int(obj)

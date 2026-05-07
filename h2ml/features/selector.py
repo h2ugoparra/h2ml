@@ -68,36 +68,36 @@ class FeatureSelector(BasePreprocessor):
 
     def __init__(
         self,
-        step:           Any,
-        task_type:      TaskType,
-        corr_threshold: float          = 0.7,
-        min_features:   int            = 1,
-        use_oof:        bool           = True,
-        n_splits:       int            = 5,
-        random_state:   int            = 42,
+        step: Any,
+        task_type: TaskType,
+        corr_threshold: float = 0.7,
+        min_features: int = 1,
+        use_oof: bool = True,
+        n_splits: int = 5,
+        random_state: int = 42,
         shap_save_path: Optional[Path] = None,
-        max_background: int            = 100,
-        verbose:        bool           = False,
-        _splitter:      Any            = None,
+        max_background: int = 100,
+        verbose: bool = False,
+        _splitter: Any = None,
     ):
         if min_features < 1:
             raise ValueError(f"min_features must be >= 1, got {min_features}")
         super().__init__(name="FeatureSelector", verbose=verbose)
-        self.step           = step
-        self.task_type      = task_type
+        self.step = step
+        self.task_type = task_type
         self.corr_threshold = corr_threshold
-        self.min_features   = min_features
-        self.use_oof        = use_oof
-        self.n_splits       = n_splits
-        self.random_state   = random_state
+        self.min_features = min_features
+        self.use_oof = use_oof
+        self.n_splits = n_splits
+        self.random_state = random_state
         self.shap_save_path = shap_save_path
         self.max_background = max_background
-        self._splitter      = _splitter
+        self._splitter = _splitter
 
         # Set after fit
-        self.selected_features_: list[str]  = []
+        self.selected_features_: list[str] = []
         self.feature_importance_: pd.Series = pd.Series(dtype=float)
-        self.shap_values_:        np.ndarray = np.array([])
+        self.shap_values_: np.ndarray = np.array([])
 
     # ------------------------------------------------------------------
     # BasePreprocessor interface
@@ -106,7 +106,7 @@ class FeatureSelector(BasePreprocessor):
     def fit(
         self,
         store: PipelineData,
-        y:     Optional[np.ndarray] = None,
+        y: Optional[np.ndarray] = None,
     ) -> "FeatureSelector":
         """
         Compute SHAP importance and determine selected features.
@@ -117,40 +117,41 @@ class FeatureSelector(BasePreprocessor):
         """
         if self.use_oof:
             self.shap_values_, self.feature_importance_ = get_oof_shap_values(
-                step           = self.step,
-                store          = store,
-                task_type      = self.task_type,
-                n_splits       = self.n_splits,
-                random_state   = self.random_state,
-                save_path      = self.shap_save_path,
-                max_background = self.max_background,
-                _splitter      = self._splitter,
+                step=self.step,
+                store=store,
+                task_type=self.task_type,
+                n_splits=self.n_splits,
+                random_state=self.random_state,
+                save_path=self.shap_save_path,
+                max_background=self.max_background,
+                _splitter=self._splitter,
             )
         else:
             # Full-dataset SHAP: fit once on all training data, then explain.
             # Slightly faster but introduces mild optimistic bias in step 3 scores
             # because the feature subset is chosen with knowledge of all samples.
             from sklearn.preprocessing import StandardScaler
-            estimator_cls    = self.step.estimator.__class__
+
+            estimator_cls = self.step.estimator.__class__
             estimator_params = self.step.estimator.get_params()
-            X_train          = store.X
+            X_train = store.X
             if getattr(self.step, "requires_scaling", False):
                 X_train = StandardScaler().fit_transform(X_train)
             model = estimator_cls(**estimator_params)
             model.fit(X_train, store.y)
             self.shap_values_, self.feature_importance_ = get_shap_values(
-                model          = model,
-                store          = store,
-                task_type      = self.task_type,
-                save_path      = self.shap_save_path,
-                max_background = self.max_background,
+                model=model,
+                store=store,
+                task_type=self.task_type,
+                save_path=self.shap_save_path,
+                max_background=self.max_background,
             )
 
         # Remove correlated features in importance order
         self.selected_features_ = remove_correlated_features(
-            X                  = store.to_frame(),
-            feature_importance = self.feature_importance_,
-            corr_threshold     = self.corr_threshold,
+            X=store.to_frame(),
+            feature_importance=self.feature_importance_,
+            corr_threshold=self.corr_threshold,
         )
 
         # Enforce minimum — restore top SHAP-ranked features when threshold is too aggressive
@@ -192,7 +193,7 @@ class FeatureSelector(BasePreprocessor):
     def fit_transform(
         self,
         store: PipelineData,
-        y:     Optional[np.ndarray] = None,
+        y: Optional[np.ndarray] = None,
     ) -> PipelineData:
         """Fit and transform in one call."""
         return self.fit(store, y).transform(store)
@@ -210,7 +211,8 @@ class FeatureSelector(BasePreprocessor):
         """Features that were dropped during fit."""
         self._check_fitted()
         return [
-            f for f in self.feature_importance_.index
+            f
+            for f in self.feature_importance_.index
             if f not in self.selected_features_
         ]
 
@@ -220,17 +222,18 @@ class FeatureSelector(BasePreprocessor):
         and whether they were selected or removed.
         """
         self._check_fitted()
-        return pd.DataFrame({
-            "feature":   self.feature_importance_.index,
-            "importance": self.feature_importance_.values,
-            "selected":  [f in self.selected_features_ for f in self.feature_importance_.index],
-        }).reset_index(drop=True)
+        return pd.DataFrame(
+            {
+                "feature": self.feature_importance_.index,
+                "importance": self.feature_importance_.values,
+                "selected": [
+                    f in self.selected_features_ for f in self.feature_importance_.index
+                ],
+            }
+        ).reset_index(drop=True)
 
     def __repr__(self) -> str:
-        fitted_info = (
-            f"selected={self.n_selected}"
-            if self._fitted else "not fitted"
-        )
+        fitted_info = f"selected={self.n_selected}" if self._fitted else "not fitted"
         shap_mode = "oof" if self.use_oof else "full"
         return (
             f"FeatureSelector("

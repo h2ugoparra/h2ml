@@ -3,6 +3,7 @@ tests/optimization/test_opt_params.py
 
 Tests for opt_params.get_entry() — registry lookup for the optimizer.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -11,7 +12,6 @@ from h2ml.optimization.opt_params import get_entry, ModelEntry
 
 
 class TestGetEntry:
-
     # -----------------------------------------------------------------------
     # Successful lookups
     # -----------------------------------------------------------------------

@@ -6,11 +6,16 @@ All data is deterministic via fixed random seeds.
 import numpy as np
 import pytest
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
-from h2ml.pipeline.step import ModelWrapper, make_classifier, make_regressor, make_preprocessor
+from h2ml.pipeline.step import (
+    ModelWrapper,
+    make_classifier,
+    make_regressor,
+    make_preprocessor,
+)
+
 
 # ---------------------------------------------------------------------------
 # Raw data fixtures
@@ -23,6 +28,7 @@ def classification_data() -> tuple[np.ndarray, np.ndarray]:
     y = rng.integers(0, 2, size=100)
     return X, y
 
+
 @pytest.fixture
 def regression_data() -> tuple[np.ndarray, np.ndarray]:
     """100 samples, 5 features, continuous target."""
@@ -30,6 +36,7 @@ def regression_data() -> tuple[np.ndarray, np.ndarray]:
     X = rng.standard_normal((100, 5))
     y = rng.standard_normal(100)
     return X, y
+
 
 @pytest.fixture
 def multiclass_data() -> tuple[np.ndarray, np.ndarray]:
@@ -39,6 +46,7 @@ def multiclass_data() -> tuple[np.ndarray, np.ndarray]:
     y = rng.integers(0, 3, size=100)
     return X, y
 
+
 # ---------------------------------------------------------------------------
 # ModelWrapper fixtures
 # ---------------------------------------------------------------------------
@@ -46,6 +54,7 @@ def multiclass_data() -> tuple[np.ndarray, np.ndarray]:
 def rf_classifier_step() -> ModelWrapper:
     """Unfitted RandomForest classifier step."""
     return make_classifier(RandomForestClassifier(n_estimators=10, random_state=42))
+
 
 @pytest.fixture
 def rf_regressor_step() -> ModelWrapper:
@@ -56,10 +65,7 @@ def rf_regressor_step() -> ModelWrapper:
 @pytest.fixture
 def svc_step() -> ModelWrapper:
     """SVC step with calibration enabled (required for predict_proba)."""
-    return make_classifier(
-        SVC(random_state=42),
-        requires_scaling=True
-    )
+    return make_classifier(SVC(random_state=42), requires_scaling=True)
 
 
 @pytest.fixture

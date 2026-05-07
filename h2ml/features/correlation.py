@@ -33,11 +33,12 @@ CorrelationMethod = Literal["pearson", "spearman", "kendall"]
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def remove_correlated_features(
-    X:               pd.DataFrame,
+    X: pd.DataFrame,
     feature_importance: pd.Series,
-    corr_threshold:  float = 0.7,
-    methods:         Optional[list[CorrelationMethod]] = None,
+    corr_threshold: float = 0.7,
+    methods: Optional[list[CorrelationMethod]] = None,
 ) -> list[str]:
     """
     Return a list of selected (uncorrelated) features ranked by SHAP importance.
@@ -61,17 +62,15 @@ def remove_correlated_features(
     if methods is None:
         methods = ["pearson", "spearman", "kendall"]
     if not 0 < corr_threshold <= 1:
-        raise ValueError(
-            f"corr_threshold must be in (0, 1], got {corr_threshold}"
-        )
+        raise ValueError(f"corr_threshold must be in (0, 1], got {corr_threshold}")
 
     # Pre-compute all correlation matrices
     corr_matrices: dict[str, pd.DataFrame] = {
         method: X.corr(method=method) for method in methods
     }
 
-    selected_features: list[str]  = []
-    removed_features:  set[str]   = set()
+    selected_features: list[str] = []
+    removed_features: set[str] = set()
 
     n_original = len(feature_importance)
 

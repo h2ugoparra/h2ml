@@ -3,9 +3,9 @@ tests/pipeline/test_final_model.py
 
 Tests for FinalModel (inference, scaling, persistence) and build_final_model().
 """
+
 from __future__ import annotations
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -15,7 +15,11 @@ from sklearn.preprocessing import StandardScaler
 
 from h2ml.pipeline.base import TaskType
 from h2ml.pipeline.cv import CVResult, FoldResult
-from h2ml.pipeline.final_model import ConformalCalibration, FinalModel, build_final_model, _build_conformal_calibration
+from h2ml.pipeline.final_model import (
+    ConformalCalibration,
+    FinalModel,
+    _build_conformal_calibration,
+)
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig, PipelineResult
 from h2ml.pipeline.step import make_classifier
 from h2ml.features.feature_store import PipelineData
@@ -82,8 +86,8 @@ def reg_model(fitted_rf_reg) -> FinalModel:
 # predict()
 # ---------------------------------------------------------------------------
 
-class TestPredict:
 
+class TestPredict:
     def test_clf_predict_returns_array(self, clf_model, X):
         preds = clf_model.predict(X)
         assert isinstance(preds, np.ndarray)
@@ -114,8 +118,8 @@ class TestPredict:
 # predict_proba()
 # ---------------------------------------------------------------------------
 
-class TestPredictProba:
 
+class TestPredictProba:
     def test_clf_predict_proba_returns_array(self, clf_model, X):
         proba = clf_model.predict_proba(X)
         assert isinstance(proba, np.ndarray)
@@ -132,8 +136,8 @@ class TestPredictProba:
 # Scaling
 # ---------------------------------------------------------------------------
 
-class TestScaling:
 
+class TestScaling:
     def test_scaling_applied_when_required(self, X, y_clf):
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
@@ -158,8 +162,8 @@ class TestScaling:
 # Persistence
 # ---------------------------------------------------------------------------
 
-class TestPersistence:
 
+class TestPersistence:
     def test_save_creates_file(self, clf_model, tmp_path):
         out = tmp_path / "model.pkl"
         clf_model.save(out)
@@ -187,8 +191,8 @@ class TestPersistence:
 # __repr__
 # ---------------------------------------------------------------------------
 
-class TestRepr:
 
+class TestRepr:
     def test_repr_contains_model_name(self, clf_model):
         clf_model.best_model_name = "RF"
         assert "RF" in repr(clf_model)
@@ -204,9 +208,11 @@ class TestRepr:
 # build_final_model()
 # ---------------------------------------------------------------------------
 
-class TestBuildFinalModel:
 
-    def _run_pipeline_with_lr(self, seed: int = 0) -> tuple[PipelineResult, PipelineData]:
+class TestBuildFinalModel:
+    def _run_pipeline_with_lr(
+        self, seed: int = 0
+    ) -> tuple[PipelineResult, PipelineData]:
         """Helper: run a minimal LR pipeline (no custom name — registry name required)."""
         from sklearn.linear_model import LogisticRegression
 
@@ -219,7 +225,9 @@ class TestBuildFinalModel:
         # No custom name — defaults to "LogisticRegression" matching the registry key
         pipeline = H2MLPipeline(
             models=[make_classifier(LogisticRegression(max_iter=200, random_state=42))],
-            config=PipelineConfig(task_type=TaskType.CLASSIFICATION, n_splits=3, n_trials=1),
+            config=PipelineConfig(
+                task_type=TaskType.CLASSIFICATION, n_splits=3, n_trials=1
+            ),
         )
         selected = [f"f{i}" for i in range(3)]
         mock_sel = MagicMock(spec=FeatureSelector)
@@ -250,33 +258,46 @@ class TestBuildFinalModel:
 # ConformalCalibration
 # ---------------------------------------------------------------------------
 
+
 def _make_cv_result(task_type: TaskType, n: int = 50, seed: int = 0) -> CVResult:
     """Build a minimal CVResult with two folds of synthetic OOF predictions."""
     rng = np.random.default_rng(seed)
     half = n // 2
     if task_type == TaskType.REGRESSION:
         fold0 = FoldResult(
-            fold_id=0, model_name="M",
-            y_train=np.zeros(half), y_test=rng.standard_normal(half),
-            y_pred_train=np.zeros(half), y_pred_test=rng.standard_normal(half),
+            fold_id=0,
+            model_name="M",
+            y_train=np.zeros(half),
+            y_test=rng.standard_normal(half),
+            y_pred_train=np.zeros(half),
+            y_pred_test=rng.standard_normal(half),
         )
         fold1 = FoldResult(
-            fold_id=1, model_name="M",
-            y_train=np.zeros(half), y_test=rng.standard_normal(half),
-            y_pred_train=np.zeros(half), y_pred_test=rng.standard_normal(half),
+            fold_id=1,
+            model_name="M",
+            y_train=np.zeros(half),
+            y_test=rng.standard_normal(half),
+            y_pred_train=np.zeros(half),
+            y_pred_test=rng.standard_normal(half),
         )
     else:
         fold0 = FoldResult(
-            fold_id=0, model_name="M",
-            y_train=np.zeros(half), y_test=rng.integers(0, 2, half).astype(float),
-            y_pred_train=np.zeros(half), y_pred_test=rng.integers(0, 2, half).astype(float),
+            fold_id=0,
+            model_name="M",
+            y_train=np.zeros(half),
+            y_test=rng.integers(0, 2, half).astype(float),
+            y_pred_train=np.zeros(half),
+            y_pred_test=rng.integers(0, 2, half).astype(float),
             y_prob_train=rng.uniform(0, 1, half),
             y_prob_test=rng.uniform(0, 1, half),
         )
         fold1 = FoldResult(
-            fold_id=1, model_name="M",
-            y_train=np.zeros(half), y_test=rng.integers(0, 2, half).astype(float),
-            y_pred_train=np.zeros(half), y_pred_test=rng.integers(0, 2, half).astype(float),
+            fold_id=1,
+            model_name="M",
+            y_train=np.zeros(half),
+            y_test=rng.integers(0, 2, half).astype(float),
+            y_pred_train=np.zeros(half),
+            y_pred_test=rng.integers(0, 2, half).astype(float),
             y_prob_train=rng.uniform(0, 1, half),
             y_prob_test=rng.uniform(0, 1, half),
         )
@@ -284,7 +305,6 @@ def _make_cv_result(task_type: TaskType, n: int = 50, seed: int = 0) -> CVResult
 
 
 class TestConformalCalibration:
-
     def test_threshold_returns_float(self):
         cal = ConformalCalibration(
             scores=np.linspace(0, 1, 100), n=100, task_type=TaskType.REGRESSION
@@ -345,8 +365,8 @@ class TestConformalCalibration:
 # predict_interval / predict_set
 # ---------------------------------------------------------------------------
 
-class TestPredictInterval:
 
+class TestPredictInterval:
     def test_returns_lower_upper_arrays(self, reg_model, X):
         cal = ConformalCalibration(
             scores=np.linspace(0, 1, 50), n=50, task_type=TaskType.REGRESSION
@@ -387,7 +407,6 @@ class TestPredictInterval:
 
 
 class TestPredictSet:
-
     def test_returns_list_of_arrays(self, clf_model, X):
         cal = ConformalCalibration(
             scores=np.linspace(0, 1, 50), n=50, task_type=TaskType.CLASSIFICATION
@@ -429,7 +448,6 @@ class TestPredictSet:
 
 
 class TestBuildFinalModelConformal:
-
     def test_conformal_is_set_after_pipeline_run(self):
         from sklearn.linear_model import LogisticRegression
         from unittest.mock import patch
@@ -442,7 +460,9 @@ class TestBuildFinalModelConformal:
         )
         pipeline = H2MLPipeline(
             models=[make_classifier(LogisticRegression(max_iter=200, random_state=42))],
-            config=PipelineConfig(task_type=TaskType.CLASSIFICATION, n_splits=3, n_trials=1),
+            config=PipelineConfig(
+                task_type=TaskType.CLASSIFICATION, n_splits=3, n_trials=1
+            ),
         )
         selected = [f"f{i}" for i in range(3)]
         mock_sel = MagicMock(spec=FeatureSelector)
@@ -469,7 +489,9 @@ class TestBuildFinalModelConformal:
         )
         pipeline = H2MLPipeline(
             models=[make_classifier(LogisticRegression(max_iter=200, random_state=42))],
-            config=PipelineConfig(task_type=TaskType.CLASSIFICATION, n_splits=3, n_trials=1),
+            config=PipelineConfig(
+                task_type=TaskType.CLASSIFICATION, n_splits=3, n_trials=1
+            ),
         )
         selected = [f"f{i}" for i in range(3)]
         mock_sel = MagicMock(spec=FeatureSelector)
