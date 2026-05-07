@@ -1,6 +1,7 @@
 # H2ML
 
 ![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)
+![PyPI](https://img.shields.io/pypi/v/h2ml)
 
 A 4-step AutoML pipeline for tabular data that wraps sklearn-compatible estimators. Given a feature matrix and target, it screens all registered models, reduces features via SHAP importance and correlation filtering, and tunes the winner with Optuna — all in one call.
 
