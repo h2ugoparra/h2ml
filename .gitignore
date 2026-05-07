@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+.env/
+.env
+
+# Editor
+.vscode/
+
+# Tox
+.tox/
+
+# Claude Code — local and auto-generated only; .claude/agents/ is committed
+.claude/settings.local.json
+.claude/agent-memory/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ML artifacts
+catboost_info/
+logs/
+notebooks/
+
+# Serialised model / array files at repo root or in scripts
+*.pkl
+*.npy
+
+# Data
+data/raw/*
+data/interim/*
+data/processed/*
+data/external/*
+!data/**/.gitkeep
+
+# Docs build output
+site/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
