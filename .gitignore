@@ -20,9 +20,9 @@ venv/
 # Tox
 .tox/
 
-# Claude Code — local and auto-generated only; .claude/agents/ is committed
-.claude/settings.local.json
-.claude/agent-memory/
+# Claude Code — local and auto-generated only
+.claude/
+
 
 # Testing
 .pytest_cache/
