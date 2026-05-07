@@ -7,9 +7,7 @@ from sklearn.tree import DecisionTreeRegressor
 def adaboost_r_params(trial):
     """AdaBoost Optuna trials"""
     return {
-        "estimator": trial.suggest_categorical(
-            "estimator", [DecisionTreeRegressor(), RandomForestRegressor()]
-        ),
+        "estimator": trial.suggest_categorical("estimator", [DecisionTreeRegressor(), RandomForestRegressor()]),
         "n_estimators": trial.suggest_int("n_estimators", 50, 500),
         "learning_rate": trial.suggest_float("learning_rate", 0.01, 1.0),
         "loss": trial.suggest_categorical("loss", ["linear", "square", "exponential"]),
@@ -20,16 +18,12 @@ def adaboost_r_params(trial):
 def bagging_r_params(trial):
     """Bagging Optuna trials"""
     return {
-        "estimator": trial.suggest_categorical(
-            "estimator", [DecisionTreeRegressor(), RandomForestRegressor()]
-        ),
+        "estimator": trial.suggest_categorical("estimator", [DecisionTreeRegressor(), RandomForestRegressor()]),
         "n_estimators": trial.suggest_int("n_estimators", 50, 500),
         "max_samples": trial.suggest_float("max_samples", 0.1, 1.0),
         "max_features": trial.suggest_float("max_features", 0.1, 1.0),
         "bootstrap": trial.suggest_categorical("bootstrap", [True, False]),
-        "bootstrap_features": trial.suggest_categorical(
-            "bootstrap_features", [True, False]
-        ),
+        "bootstrap_features": trial.suggest_categorical("bootstrap_features", [True, False]),
         "random_state": 42,
     }
 
@@ -55,9 +49,7 @@ def histgradientboosting_r_params(trial):
         "max_features": trial.suggest_float("max_features", 0.1, 1.0),
         "max_iter": trial.suggest_int("max_iter", 50, 1000),
         "max_leaf_nodes": trial.suggest_int("max_leaf_nodes", 2, 100),
-        "l2_regularization": trial.suggest_float(
-            "l2_regularization", 1e-5, 0.1, log=True
-        ),
+        "l2_regularization": trial.suggest_float("l2_regularization", 1e-5, 0.1, log=True),
         "random_state": 42,
     }
 
@@ -68,12 +60,8 @@ def decisiontree_r_params(trial):
         "max_depth": trial.suggest_int("max_depth", 1, 32),
         "min_samples_split": trial.suggest_int("min_samples_split", 2, 32),
         "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 32),
-        "max_features": trial.suggest_categorical(
-            "max_features", ["sqrt", "log2", None]
-        ),
-        "criterion": trial.suggest_categorical(
-            "criterion", ["squared_error", "friedman_mse", "poisson"]
-        ),
+        "max_features": trial.suggest_categorical("max_features", ["sqrt", "log2", None]),
+        "criterion": trial.suggest_categorical("criterion", ["squared_error", "friedman_mse", "poisson"]),
         "random_state": 42,
     }
 
@@ -87,9 +75,7 @@ def gradientboosting_r_params(trial):
         "subsample": trial.suggest_float("subsample", 0.5, 1.0),
         "min_samples_split": trial.suggest_int("min_samples_split", 2, 20),
         "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 10),
-        "max_features": trial.suggest_categorical(
-            "max_features", ["sqrt", "log2", None]
-        ),
+        "max_features": trial.suggest_categorical("max_features", ["sqrt", "log2", None]),
         "random_state": 42,
     }
 
@@ -104,9 +90,7 @@ def svr_r_params(trial):
 
     params = {
         "C": trial.suggest_float("C", 0.1, 100, log=True),  # Regularization parameter
-        "epsilon": trial.suggest_float(
-            "epsilon", 0.01, 1.0
-        ),  # Epsilon-tube within which no penalty is given
+        "epsilon": trial.suggest_float("epsilon", 0.01, 1.0),  # Epsilon-tube within which no penalty is given
         "kernel": kernel,
         "gamma": trial.suggest_categorical("gamma", ["scale", "auto"]),
         "degree": degree,
@@ -129,9 +113,7 @@ def catboost_r_params(trial):
         "random_strength": trial.suggest_float("random_strength", 1e-5, 10, log=True),
         "bagging_temperature": trial.suggest_float("bagging_temperature", 0.0, 1.0),
         "border_count": trial.suggest_int("border_count", 32, 128),
-        "grow_policy": trial.suggest_categorical(
-            "grow_policy", ["SymmetricTree", "Depthwise", "Lossguide"]
-        ),
+        "grow_policy": trial.suggest_categorical("grow_policy", ["SymmetricTree", "Depthwise", "Lossguide"]),
         "od_type": "Iter",
         "od_wait": trial.suggest_int("od_wait", 20, 50),
         "thread_count": -1,

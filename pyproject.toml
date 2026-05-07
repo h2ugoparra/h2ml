@@ -36,7 +36,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "flake8>=7.0.0",
     "ipykernel>=7.2.0",
     "mkdocs>=1.6.0",
     "mkdocs-material>=9.5.0",
@@ -93,4 +92,11 @@ omit = ["h2ml/geo/*"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "W", "F"]
+ignore = ["E221", "E251", "E302", "E303", "E203", "E272"]
 

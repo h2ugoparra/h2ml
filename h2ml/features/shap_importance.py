@@ -130,11 +130,7 @@ def _select_explainer(
             try:
                 base_fn = model.predict_proba
             except AttributeError:
-                base_fn = (
-                    model.decision_function
-                    if hasattr(model, "decision_function")
-                    else model.predict
-                )
+                base_fn = model.decision_function if hasattr(model, "decision_function") else model.predict
         else:
             base_fn = model.predict
 
@@ -149,9 +145,7 @@ def _select_explainer(
     return shap.TreeExplainer(model)
 
 
-def _extract_shap_array(
-    shap_values: Any, class_index: Optional[int] = None
-) -> np.ndarray:
+def _extract_shap_array(shap_values: Any, class_index: Optional[int] = None) -> np.ndarray:
     """
     Normalize SHAP output to a 2D array (n_samples, n_features).
 
@@ -229,13 +223,9 @@ def get_shap_values(
     # SHAP needs a DataFrame for column names — convert locally
     X_frame = store.to_frame()
 
-    explainer = _select_explainer(
-        model, task_type, X_frame, max_background=max_background
-    )
+    explainer = _select_explainer(model, task_type, X_frame, max_background=max_background)
     with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore", message=".*does not have valid feature names.*"
-        )
+        warnings.filterwarnings("ignore", message=".*does not have valid feature names.*")
         shap_output = explainer(X_frame)
     shap_array = _extract_shap_array(shap_output, class_index=class_index)
 
@@ -245,9 +235,7 @@ def get_shap_values(
 
     # Mean absolute SHAP per feature → overall importance
     importance = np.abs(shap_array).mean(axis=0)
-    feature_importance = pd.Series(importance, index=store.feature_names).sort_values(
-        ascending=False
-    )
+    feature_importance = pd.Series(importance, index=store.feature_names).sort_values(ascending=False)
 
     return shap_array, feature_importance
 
@@ -313,10 +301,7 @@ def get_oof_shap_values(
     estimator_params = step.estimator.get_params()
     requires_scaling = getattr(step, "requires_scaling", False)
 
-    logger.info(
-        f"Computing OOF SHAP values for {estimator_cls.__name__} "
-        f"({n_splits}-fold, n_samples={n_samples})"
-    )
+    logger.info(f"Computing OOF SHAP values for {estimator_cls.__name__} ({n_splits}-fold, n_samples={n_samples})")
 
     oof_shap = np.zeros((n_samples, n_features), dtype=np.float64)
 
@@ -343,9 +328,7 @@ def get_oof_shap_values(
             max_background=max_background,
         )
         with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore", message=".*does not have valid feature names.*"
-            )
+            warnings.filterwarnings("ignore", message=".*does not have valid feature names.*")
             shap_output = explainer(X_test_frame)
 
         oof_shap[test_idx] = _extract_shap_array(shap_output, class_index=class_index)
@@ -355,8 +338,6 @@ def get_oof_shap_values(
         logger.info(f"OOF SHAP values saved at {save_path}")
 
     importance = np.abs(oof_shap).mean(axis=0)
-    feature_importance = pd.Series(importance, index=feature_names).sort_values(
-        ascending=False
-    )
+    feature_importance = pd.Series(importance, index=feature_names).sort_values(ascending=False)
 
     return oof_shap, feature_importance

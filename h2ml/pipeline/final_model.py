@@ -129,9 +129,7 @@ class FinalModel:
             Multiclass: 2-D array of shape (n_samples, n_classes).
         """
         if self.task_type != TaskType.CLASSIFICATION:
-            raise ValueError(
-                "predict_proba is only available for classification tasks."
-            )
+            raise ValueError("predict_proba is only available for classification tasks.")
         proba = self.estimator.predict_proba(self._prepare(X))
         if proba.shape[1] == 2:
             return proba[:, 1]
@@ -269,9 +267,7 @@ class FinalModel:
 # ---------------------------------------------------------------------------
 
 
-def _build_conformal_calibration(
-    result, classes=None
-) -> Optional[ConformalCalibration]:
+def _build_conformal_calibration(result, classes=None) -> Optional[ConformalCalibration]:
     """
     Build a ConformalCalibration from the out-of-fold predictions in best_cv_result.
 
@@ -299,9 +295,7 @@ def _build_conformal_calibration(
             if f.y_prob_test.ndim == 1:
                 # Binary: p is positive-class probability
                 # nonconformity = 1 - p(true_class)
-                sample_scores.append(
-                    np.where(f.y_test == 1, 1.0 - f.y_prob_test, f.y_prob_test)
-                )
+                sample_scores.append(np.where(f.y_test == 1, 1.0 - f.y_prob_test, f.y_prob_test))
             else:
                 # Multiclass: map each true label to its column index via classes_
                 if classes is None:
@@ -315,8 +309,7 @@ def _build_conformal_calibration(
                     col_idx = np.array([label_to_idx[label] for label in f.y_test])
                 except KeyError as e:
                     logger.warning(
-                        f"Conformal calibration skipped: y_test contains label {e} "
-                        f"not found in estimator.classes_."
+                        f"Conformal calibration skipped: y_test contains label {e} not found in estimator.classes_."
                     )
                     return None
                 p_true = f.y_prob_test[np.arange(len(col_idx)), col_idx]
@@ -352,16 +345,11 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     feature_stage = result.best_feature_stage or result.best_stage
     store = result.features_reduced if feature_stage == "reduced" else result.features
 
-    registry = (
-        CLASSIFIER_REGISTRY
-        if task_type == TaskType.CLASSIFICATION
-        else REGRESSOR_REGISTRY
-    )
+    registry = CLASSIFIER_REGISTRY if task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
     entry = registry.get(result.best_model_name)
     if entry is None:
         raise ValueError(
-            f"Model '{result.best_model_name}' not found in registry. "
-            "Was it removed after the pipeline ran?"
+            f"Model '{result.best_model_name}' not found in registry. Was it removed after the pipeline ran?"
         )
 
     # Instantiate with best_params when available, otherwise default

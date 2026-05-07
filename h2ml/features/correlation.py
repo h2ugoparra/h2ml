@@ -65,9 +65,7 @@ def remove_correlated_features(
         raise ValueError(f"corr_threshold must be in (0, 1], got {corr_threshold}")
 
     # Pre-compute all correlation matrices
-    corr_matrices: dict[str, pd.DataFrame] = {
-        method: X.corr(method=method) for method in methods
-    }
+    corr_matrices: dict[str, pd.DataFrame] = {method: X.corr(method=method) for method in methods}
 
     selected_features: list[str] = []
     removed_features: set[str] = set()
@@ -86,10 +84,7 @@ def remove_correlated_features(
                 continue
 
             # Remove if correlation exceeds threshold in any method
-            correlated = any(
-                abs(corr_matrices[method].loc[feature, other]) > corr_threshold
-                for method in methods
-            )
+            correlated = any(abs(corr_matrices[method].loc[feature, other]) > corr_threshold for method in methods)
 
             if correlated:
                 removed_features.add(other)

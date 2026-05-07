@@ -84,9 +84,7 @@ def compare_results(
         >>> compare_results([r1, r2], labels=["baseline", "spatial_cv"], metric="AUC")
     """
     if labels is not None and len(labels) != len(results):
-        raise ValueError(
-            f"labels has {len(labels)} entries but results has {len(results)}."
-        )
+        raise ValueError(f"labels has {len(labels)} entries but results has {len(results)}.")
 
     if metric is None:
         unique_metrics = {r.metric for r in results if r.metric is not None}
@@ -115,9 +113,7 @@ def compare_results(
         conservative_bound: Optional[float] = None
         if score_mean is not None and score_std is not None and fold_count:
             penalty = score_std / np.sqrt(fold_count)
-            conservative_bound = (
-                score_mean + penalty if minimize else score_mean - penalty
-            )
+            conservative_bound = score_mean + penalty if minimize else score_mean - penalty
 
         rows.append(
             {
@@ -274,9 +270,7 @@ def _get_oof_brier(result: "PipelineResult") -> Optional[float]:
         return None
     # Drop missing positions (failed folds); use pd.isnull to handle both
     # float NaN (numeric labels) and None (string/object labels from oof_labels)
-    valid = ~(
-        np.isnan(oof_pred) if oof_pred.ndim == 1 else np.isnan(oof_pred).any(axis=1)
-    )
+    valid = ~(np.isnan(oof_pred) if oof_pred.ndim == 1 else np.isnan(oof_pred).any(axis=1))
     valid &= ~pd.isnull(oof_labels)
     if not valid.any():
         return None

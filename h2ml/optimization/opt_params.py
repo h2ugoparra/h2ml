@@ -28,12 +28,8 @@ def get_entry(name: str, task: str) -> ModelEntry:
     registry = CLASSIFIER_REGISTRY if task == "classification" else REGRESSOR_REGISTRY
 
     if name not in registry:
-        available = [
-            k for k, v in registry.items() if v.opt_enabled and v.param_fn is not None
-        ]
-        raise KeyError(
-            f"Model '{name}' not found in {task} registry. Available: {available}"
-        )
+        available = [k for k, v in registry.items() if v.opt_enabled and v.param_fn is not None]
+        raise KeyError(f"Model '{name}' not found in {task} registry. Available: {available}")
 
     entry = registry[name]
     if not entry.opt_enabled or entry.param_fn is None:

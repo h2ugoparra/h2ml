@@ -88,10 +88,7 @@ def predict_for_year(
     try:
         from h2mare.storage import ParquetIndexer
     except ImportError as e:
-        raise ImportError(
-            "predict_for_year requires the [geo] extras. "
-            "Install with: uv pip install h2ml[geo]"
-        ) from e
+        raise ImportError("predict_for_year requires the [geo] extras. Install with: uv pip install h2ml[geo]") from e
 
     logger.info(f"Starting predictions for year {year}")
 
@@ -130,12 +127,8 @@ def predict_for_year(
         logger.warning(f"No predictions generated for year {year}.")
         return df_original.select(["index", "time", "lon", "lat"])
 
-    logger.success(
-        f"Predictions for year {year} completed ({len(pred_columns)}/{len(targets)} targets)."
-    )
-    return df_original.select(["index", "time", "lon", "lat"]).with_columns(
-        pred_columns
-    )
+    logger.success(f"Predictions for year {year} completed ({len(pred_columns)}/{len(targets)} targets).")
+    return df_original.select(["index", "time", "lon", "lat"]).with_columns(pred_columns)
 
 
 def predict_map(
@@ -165,16 +158,9 @@ def predict_map(
         from h2mare.storage import aggregate_by_space_time
         from h2mare.utils.plot import plot_maps
     except ImportError as e:
-        raise ImportError(
-            "predict_map requires the [geo] extras. "
-            "Install with: uv pip install h2ml[geo]"
-        ) from e
+        raise ImportError("predict_map requires the [geo] extras. Install with: uv pip install h2ml[geo]") from e
 
-    df_orig = (
-        indexer.scan(dates=dates, bbox=bbox, columns=model.feature_names)
-        .with_row_index()
-        .collect()
-    )
+    df_orig = indexer.scan(dates=dates, bbox=bbox, columns=model.feature_names).with_row_index().collect()
 
     df_pred = df_orig.select(model.feature_names + ["index"]).drop_nulls()
     preds = model.predict(df_pred.drop("index").to_numpy()).astype("float32")
@@ -182,9 +168,7 @@ def predict_map(
     full_series = pl.Series(target_col, [None] * len(df_orig), dtype=pl.Float32)
     full_series = full_series.scatter(df_pred["index"], preds)
 
-    df_results = df_orig.select(["index", "time", "lon", "lat"]).with_columns(
-        full_series
-    )
+    df_results = df_orig.select(["index", "time", "lon", "lat"]).with_columns(full_series)
     df_plot = aggregate_by_space_time(df_results, vars_name=target_col, agg_by=agg_by)
 
     plot_maps(

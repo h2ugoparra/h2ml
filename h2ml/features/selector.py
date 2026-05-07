@@ -164,9 +164,7 @@ class FeatureSelector(BasePreprocessor):
                     selected_set.add(feature)
                     if len(selected_set) >= self.min_features:
                         break
-            self.selected_features_ = [
-                f for f in self.feature_importance_.index if f in selected_set
-            ]
+            self.selected_features_ = [f for f in self.feature_importance_.index if f in selected_set]
             logger.warning(
                 f"FeatureSelector: corr_threshold={self.corr_threshold} reduced features to "
                 f"{len(self.selected_features_) - len(restored)} — below min_features={self.min_features}. "
@@ -210,11 +208,7 @@ class FeatureSelector(BasePreprocessor):
     def removed_features(self) -> list[str]:
         """Features that were dropped during fit."""
         self._check_fitted()
-        return [
-            f
-            for f in self.feature_importance_.index
-            if f not in self.selected_features_
-        ]
+        return [f for f in self.feature_importance_.index if f not in self.selected_features_]
 
     def importance_summary(self) -> pd.DataFrame:
         """
@@ -226,9 +220,7 @@ class FeatureSelector(BasePreprocessor):
             {
                 "feature": self.feature_importance_.index,
                 "importance": self.feature_importance_.values,
-                "selected": [
-                    f in self.selected_features_ for f in self.feature_importance_.index
-                ],
+                "selected": [f in self.selected_features_ for f in self.feature_importance_.index],
             }
         ).reset_index(drop=True)
 

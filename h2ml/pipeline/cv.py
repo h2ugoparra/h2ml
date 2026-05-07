@@ -97,11 +97,7 @@ class CVResult:
         first = self.folds[0]
         is_clf = first.y_prob_test is not None
         if is_clf:
-            shape = (
-                (n_samples, first.y_prob_test.shape[1])
-                if first.y_prob_test.ndim == 2
-                else (n_samples,)
-            )
+            shape = (n_samples, first.y_prob_test.shape[1]) if first.y_prob_test.ndim == 2 else (n_samples,)
             oof = np.full(shape, np.nan)
             for f in self.folds:
                 oof[f.test_idx] = f.y_prob_test
@@ -223,8 +219,7 @@ class CrossValidator:
         for fold_id, (train_idx, test_idx) in enumerate(splitter.split(X, y)):
             if test_idx.size == 0:
                 logger.warning(
-                    f"[{step.name}] Fold {fold_id} skipped: empty test set "
-                    "(spatial split produced no test samples)."
+                    f"[{step.name}] Fold {fold_id} skipped: empty test set (spatial split produced no test samples)."
                 )
                 cv_result.failed_folds.append(fold_id)
                 continue
@@ -269,9 +264,7 @@ class CrossValidator:
                 cv_result.failed_folds.append(fold_id)
 
         if not cv_result.folds:
-            logger.warning(
-                f"[{step.name}] All folds failed — model excluded from results."
-            )
+            logger.warning(f"[{step.name}] All folds failed — model excluded from results.")
 
         return cv_result
 
@@ -358,9 +351,7 @@ class CrossValidator:
 
         return cast(
             list[CVResult],
-            Parallel(n_jobs=n_jobs, backend="loky")(
-                delayed(_run_one)(step) for step in steps
-            ),
+            Parallel(n_jobs=n_jobs, backend="loky")(delayed(_run_one)(step) for step in steps),
         )
 
     # ------------------------------------------------------------------
@@ -406,9 +397,7 @@ class CrossValidator:
                 random_state=self.random_state,
                 metric=spatial_cv_metric,
             )
-        kwargs: dict[str, Any] = dict(
-            n_splits=self.n_splits, shuffle=self.shuffle, random_state=self.random_state
-        )
+        kwargs: dict[str, Any] = dict(n_splits=self.n_splits, shuffle=self.shuffle, random_state=self.random_state)
         if task_type == TaskType.CLASSIFICATION:
             return StratifiedKFold(**kwargs)
         return KFold(**kwargs)

@@ -84,18 +84,13 @@ def _classification_metrics(fold: FoldResult) -> dict:
     folds; other metrics use explicit class labels to avoid ValueError.
     """
     if fold.y_prob_test is None or fold.y_prob_train is None:
-        raise ValueError(
-            f"[{fold.model_name}] Fold {fold.fold_id} has no probabilities. "
-            "Did you use a BaseClassifier?"
-        )
+        raise ValueError(f"[{fold.model_name}] Fold {fold.fold_id} has no probabilities. Did you use a BaseClassifier?")
 
     is_multiclass = fold.y_prob_test.ndim == 2
 
     # All classes seen across both splits — needed to keep metric calls stable
     # even when one split is missing a class (common with spatial CV + imbalance).
-    all_classes = sorted(
-        np.unique(np.concatenate([fold.y_train, fold.y_test])).tolist()
-    )
+    all_classes = sorted(np.unique(np.concatenate([fold.y_train, fold.y_test])).tolist())
     single_class_test = len(np.unique(fold.y_test)) < 2
     single_class_train = len(np.unique(fold.y_train)) < 2
 
@@ -107,75 +102,37 @@ def _classification_metrics(fold: FoldResult) -> dict:
         auc_test = (
             np.nan
             if single_class_test
-            else roc_auc_score(
-                fold.y_test, fold.y_prob_test, multi_class="ovr", average="weighted"
-            )
+            else roc_auc_score(fold.y_test, fold.y_prob_test, multi_class="ovr", average="weighted")
         )
         auc_train = (
             np.nan
             if single_class_train
-            else roc_auc_score(
-                fold.y_train, fold.y_prob_train, multi_class="ovr", average="weighted"
-            )
+            else roc_auc_score(fold.y_train, fold.y_prob_train, multi_class="ovr", average="weighted")
         )
         auc_pr_test = (
-            np.nan
-            if single_class_test
-            else average_precision_score(
-                y_test_bin, fold.y_prob_test, average="weighted"
-            )
+            np.nan if single_class_test else average_precision_score(y_test_bin, fold.y_prob_test, average="weighted")
         )
         auc_pr_train = (
             np.nan
             if single_class_train
-            else average_precision_score(
-                y_train_bin, fold.y_prob_train, average="weighted"
-            )
+            else average_precision_score(y_train_bin, fold.y_prob_train, average="weighted")
         )
         logloss_test = log_loss(fold.y_test, fold.y_prob_test, labels=all_classes)
         logloss_train = log_loss(fold.y_train, fold.y_prob_train, labels=all_classes)
-        f1_test = f1_score(
-            fold.y_test, fold.y_pred_test, average="weighted", zero_division=0
-        )
-        f1_train = f1_score(
-            fold.y_train, fold.y_pred_train, average="weighted", zero_division=0
-        )
+        f1_test = f1_score(fold.y_test, fold.y_pred_test, average="weighted", zero_division=0)
+        f1_train = f1_score(fold.y_train, fold.y_pred_train, average="weighted", zero_division=0)
         # Multiclass Brier: mean over samples of sum-of-squared probability errors
-        brier_test = float(
-            np.mean(np.sum((y_test_bin - fold.y_prob_test) ** 2, axis=1))
-        )
-        brier_train = float(
-            np.mean(np.sum((y_train_bin - fold.y_prob_train) ** 2, axis=1))
-        )
+        brier_test = float(np.mean(np.sum((y_test_bin - fold.y_prob_test) ** 2, axis=1)))
+        brier_train = float(np.mean(np.sum((y_train_bin - fold.y_prob_train) ** 2, axis=1)))
     else:
-        auc_test = (
-            np.nan
-            if single_class_test
-            else roc_auc_score(fold.y_test, fold.y_prob_test)
-        )
-        auc_train = (
-            np.nan
-            if single_class_train
-            else roc_auc_score(fold.y_train, fold.y_prob_train)
-        )
-        auc_pr_test = (
-            np.nan
-            if single_class_test
-            else average_precision_score(fold.y_test, fold.y_prob_test)
-        )
-        auc_pr_train = (
-            np.nan
-            if single_class_train
-            else average_precision_score(fold.y_train, fold.y_prob_train)
-        )
+        auc_test = np.nan if single_class_test else roc_auc_score(fold.y_test, fold.y_prob_test)
+        auc_train = np.nan if single_class_train else roc_auc_score(fold.y_train, fold.y_prob_train)
+        auc_pr_test = np.nan if single_class_test else average_precision_score(fold.y_test, fold.y_prob_test)
+        auc_pr_train = np.nan if single_class_train else average_precision_score(fold.y_train, fold.y_prob_train)
         logloss_test = log_loss(fold.y_test, fold.y_prob_test, labels=all_classes)
         logloss_train = log_loss(fold.y_train, fold.y_prob_train, labels=all_classes)
-        f1_test = f1_score(
-            fold.y_test, fold.y_pred_test, zero_division=0, labels=all_classes
-        )
-        f1_train = f1_score(
-            fold.y_train, fold.y_pred_train, zero_division=0, labels=all_classes
-        )
+        f1_test = f1_score(fold.y_test, fold.y_pred_test, zero_division=0, labels=all_classes)
+        f1_train = f1_score(fold.y_train, fold.y_pred_train, zero_division=0, labels=all_classes)
         brier_test = float(brier_score_loss(fold.y_test, fold.y_prob_test))
         brier_train = float(brier_score_loss(fold.y_train, fold.y_prob_train))
 
@@ -248,11 +205,7 @@ def _add_overfit_gap(df: pd.DataFrame, task_type: TaskType) -> pd.DataFrame:
     for test_col, train_col, minimize in _OVERFIT_PAIRS.get(task_type, []):
         if test_col in df.columns and train_col in df.columns:
             metric_name = test_col.replace("_Test", "")
-            df[f"{metric_name}_Gap"] = (
-                df[test_col] - df[train_col]
-                if minimize
-                else df[train_col] - df[test_col]
-            )
+            df[f"{metric_name}_Gap"] = df[test_col] - df[train_col] if minimize else df[train_col] - df[test_col]
     return df
 
 
@@ -312,9 +265,7 @@ def compute_metrics_all(
     return pd.concat(frames, ignore_index=True)
 
 
-def aggregate_metrics(
-    fold_df: pd.DataFrame, group_by_stage: bool = True
-) -> pd.DataFrame:
+def aggregate_metrics(fold_df: pd.DataFrame, group_by_stage: bool = True) -> pd.DataFrame:
     """
     Aggregate per-fold results into mean ± std per model.
 
@@ -387,9 +338,7 @@ def select_best(
         Dict with keys model_name, metric, value, row.
     """
     if metric not in agg_df.columns:
-        raise ValueError(
-            f"Metric '{metric}' not found. Available: {list(agg_df.columns)}"
-        )
+        raise ValueError(f"Metric '{metric}' not found. Available: {list(agg_df.columns)}")
 
     std_col = metric.replace("_Mean", "_Std")
     if n_folds is not None and std_col in agg_df.columns:

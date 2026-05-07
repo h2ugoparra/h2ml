@@ -32,9 +32,7 @@ def xgboost_c_params(trial):
         "subsample": trial.suggest_float("subsample", 0.5, 1.0),
         "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
         "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
-        "scale_pos_weight": trial.suggest_float(
-            "scale_pos_weight", 0.5, 10.0
-        ),  # For imbalance
+        "scale_pos_weight": trial.suggest_float("scale_pos_weight", 0.5, 10.0),  # For imbalance
         "random_state": 42,
         "n_jobs": -1,
     }
@@ -46,9 +44,7 @@ def histgradientboosting_c_params(trial):
         "max_depth": trial.suggest_int("max_depth", 3, 30),
         "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.3, log=True),
         "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 10),
-        "l2_regularization": trial.suggest_float(
-            "l2_regularization", 1e-4, 10.0, log=True
-        ),
+        "l2_regularization": trial.suggest_float("l2_regularization", 1e-4, 10.0, log=True),
         "max_bins": trial.suggest_int("max_bins", 32, 255),
         "random_state": 42,
     }
@@ -68,9 +64,7 @@ def bagging_c_params(trial):
 def svc_c_params(trial):
     return {
         "C": trial.suggest_float("C", 0.1, 100, log=True),
-        "kernel": trial.suggest_categorical(
-            "kernel", ["linear", "poly", "rbf", "sigmoid"]
-        ),
+        "kernel": trial.suggest_categorical("kernel", ["linear", "poly", "rbf", "sigmoid"]),
         "gamma": trial.suggest_categorical("gamma", ["scale", "auto"]),
         "class_weight": trial.suggest_categorical("class_weight", ["balanced", None]),
         "random_state": 42,
@@ -85,9 +79,7 @@ def randomforest_c_params(trial):
         "max_depth": trial.suggest_int("max_depth", 3, 30),
         "min_samples_split": trial.suggest_int("min_samples_split", 2, 20),
         "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 10),
-        "max_features": trial.suggest_categorical(
-            "max_features", ["sqrt", "log2", None]
-        ),
+        "max_features": trial.suggest_categorical("max_features", ["sqrt", "log2", None]),
         "class_weight": trial.suggest_categorical("class_weight", ["balanced", None]),
         "bootstrap": trial.suggest_categorical("bootstrap", [True, False]),
         "random_state": 42,
@@ -101,9 +93,7 @@ def decisiontree_c_params(trial):
         "max_depth": trial.suggest_int("max_depth", 3, 30),
         "min_samples_split": trial.suggest_int("min_samples_split", 2, 20),
         "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 10),
-        "max_features": trial.suggest_categorical(
-            "max_features", ["sqrt", "log2", None]
-        ),
+        "max_features": trial.suggest_categorical("max_features", ["sqrt", "log2", None]),
         "class_weight": trial.suggest_categorical("class_weight", ["balanced", None]),
         "random_state": 42,
     }
@@ -143,9 +133,7 @@ def extratrees_c_params(trial):
         "max_depth": trial.suggest_int("max_depth", 3, 20),
         "min_samples_split": trial.suggest_int("min_samples_split", 2, 10),
         "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 10),
-        "max_features": trial.suggest_float(
-            "max_features", 0.1, 1.0
-        ),  # Fraction of features
+        "max_features": trial.suggest_float("max_features", 0.1, 1.0),  # Fraction of features
         "bootstrap": trial.suggest_categorical("bootstrap", [True, False]),
         "random_state": 42,
     }

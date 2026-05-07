@@ -98,9 +98,7 @@ class ModelWrapper(BaseClassifier, BaseRegressor):
             self.estimator.fit(X, y)
             self._fitted = True
         if self.verbose:
-            logger.info(
-                f"[{self.name}] Fitted on {X.shape[0]} samples, {X.shape[1]} features."
-            )
+            logger.info(f"[{self.name}] Fitted on {X.shape[0]} samples, {X.shape[1]} features.")
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -114,9 +112,7 @@ class ModelWrapper(BaseClassifier, BaseRegressor):
             transformed = self.estimator.transform(X)
             # sklearn transformers may return arrays — wrap back to DataFrame
             if isinstance(transformed, np.ndarray):
-                return pd.DataFrame(
-                    transformed, columns=self._get_out_columns(X, transformed)
-                )
+                return pd.DataFrame(transformed, columns=self._get_out_columns(X, transformed))
             return transformed
 
         # Classifier / regressor — pass-through
@@ -144,9 +140,7 @@ class ModelWrapper(BaseClassifier, BaseRegressor):
             )
 
         if not _has_predict_proba(self.estimator):
-            raise TypeError(
-                f"[{self.name}] The wrapped estimator does not support predict_proba(). "
-            )
+            raise TypeError(f"[{self.name}] The wrapped estimator does not support predict_proba(). ")
 
         return self.estimator.predict_proba(X)
 
@@ -163,9 +157,7 @@ class ModelWrapper(BaseClassifier, BaseRegressor):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _get_out_columns(
-        self, X_in: pd.DataFrame, transformed: np.ndarray
-    ) -> list[str]:
+    def _get_out_columns(self, X_in: pd.DataFrame, transformed: np.ndarray) -> list[str]:
         """Resolve output column names after a transform step."""
         names = self.get_feature_names_out()
         if names:

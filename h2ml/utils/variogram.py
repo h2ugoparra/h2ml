@@ -33,9 +33,7 @@ from scipy.spatial.distance import cdist
 # ---------------------------------------------------------------------------
 
 
-def _exponential_model(
-    h: np.ndarray, nugget: float, sill: float, a: float
-) -> np.ndarray:
+def _exponential_model(h: np.ndarray, nugget: float, sill: float, a: float) -> np.ndarray:
     """
     γ(h) = nugget + sill × (1 − exp(−h / a))
 
@@ -228,10 +226,7 @@ def plot_variogram(
 
     ax.set_xlabel(f"Lag distance ({units})")
     ax.set_ylabel("Semivariance γ(h)")
-    ax.set_title(
-        f"Variogram  —  nugget={vr.nugget:.3f}  sill={vr.sill:.3f}  "
-        f"range={vr.practical_range:.2f}{units}"
-    )
+    ax.set_title(f"Variogram  —  nugget={vr.nugget:.3f}  sill={vr.sill:.3f}  range={vr.practical_range:.2f}{units}")
     ax.legend()
 
     plt.tight_layout()

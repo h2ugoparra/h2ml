@@ -70,9 +70,7 @@ def _make_trial_callback(metric: str, n_trials: int) -> "tuple[Callable, Any]":
     def _cb(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
         pbar.update(1)
         if study.best_trial is not None:
-            pbar.set_postfix(
-                {f"best_{metric}": f"{_to_display(study.best_value, metric):.4f}"}
-            )
+            pbar.set_postfix({f"best_{metric}": f"{_to_display(study.best_value, metric):.4f}"})
 
     return _cb, pbar
 
@@ -97,9 +95,7 @@ def _score_auc_pr(model, X_train, X_test, y_train, y_test) -> float:
     if proba.shape[1] == 2:
         return float(average_precision_score(y_test, proba[:, 1]))
     lb = LabelBinarizer().fit(y_train)
-    return float(
-        average_precision_score(lb.transform(y_test), proba, average="weighted")
-    )
+    return float(average_precision_score(lb.transform(y_test), proba, average="weighted"))
 
 
 def _score_logloss(model, X_train, X_test, y_train, y_test) -> float:
@@ -126,9 +122,7 @@ def _score_f1(model, X_train, X_test, y_train, y_test) -> float:
     return float(f1_score(y_test, y_pred, average=average, zero_division=0))
 
 
-def _score_r2(
-    model, X_train, X_test, y_train, y_test, *, y_true_test=None, inverse_fn=None
-) -> float:
+def _score_r2(model, X_train, X_test, y_train, y_test, *, y_true_test=None, inverse_fn=None) -> float:
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     if inverse_fn is not None:
@@ -137,9 +131,7 @@ def _score_r2(
     return float(r2_score(y_test, y_pred))
 
 
-def _score_mae(
-    model, X_train, X_test, y_train, y_test, *, y_true_test=None, inverse_fn=None
-) -> float:
+def _score_mae(model, X_train, X_test, y_train, y_test, *, y_true_test=None, inverse_fn=None) -> float:
     """Negated MAE so higher is better."""
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
@@ -149,9 +141,7 @@ def _score_mae(
     return float(-mean_absolute_error(y_test, y_pred))
 
 
-def _score_rmse(
-    model, X_train, X_test, y_train, y_test, *, y_true_test=None, inverse_fn=None
-) -> float:
+def _score_rmse(model, X_train, X_test, y_train, y_test, *, y_true_test=None, inverse_fn=None) -> float:
     """Negated RMSE so higher is better."""
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
@@ -265,9 +255,7 @@ def _build_objective(
                 metric=spatial_cv_metric,
             )
     else:
-        splitter = _SPLITTER[task](
-            n_splits=n_splits, shuffle=True, random_state=random_state
-        )
+        splitter = _SPLITTER[task](n_splits=n_splits, shuffle=True, random_state=random_state)
 
     fixed_params = fixed_params or {}
 
@@ -293,9 +281,7 @@ def _build_objective(
     # When y_true is provided, the score functions receive original-scale y so
     # HPO optimises the same metric that the pipeline reports.
     y_true_folds: list[np.ndarray] | None = (
-        [y_true[test_idx] for _, test_idx in fold_indices]
-        if y_true is not None
-        else None
+        [y_true[test_idx] for _, test_idx in fold_indices] if y_true is not None else None
     )
 
     def objective(trial: optuna.Trial) -> float:
@@ -417,10 +403,7 @@ def run_study(
     available = _TASK_METRICS[task]
     resolved_metric = metric or _DEFAULT_METRIC[task]
     if resolved_metric not in available:
-        raise ValueError(
-            f"metric '{resolved_metric}' is not valid for task '{task}'. "
-            f"Available: {list(available)}"
-        )
+        raise ValueError(f"metric '{resolved_metric}' is not valid for task '{task}'. Available: {list(available)}")
     score_fn = available[resolved_metric]
 
     entry = get_entry(name, task)
@@ -446,11 +429,7 @@ def run_study(
 
         # Clone the pre-built splitter for this repeat's seed, skipping AHC.
         # Falls back to None (build from scratch) when no splitter was provided.
-        repeat_splitter = (
-            _splitter.clone_with_n_splits(n_splits, random_state=seed)
-            if _splitter is not None
-            else None
-        )
+        repeat_splitter = _splitter.clone_with_n_splits(n_splits, random_state=seed) if _splitter is not None else None
 
         objective = _build_objective(
             entry=entry,
@@ -524,10 +503,7 @@ def run_study(
                 f"params={best_study.best_params}"
             )
         else:
-            logger.info(
-                f"Best trial: {resolved_metric}={best_display:.4f} | "
-                f"params={best_study.best_params}"
-            )
+            logger.info(f"Best trial: {resolved_metric}={best_display:.4f} | params={best_study.best_params}")
 
     return best_study
 

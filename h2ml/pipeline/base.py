@@ -65,9 +65,7 @@ class BaseStep(ABC):
         """Apply the fitted step to data. Returns a DataFrame."""
         ...
 
-    def fit_transform(
-        self, X: np.ndarray, y: Optional[np.ndarray] = None
-    ) -> np.ndarray:
+    def fit_transform(self, X: np.ndarray, y: Optional[np.ndarray] = None) -> np.ndarray:
         """Fit and transform in one call. Override for efficiency if needed."""
         return self.fit(X, y).transform(X)
 
@@ -86,9 +84,7 @@ class BaseStep(ABC):
     def _check_fitted(self) -> None:
         """Raise if transform/predict is called before fit."""
         if not self._fitted:
-            raise RuntimeError(
-                f"[{self.name}] Step has not been fitted yet. Call fit() first."
-            )
+            raise RuntimeError(f"[{self.name}] Step has not been fitted yet. Call fit() first.")
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(name={self.name!r}, fitted={self._fitted})"
@@ -115,9 +111,7 @@ class PredictorMixin(ABC):
         Return class probabilities. Only classifiers need to implement this.
         Raises NotImplementedError by default so regressors stay clean.
         """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not support predict_proba()."
-        )
+        raise NotImplementedError(f"{self.__class__.__name__} does not support predict_proba().")
 
 
 # ---------------------------------------------------------------------------

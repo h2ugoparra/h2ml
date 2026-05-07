@@ -31,9 +31,7 @@ def build_transform_stores(
 
     for name in transforms:
         if name not in Y_TRANSFORMS:
-            raise KeyError(
-                f"Unknown transform '{name}'. Available: {list(Y_TRANSFORMS)}"
-            )
+            raise KeyError(f"Unknown transform '{name}'. Available: {list(Y_TRANSFORMS)}")
 
         y_transformed = Y_TRANSFORMS[name](y)
 

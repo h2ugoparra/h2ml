@@ -36,32 +36,23 @@ class PipelineData:
     y: np.ndarray
     y_true: Optional[np.ndarray] = None  # original-scale y for back-transformed metrics
     y_transform: Optional[str] = None  # transform name, used to look up inverse fn
-    coords: Optional[np.ndarray] = (
-        None  # spatial coordinates (n_samples, 2) — lat/lon or x/y
-    )
+    coords: Optional[np.ndarray] = None  # spatial coordinates (n_samples, 2) — lat/lon or x/y
 
     def __post_init__(self):
         n = self.X.shape[0]
         if self.X.shape[1] != len(self.feature_names):
             raise ValueError(
-                f"X has {self.X.shape[1]} columns but "
-                f"{len(self.feature_names)} feature names were provided."
+                f"X has {self.X.shape[1]} columns but {len(self.feature_names)} feature names were provided."
             )
         if self.y.shape[0] != n:
             raise ValueError(f"y has {self.y.shape[0]} rows but X has {n} rows.")
         if self.y_true is not None and self.y_true.shape[0] != n:
-            raise ValueError(
-                f"y_true has {self.y_true.shape[0]} rows but X has {n} rows."
-            )
+            raise ValueError(f"y_true has {self.y_true.shape[0]} rows but X has {n} rows.")
         if self.coords is not None:
             if self.coords.ndim != 2 or self.coords.shape[1] != 2:
-                raise ValueError(
-                    f"coords must be shape (n_samples, 2), got {self.coords.shape}."
-                )
+                raise ValueError(f"coords must be shape (n_samples, 2), got {self.coords.shape}.")
             if self.coords.shape[0] != n:
-                raise ValueError(
-                    f"coords has {self.coords.shape[0]} rows but X has {n} rows."
-                )
+                raise ValueError(f"coords has {self.coords.shape[0]} rows but X has {n} rows.")
 
     # ------------------------------------------------------------------
     # Conversions

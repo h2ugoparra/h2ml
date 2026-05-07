@@ -130,11 +130,7 @@ def pipeline_scores(
         title:      Plot title.
         save_path:  Path to save figure. If None, shows the plot.
     """
-    frames = [
-        df
-        for df in [result.step1_fold_df, result.step3_fold_df, result.step4_fold_df]
-        if df is not None
-    ]
+    frames = [df for df in [result.step1_fold_df, result.step3_fold_df, result.step4_fold_df] if df is not None]
     if not frames:
         raise ValueError("PipelineResult has no fold DataFrames to plot.")
 
@@ -221,9 +217,7 @@ def _classification_diagnostics(
 
     df_pred = pd.DataFrame({"y": y_true, "y_prob": y_prob})
     df_pred["bin"] = pd.qcut(df_pred["y_prob"], q=10, duplicates="drop")
-    calib = df_pred.groupby("bin", observed=True).agg(
-        y_mean=("y", "mean"), y_prob_mean=("y_prob", "mean")
-    )
+    calib = df_pred.groupby("bin", observed=True).agg(y_mean=("y", "mean"), y_prob_mean=("y_prob", "mean"))
 
     fig, axes = plt.subplots(3, 2, figsize=(14, 10))
     fig.suptitle(title)
@@ -282,9 +276,7 @@ def _classification_diagnostics(
     axes[1, 0].set_ylabel("Residuals")
 
     # [1,1] Residuals histogram
-    sns.histplot(
-        residuals, ax=axes[1, 1], kde=True, bins=50, color="steelblue", alpha=0.4
-    )
+    sns.histplot(residuals, ax=axes[1, 1], kde=True, bins=50, color="steelblue", alpha=0.4)
     axes[1, 1].axvline(0, color="red", linestyle="--")
     axes[1, 1].set_title("Residuals Histogram")
     axes[1, 1].set_xlabel("Residuals")
@@ -492,9 +484,7 @@ def _compute_final_shap(result) -> tuple:
     else:
         shap_store = store
 
-    shap_values, feature_importance = get_shap_values(
-        final.estimator, shap_store, final.task_type
-    )
+    shap_values, feature_importance = get_shap_values(final.estimator, shap_store, final.task_type)
 
     result._final_shap_cache = (shap_values, feature_importance, store)
     return result._final_shap_cache
@@ -522,9 +512,7 @@ def shap_summary_plot(
     import warnings
 
     with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore", category=FutureWarning, message=".*NumPy global RNG.*"
-        )
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*NumPy global RNG.*")
         _shap.summary_plot(shap_values, X_df, show=False)
     plt.gcf().set_size_inches(10, 6)
 

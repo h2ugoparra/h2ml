@@ -23,7 +23,7 @@ uv run pytest tests/feature/
 uv run tox
 
 # Lint
-uv run flake8 h2ml/
+uv run ruff check h2ml/
 
 # Docs — preview locally
 uv run mkdocs serve

@@ -151,9 +151,7 @@ class PipelineConfig:
 
     def __post_init__(self):
         if self.metric not in _METRIC_COL:
-            raise ValueError(
-                f"metric must be one of {list(_METRIC_COL)}, got {self.metric!r}"
-            )
+            raise ValueError(f"metric must be one of {list(_METRIC_COL)}, got {self.metric!r}")
         if self.n_splits < 2:
             raise ValueError(f"n_splits must be >= 2, got {self.n_splits}")
         if self.opt_n_splits < 2:
@@ -166,9 +164,7 @@ class PipelineConfig:
                 f"opt_n_splits={self.n_splits} for unbiased HPO at higher compute cost."
             )
         if not 0 < self.corr_threshold <= 1:
-            raise ValueError(
-                f"corr_threshold must be in (0, 1], got {self.corr_threshold}"
-            )
+            raise ValueError(f"corr_threshold must be in (0, 1], got {self.corr_threshold}")
         if self.n_trials < 1:
             raise ValueError(f"n_trials must be >= 1, got {self.n_trials}")
         if self.min_features < 1:
@@ -176,13 +172,9 @@ class PipelineConfig:
         if self.n_hpo_repeats < 1:
             raise ValueError(f"n_hpo_repeats must be >= 1, got {self.n_hpo_repeats}")
         if self.n_blocks_per_fold < 1:
-            raise ValueError(
-                f"n_blocks_per_fold must be >= 1, got {self.n_blocks_per_fold}"
-            )
+            raise ValueError(f"n_blocks_per_fold must be >= 1, got {self.n_blocks_per_fold}")
         if self.spatial_cv_method not in ("block", "spcv"):
-            raise ValueError(
-                f"spatial_cv_method must be 'block' or 'spcv', got {self.spatial_cv_method!r}"
-            )
+            raise ValueError(f"spatial_cv_method must be 'block' or 'spcv', got {self.spatial_cv_method!r}")
 
     @property
     def minimize_metric(self) -> bool:
@@ -223,9 +215,7 @@ class PipelineResult:
     # Feature stage that step 4 is built on — "default" or "reduced", never "optimized"
     best_feature_stage: Optional[str] = None
     # Step 3: cached reduced PipelineDatas keyed by transform name (or "" for no transform)
-    step3_reduced_stores: Optional[dict[str, "PipelineData"]] = field(
-        default=None, repr=False
-    )
+    step3_reduced_stores: Optional[dict[str, "PipelineData"]] = field(default=None, repr=False)
     # Step 4: hyperparameter optimization + final CV + select overall best
     best_params: Optional[dict] = None
     step4_fold_df: Optional[pd.DataFrame] = None
@@ -246,9 +236,7 @@ class PipelineResult:
     splitter: Any = field(default=None, repr=False, compare=False)
     # Transient cache — populated on first call to shap_summary_plot / shap_dependence
     # Not persisted (result_io.py enumerates fields explicitly).
-    _final_shap_cache: Optional[tuple] = field(
-        default=None, repr=False, compare=False, init=False
-    )
+    _final_shap_cache: Optional[tuple] = field(default=None, repr=False, compare=False, init=False)
 
     @property
     def oof_predictions(self) -> Optional[np.ndarray]:
@@ -295,9 +283,7 @@ class PipelineResult:
             steps.append(4)
         return steps
 
-    def summary(
-        self, metric: Optional[str] = None, ascending: bool = False
-    ) -> pd.DataFrame:
+    def summary(self, metric: Optional[str] = None, ascending: bool = False) -> pd.DataFrame:
         """
         Combined agg DataFrame across all completed stages.
 
@@ -329,9 +315,7 @@ class PipelineResult:
         if metric is not None:
             if metric not in df.columns:
                 available = [c for c in df.columns if c.endswith("_Mean")]
-                raise ValueError(
-                    f"Metric '{metric}' not found in summary. Available: {available}"
-                )
+                raise ValueError(f"Metric '{metric}' not found in summary. Available: {available}")
             df = df.sort_values(metric, ascending=ascending).reset_index(drop=True)
 
         return df
@@ -546,9 +530,7 @@ class H2MLPipeline:
             if getattr(result, attr) is None
         ]
         if missing:
-            raise ValueError(
-                f"result must have {missing} set. Run run_step1_to_step2() first."
-            )
+            raise ValueError(f"result must have {missing} set. Run run_step1_to_step2() first.")
         result = self._run_step3(result, transform_stores)
         result = self._run_step4(result, transform_stores)
         return result
@@ -653,11 +635,7 @@ class H2MLPipeline:
 
             warnings.filterwarnings("ignore")
             inv = self._get_inverse_fn(store)
-            sf = (
-                precomputed_scaled_folds
-                if getattr(model, "requires_scaling", False)
-                else None
-            )
+            sf = precomputed_scaled_folds if getattr(model, "requires_scaling", False) else None
             return transform_name, self._cv.run(
                 model,
                 store.X,
@@ -677,9 +655,7 @@ class H2MLPipeline:
             )
 
         raw = Parallel(n_jobs=-1, backend="loky")(
-            delayed(_run_one)(tn, st, m)
-            for tn, st in stores.items()
-            for m in self.models
+            delayed(_run_one)(tn, st, m) for tn, st in stores.items() for m in self.models
         )
 
         # Group by transform and compute metrics — identical to the serial path.
@@ -727,9 +703,7 @@ class H2MLPipeline:
     ) -> PipelineResult:
         """SHAP importance + correlation-based feature reduction on winning transform's store."""
         assert result.features is not None, "result.features must be set before step 2."
-        self._log(
-            f"Step 2 — Feature reduction (threshold={self.config.corr_threshold})"
-        )
+        self._log(f"Step 2 — Feature reduction (threshold={self.config.corr_threshold})")
 
         # Use the winning transform's store for SHAP; fall back to the raw store
         if transform_stores and result.y_transform:
@@ -759,9 +733,7 @@ class H2MLPipeline:
         transform_stores: Optional[dict[str, PipelineData]] = None,
     ) -> PipelineResult:
         """CV all models on reduced features (step-1-winning transform only), then select best stage."""
-        assert result.features_reduced is not None, (
-            "features_reduced must be set before step 3."
-        )
+        assert result.features_reduced is not None, "features_reduced must be set before step 3."
         assert result.selector is not None, "selector must be set before step 3."
         n_features = result.features_reduced.n_features
         self._log(
@@ -802,9 +774,7 @@ class H2MLPipeline:
         result.cv_warnings.extend(self._collect_cv_warnings(cv_results))
 
         # Compare step1 (default) and step3 (reduced) agg dfs directly — pick the best row
-        all_stages_agg = pd.concat(
-            [result.step1_agg_df, result.step3_agg_df], ignore_index=True
-        )
+        all_stages_agg = pd.concat([result.step1_agg_df, result.step3_agg_df], ignore_index=True)
         best = select_best(
             all_stages_agg,
             metric=self.config.metric_col,
@@ -816,9 +786,7 @@ class H2MLPipeline:
         std_col = self.config.metric_col.replace("_Mean", "_Std")
         result.best_model_std = float(best["row"].get(std_col, float("nan")))
         result.best_stage = str(best["row"]["Stage"])
-        result.best_feature_stage = (
-            result.best_stage
-        )  # preserved — never overwritten by "optimized"
+        result.best_feature_stage = result.best_stage  # preserved — never overwritten by "optimized"
         result.y_transform = best["row"].get("Y_transform")
 
         self._log(
@@ -835,12 +803,8 @@ class H2MLPipeline:
     ) -> PipelineResult:
         """Hyperparameter optimization + final CV + select overall best."""
         assert result.features is not None, "result.features must be set before step 4."
-        assert result.features_reduced is not None, (
-            "features_reduced must be set before step 4."
-        )
-        assert result.best_model_value is not None, (
-            "best_model_value must be set before step 4."
-        )
+        assert result.features_reduced is not None, "features_reduced must be set before step 4."
+        assert result.best_model_value is not None, "best_model_value must be set before step 4."
         self._log(
             f"Step 4 — Optimize {result.best_model_name} | "
             f"stage='{result.best_stage}'"
@@ -858,9 +822,7 @@ class H2MLPipeline:
         estimator_name = best_model.estimator.__class__.__name__
 
         if not self._is_opt_enabled(estimator_name):
-            self._log(
-                f"  {estimator_name} has opt_enabled=False — skipping optimization."
-            )
+            self._log(f"  {estimator_name} has opt_enabled=False — skipping optimization.")
             result.best_params = self._get_default_params(estimator_name)
             return result
 
@@ -921,9 +883,7 @@ class H2MLPipeline:
         )
         result.step4_cv_result = cv_result
         result.step4_fold_df = compute_metrics_all([cv_result], metadata=metadata)
-        result.step4_agg_df = aggregate_metrics(
-            result.step4_fold_df, group_by_stage=False
-        )
+        result.step4_agg_df = aggregate_metrics(result.step4_fold_df, group_by_stage=False)
 
         optimized_value = float(result.step4_agg_df.iloc[0][self.config.metric_col])
         std_col = self.config.metric_col.replace("_Mean", "_Std")
@@ -961,12 +921,9 @@ class H2MLPipeline:
             return None
         if self.config.task_type != TaskType.REGRESSION:
             raise ValueError(
-                "transforms are only supported for regression tasks. "
-                f"Got task_type='{self.config.task_type.value}'."
+                f"transforms are only supported for regression tasks. Got task_type='{self.config.task_type.value}'."
             )
-        stores = build_transform_stores(
-            store.X, store.y, store.feature_names, list(transforms), coords=store.coords
-        )
+        stores = build_transform_stores(store.X, store.y, store.feature_names, list(transforms), coords=store.coords)
         if not stores:
             raise ValueError(
                 "No valid transform stores built — all transforms returned None. "
@@ -990,10 +947,7 @@ class H2MLPipeline:
         if result.best_stage == "reduced":
             assert result.selector is not None
             key = result.y_transform or ""
-            if (
-                result.step3_reduced_stores is not None
-                and key in result.step3_reduced_stores
-            ):
+            if result.step3_reduced_stores is not None and key in result.step3_reduced_stores:
                 return result.step3_reduced_stores[key]
             return result.selector.transform(full_store)
         return full_store
@@ -1011,16 +965,12 @@ class H2MLPipeline:
             counts = Counter(store.feature_names)
             dups = sorted(n for n, c in counts.items() if c > 1)
             raise ValueError(
-                f"store.feature_names contains duplicate names: {dups}. "
-                "Each feature must have a unique name."
+                f"store.feature_names contains duplicate names: {dups}. Each feature must have a unique name."
             )
         if not np.all(np.isfinite(store.X)):
             bad_mask = ~np.isfinite(store.X)
             col_counts = bad_mask.sum(axis=0)
-            bad_cols = [
-                (store.feature_names[i], int(col_counts[i]))
-                for i in np.where(col_counts > 0)[0]
-            ]
+            bad_cols = [(store.feature_names[i], int(col_counts[i])) for i in np.where(col_counts > 0)[0]]
             n_bad_rows = int(bad_mask.any(axis=1).sum())
             pct = 100 * n_bad_rows / store.n_samples
             col_str = ", ".join(f"{name} ({n})" for name, n in bad_cols[:10])
@@ -1051,8 +1001,7 @@ class H2MLPipeline:
             n_classes = len(np.unique(store.y))
             if n_classes < 2:
                 raise ValueError(
-                    f"store.y contains only {n_classes} unique class(es). "
-                    "Classification requires at least 2 classes."
+                    f"store.y contains only {n_classes} unique class(es). Classification requires at least 2 classes."
                 )
             classes, counts = np.unique(store.y, return_counts=True)
             minority_ratio = counts.min() / counts.sum()
@@ -1068,15 +1017,13 @@ class H2MLPipeline:
                 )
         if store.coords is not None and not np.all(np.isfinite(store.coords)):
             raise ValueError(
-                "store.coords contains NaN or infinite values. "
-                "Remove or impute them before calling pipeline.run()."
+                "store.coords contains NaN or infinite values. Remove or impute them before calling pipeline.run()."
             )
 
     def _collect_cv_warnings(self, cv_results: list[CVResult]) -> list[str]:
         """Return warning strings for any models that had failed folds."""
         return [
-            f"{r.model_name}: {len(r.failed_folds)}/{self.config.n_splits} fold(s) failed "
-            f"(fold IDs: {r.failed_folds})"
+            f"{r.model_name}: {len(r.failed_folds)}/{self.config.n_splits} fold(s) failed (fold IDs: {r.failed_folds})"
             for r in cv_results
             if r.failed_folds
         ]
@@ -1093,11 +1040,7 @@ class H2MLPipeline:
         """Return False if the model's registry entry has opt_enabled=False."""
         from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
 
-        registry = (
-            CLASSIFIER_REGISTRY
-            if self.config.task_type == TaskType.CLASSIFICATION
-            else REGRESSOR_REGISTRY
-        )
+        registry = CLASSIFIER_REGISTRY if self.config.task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
         entry = registry.get(estimator_name)
         return entry.opt_enabled if entry is not None else True
 
@@ -1125,11 +1068,7 @@ class H2MLPipeline:
         """Return the default_kwargs for a model from the registry."""
         from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
 
-        registry = (
-            CLASSIFIER_REGISTRY
-            if self.config.task_type == TaskType.CLASSIFICATION
-            else REGRESSOR_REGISTRY
-        )
+        registry = CLASSIFIER_REGISTRY if self.config.task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
         entry = registry.get(estimator_name)
         return entry.default_kwargs if entry is not None else {}
 
@@ -1138,9 +1077,7 @@ class H2MLPipeline:
             raise RuntimeError("best_model_name is not set.")
         model = self._model_map.get(name)
         if model is None:
-            raise ValueError(
-                f"Model '{name}' not found. Available: {list(self._model_map)}"
-            )
+            raise ValueError(f"Model '{name}' not found. Available: {list(self._model_map)}")
         return model
 
     def _metadata_with(self, stage: str) -> RunMetadata:
@@ -1164,14 +1101,8 @@ class H2MLPipeline:
         logger.info(f"  Best model:        {result.best_model_name}")
         if result.y_transform:
             logger.info(f"  Y-transform:       {result.y_transform}")
-        std_str = (
-            f" ± {result.best_model_std:.4f}"
-            if result.best_model_std is not None
-            else ""
-        )
-        logger.info(
-            f"  Metric:            {self.config.metric} = {result.best_model_value:.4f}{std_str}"
-        )
+        std_str = f" ± {result.best_model_std:.4f}" if result.best_model_std is not None else ""
+        logger.info(f"  Metric:            {self.config.metric} = {result.best_model_value:.4f}{std_str}")
         feature_stage = result.best_feature_stage or result.best_stage
         features = (
             result.features_reduced.n_features

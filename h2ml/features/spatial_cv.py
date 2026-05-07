@@ -26,9 +26,7 @@ def _warn_if_degrees(coords: np.ndarray, metric: str) -> None:
     if metric != "euclidean":
         return
     lat, lon = coords[:, 0], coords[:, 1]
-    looks_like_degrees = (
-        -90 <= lat.min() and lat.max() <= 90 and -180 <= lon.min() and lon.max() <= 180
-    )
+    looks_like_degrees = -90 <= lat.min() and lat.max() <= 90 and -180 <= lon.min() and lon.max() <= 180
     span = max(lat.max() - lat.min(), lon.max() - lon.min())
     if looks_like_degrees and span > 5:
         logger.warning(
@@ -74,9 +72,7 @@ class SpatialBlockSplitter:
     ) -> None:
         coords = np.asarray(coords)
         if coords.ndim != 2 or coords.shape[1] != 2:
-            raise ValueError(
-                f"coords must be shape (n_samples, 2), got {coords.shape}."
-            )
+            raise ValueError(f"coords must be shape (n_samples, 2), got {coords.shape}.")
         n_samples = coords.shape[0]
         if n_splits * n_blocks_per_fold > n_samples:
             raise ValueError(
@@ -103,9 +99,7 @@ class SpatialBlockSplitter:
         """Yield (train_idx, test_idx) for each of n_splits folds."""
         n_samples = len(X)
         if n_samples != len(self.coords):
-            raise ValueError(
-                f"X has {n_samples} rows but coords has {len(self.coords)} rows."
-            )
+            raise ValueError(f"X has {n_samples} rows but coords has {len(self.coords)} rows.")
         all_idx = np.arange(n_samples)
         for k in range(self.n_splits):
             test_idx = all_idx[self._fold_of_sample == k]
@@ -121,17 +115,13 @@ class SpatialBlockSplitter:
     # Block assignment
     # ------------------------------------------------------------------
 
-    def clone_with_n_splits(
-        self, n_splits: int, random_state: Optional[int] = None
-    ) -> "SpatialBlockSplitter":
+    def clone_with_n_splits(self, n_splits: int, random_state: Optional[int] = None) -> "SpatialBlockSplitter":
         """Return a new splitter with n_splits folds, reusing the same coords and metric."""
         return SpatialBlockSplitter(
             coords=self.coords,
             n_splits=n_splits,
             n_blocks_per_fold=self.n_blocks_per_fold,
-            random_state=random_state
-            if random_state is not None
-            else self.random_state,
+            random_state=random_state if random_state is not None else self.random_state,
             metric=self.metric,
         )
 
@@ -253,17 +243,11 @@ class SPCVSplitter:
             raise ValueError(f"coords must be (n_samples, 2), got {coords.shape}.")
         n_samples = coords.shape[0]
         if X.shape[0] != n_samples:
-            raise ValueError(
-                f"X has {X.shape[0]} rows but coords has {n_samples} rows."
-            )
+            raise ValueError(f"X has {X.shape[0]} rows but coords has {n_samples} rows.")
         if y.shape[0] != n_samples:
-            raise ValueError(
-                f"y has {y.shape[0]} rows but coords has {n_samples} rows."
-            )
+            raise ValueError(f"y has {y.shape[0]} rows but coords has {n_samples} rows.")
         if n_samples < n_splits:
-            raise ValueError(
-                f"n_samples ({n_samples}) must be >= n_splits ({n_splits})."
-            )
+            raise ValueError(f"n_samples ({n_samples}) must be >= n_splits ({n_splits}).")
 
         _warn_if_degrees(coords, metric)
         self.coords = coords
@@ -292,23 +276,18 @@ class SPCVSplitter:
         """Yield (train_idx, test_idx) for each of n_splits folds."""
         n_samples = len(X)
         if n_samples != len(self.coords):
-            raise ValueError(
-                f"X has {n_samples} rows but coords has {len(self.coords)} rows."
-            )
+            raise ValueError(f"X has {n_samples} rows but coords has {len(self.coords)} rows.")
         all_idx = np.arange(n_samples)
         for k in range(self.n_splits):
             test_idx = all_idx[self._fold_of_sample == k]
             train_idx = all_idx[self._fold_of_sample != k]
             if test_idx.size == 0:
                 logger.warning(
-                    f"SPCVSplitter: fold {k} has zero test samples. "
-                    "Consider a smaller threshold or fewer n_splits."
+                    f"SPCVSplitter: fold {k} has zero test samples. Consider a smaller threshold or fewer n_splits."
                 )
             yield train_idx, test_idx
 
-    def clone_with_n_splits(
-        self, n_splits: int, random_state: Optional[int] = None
-    ) -> "SPCVSplitter":
+    def clone_with_n_splits(self, n_splits: int, random_state: Optional[int] = None) -> "SPCVSplitter":
         """
         Return a new splitter with n_splits folds, reusing the AHC block structure.
 
@@ -323,9 +302,7 @@ class SPCVSplitter:
         clone.n_splits = n_splits
         clone.threshold = self.threshold
         clone.linkage = self.linkage
-        clone.random_state = (
-            random_state if random_state is not None else self.random_state
-        )
+        clone.random_state = random_state if random_state is not None else self.random_state
         clone.metric = self.metric
         clone.pca_components = self.pca_components
         clone.exact_max_samples = self.exact_max_samples
@@ -400,8 +377,7 @@ class SPCVSplitter:
         if self.metric == "haversine" and linkage == "ward":
             linkage = "average"
             logger.debug(
-                "SPCVSplitter: linkage='ward' is incompatible with haversine — "
-                "using 'average' for the exact AHC path."
+                "SPCVSplitter: linkage='ward' is incompatible with haversine — using 'average' for the exact AHC path."
             )
 
         threshold = self._resolve_threshold(distances)
@@ -444,9 +420,7 @@ class SPCVSplitter:
             include_self=False,
         )
 
-        threshold = self._resolve_threshold_approximate(
-            coords_for_graph, sklearn_metric
-        )
+        threshold = self._resolve_threshold_approximate(coords_for_graph, sklearn_metric)
 
         clustering = AgglomerativeClustering(
             n_clusters=None,
@@ -463,17 +437,13 @@ class SPCVSplitter:
         if self.threshold is None:
             t = float(np.percentile(distances, 10))
             units = "rad" if self.metric == "haversine" else "coord units"
-            logger.debug(
-                f"SPCVSplitter: threshold auto-set to {t:.4f} {units} (10th pct of pairwise distances)."
-            )
+            logger.debug(f"SPCVSplitter: threshold auto-set to {t:.4f} {units} (10th pct of pairwise distances).")
             return t
         if self.metric == "haversine":
             return float(np.deg2rad(self.threshold))
         return float(self.threshold)
 
-    def _resolve_threshold_approximate(
-        self, coords_for_graph: np.ndarray, sklearn_metric: str
-    ) -> float:
+    def _resolve_threshold_approximate(self, coords_for_graph: np.ndarray, sklearn_metric: str) -> float:
         """
         Return threshold for sklearn AgglomerativeClustering.
         When threshold=None, estimate from a sample of pairwise distances to
@@ -498,9 +468,7 @@ class SPCVSplitter:
         upper = dists[np.triu_indices_from(dists, k=1)]
         t = float(np.percentile(upper, 10))
         units = "rad" if self.metric == "haversine" else "coord units"
-        logger.debug(
-            f"SPCVSplitter: threshold auto-set to {t:.4f} {units} (10th pct, subsample of 1000)."
-        )
+        logger.debug(f"SPCVSplitter: threshold auto-set to {t:.4f} {units} (10th pct, subsample of 1000).")
         return t
 
     # ------------------------------------------------------------------
@@ -544,9 +512,7 @@ class SPCVSplitter:
         if block_X.shape[1] > 1:
             block_X_scaled = StandardScaler().fit_transform(block_X)
             n_components = min(self.pca_components, block_X.shape[0], block_X.shape[1])
-            block_X_proj = PCA(
-                n_components=n_components, random_state=rs
-            ).fit_transform(block_X_scaled)
+            block_X_proj = PCA(n_components=n_components, random_state=rs).fit_transform(block_X_scaled)
             logger.debug(
                 f"SPCVSplitter stage 2: PCA reduced {block_X.shape[1]} covariates → "
                 f"{block_X_proj.shape[1]} components ({self.pca_components} variance threshold)."
