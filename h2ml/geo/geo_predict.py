@@ -15,7 +15,7 @@ import polars as pl
 from loguru import logger
 
 from h2ml.pipeline.base import TaskType
-from h2ml.pipeline.final_model import FinalModel
+from h2ml.pipeline.final_model import DeltaFinalModel, FinalModel
 from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS
 
 
@@ -23,9 +23,10 @@ def _predict_single(
     df_original: pl.DataFrame,
     model: FinalModel,
     col_name: str,
-) -> pl.Series:
+    alpha: Optional[float] = None,
+) -> tuple[pl.Series, ...]:
     """
-    Generate a prediction Series for one target using pre-loaded feature data.
+    Generate predictions (and optional conformal intervals) for one target.
 
     Rows with any null feature value are excluded from inference and appear as
     null in the returned Series, preserving alignment with the original grid.
@@ -33,26 +34,95 @@ def _predict_single(
     Args:
         df_original: Full feature DataFrame with a row 'index' column.
         model:       Loaded FinalModel (handles scaling and task type internally).
-        col_name:    Name for the returned Series.
+        col_name:    Name for the prediction Series.
+        alpha:       Miscoverage level for conformal intervals. When None, or when
+                     the model has no calibration or is a classifier, only the point
+                     prediction Series is returned.
 
     Returns:
-        Float32 Series of length len(df_original), nulls where features were missing.
+        (pred_series,) for classifiers or uncalibrated regression, or
+        (pred_series, lower_series, upper_series) for calibrated regression with alpha set.
     """
     df_clean = df_original.select(model.feature_names + ["index"]).drop_nulls()
     X = df_clean.drop("index").to_numpy()
+    idx = df_clean["index"]
+    n = len(df_original)
 
     if model.task_type == TaskType.CLASSIFICATION:
-        preds = model.predict_proba(X)
-    else:
-        preds = model.predict(X)
-        if model.y_transform is not None:
-            inverse_fn = INVERSE_TRANSFORMS.get(model.y_transform)
-            if inverse_fn is not None:
-                preds = inverse_fn(preds)
+        preds = model.predict_proba(X).astype(np.float32)
+        return (pl.Series(col_name, [None] * n, dtype=pl.Float32).scatter(idx, preds),)
 
-    preds = preds.astype(np.float32)
-    series = pl.Series(col_name, [None] * len(df_original), dtype=pl.Float32)
-    return series.scatter(df_clean["index"], preds)
+    # Regression: keep raw (transform-space) predictions so we can build intervals
+    # in transform space before inverting, which gives correct asymmetric bounds.
+    raw = model.predict(X)
+    inverse_fn = INVERSE_TRANSFORMS.get(model.y_transform) if model.y_transform else None
+    preds = inverse_fn(raw).astype(np.float32) if inverse_fn else raw.astype(np.float32)
+    pred_series = pl.Series(col_name, [None] * n, dtype=pl.Float32).scatter(idx, preds)
+
+    if alpha is not None and model.conformal is not None:
+        q = model.conformal.threshold(alpha)
+        lower = (inverse_fn(raw - q) if inverse_fn else raw - q).astype(np.float32)
+        upper = (inverse_fn(raw + q) if inverse_fn else raw + q).astype(np.float32)
+        lower_series = pl.Series(f"{col_name}_pi_lower", [None] * n, dtype=pl.Float32).scatter(idx, lower)
+        upper_series = pl.Series(f"{col_name}_pi_upper", [None] * n, dtype=pl.Float32).scatter(idx, upper)
+        return pred_series, lower_series, upper_series
+
+    return (pred_series,)
+
+
+def _predict_delta_single(
+    df_original: pl.DataFrame,
+    model: "DeltaFinalModel",
+    col_name: str,
+    alpha: Optional[float] = None,
+) -> tuple[pl.Series, ...]:
+    """
+    Generate delta predictions (and optional conformal intervals) for one target.
+
+    Rows where any feature needed by either sub-model is null are excluded.
+    The regressor's y-transform is inverted before multiplying so the delta is
+    in the original count scale.
+
+    Args:
+        df_original: Full feature DataFrame with a row 'index' column.
+        model:       Loaded DeltaFinalModel.
+        col_name:    Name for the prediction Series.
+        alpha:       Miscoverage level. When None or model has no calibration,
+                     only the point prediction is returned.
+
+    Returns:
+        (pred_series,) or (pred_series, lower_series, upper_series).
+    """
+    clf_features = model.clf.feature_names
+    reg_features = model.reg.feature_names
+    all_features = list(dict.fromkeys(clf_features + reg_features))
+
+    df_clean = df_original.select(all_features + ["index"]).drop_nulls()
+    idx = df_clean["index"]
+    n = len(df_original)
+
+    X_clf = df_clean.select(clf_features).to_numpy()
+    X_reg = df_clean.select(reg_features).to_numpy()
+
+    p = model.clf.predict_proba(X_clf)
+    count = model.reg.predict(X_reg)
+    if model.reg.y_transform is not None:
+        inverse_fn = INVERSE_TRANSFORMS.get(model.reg.y_transform)
+        if inverse_fn is not None:
+            count = inverse_fn(count)
+
+    delta = (p * count).astype(np.float32)
+    pred_series = pl.Series(col_name, [None] * n, dtype=pl.Float32).scatter(idx, delta)
+
+    if alpha is not None and model.conformal is not None:
+        q = float(model.conformal.threshold(alpha))
+        lower = np.maximum(0.0, delta - q).astype(np.float32)
+        upper = (delta + q).astype(np.float32)
+        lower_series = pl.Series(f"{col_name}_pi_lower", [None] * n, dtype=pl.Float32).scatter(idx, lower)
+        upper_series = pl.Series(f"{col_name}_pi_upper", [None] * n, dtype=pl.Float32).scatter(idx, upper)
+        return pred_series, lower_series, upper_series
+
+    return (pred_series,)
 
 
 def predict_for_year(
@@ -62,6 +132,7 @@ def predict_for_year(
     input_parquet_dir: Path,
     schema: str,
     geo_extent: tuple[float, float, float, float],
+    alpha: Optional[float] = None,
 ) -> pl.DataFrame:
     """
     Load pre-trained FinalModels and generate predictions for a full calendar year.
@@ -71,19 +142,23 @@ def predict_for_year(
     that had missing feature values. Targets whose model file is missing or whose
     prediction fails are skipped with a warning.
 
-    FinalModels are expected at: root_dir / schema / "models" / "{target}_final_model.pkl"
+    FinalModels are expected at: root_dir / "models" / "{target}_{schema}_final-model.pkl"
 
     Args:
         target:            Species name(s) to predict.
         year:              Calendar year.
-        root_dir:          Root directory containing schema subdirectories.
+        root_dir:          Root directory containing the "models" subdirectory.
         input_parquet_dir: Hive-partitioned parquet store (read via ParquetIndexer).
         schema:            Schema identifier used to locate model files.
         geo_extent:        Spatial bounding box as (xmin, ymin, xmax, ymax).
+        alpha:             Miscoverage level for conformal intervals (e.g. 0.10 → 90%).
+                           When set, calibrated regression models produce additional
+                           '{target}_{schema}_pi_lower' and '_pi_upper' columns.
+                           Classifiers and uncalibrated models are unaffected.
 
     Returns:
         DataFrame with columns ['index', 'time', 'lon', 'lat'] plus one Float32
-        prediction column per succeeded target named '{target}_{schema}'.
+        prediction column per succeeded target (and interval columns when alpha is set).
     """
     try:
         from h2mare.storage import ParquetIndexer
@@ -110,14 +185,16 @@ def predict_for_year(
         .collect()
     )
 
-    pred_columns = []
+    pred_columns: list[pl.Series] = []
+    succeeded = 0
     for sp in targets:
         model_path = model_dir / f"{sp}_{schema}_final-model.pkl"
         try:
             model = FinalModel.load(model_path)
-            series = _predict_single(df_original, model, col_name=f"{sp}_{schema}")
-            pred_columns.append(series)
+            series = _predict_single(df_original, model, col_name=f"{sp}_{schema}", alpha=alpha)
+            pred_columns.extend(series)
             logger.info(f"Predicted: {sp}")
+            succeeded += 1
         except FileNotFoundError:
             logger.warning(f"Model not found for '{sp}', skipping: {model_path}")
         except Exception as e:
@@ -127,7 +204,97 @@ def predict_for_year(
         logger.warning(f"No predictions generated for year {year}.")
         return df_original.select(["index", "time", "lon", "lat"])
 
-    logger.success(f"Predictions for year {year} completed ({len(pred_columns)}/{len(targets)} targets).")
+    logger.success(f"Predictions for year {year} completed ({succeeded}/{len(targets)} targets).")
+    return df_original.select(["index", "time", "lon", "lat"]).with_columns(pred_columns)
+
+
+def predict_for_year_delta(
+    target: str | list[str],
+    year: int | str,
+    root_dir: Path,
+    input_parquet_dir: Path,
+    schema: str,
+    geo_extent: tuple[float, float, float, float],
+    alpha: float = 0.10,
+) -> pl.DataFrame:
+    """
+    Load DeltaFinalModels and generate delta predictions + conformal intervals for a calendar year.
+
+    Delta model directories are expected at:
+        root_dir / "models" / "{target}_{schema}_delta-model/"
+
+    Output columns per succeeded target:
+        {target}_{schema}            — delta point prediction: P(present) × E(count | present)
+        {target}_{schema}_pi_lower   — lower conformal bound (non-negative; Float32)
+        {target}_{schema}_pi_upper   — upper conformal bound (Float32)
+
+    Interval columns are omitted for models without a saved ConformalCalibration.
+    Targets whose model directory is missing or whose prediction fails are skipped with a warning.
+
+    Args:
+        target:            Species name(s) to predict.
+        year:              Calendar year.
+        root_dir:          Root directory containing the "models" subdirectory.
+        input_parquet_dir: Hive-partitioned parquet store (read via ParquetIndexer).
+        schema:            Schema identifier used to locate model directories.
+        geo_extent:        Spatial bounding box as (xmin, ymin, xmax, ymax).
+        alpha:             Miscoverage level for conformal intervals (default 0.10 → 90%).
+
+    Returns:
+        DataFrame with columns ['index', 'time', 'lon', 'lat'] plus prediction and
+        interval columns per succeeded target.
+    """
+    try:
+        from h2mare.storage import ParquetIndexer
+    except ImportError as e:
+        raise ImportError(
+            "predict_for_year_delta requires the [geo] extras. Install with: uv pip install h2ml[geo]"
+        ) from e
+
+    from h2ml.pipeline.final_model import DeltaFinalModel
+
+    logger.info(f"Starting delta predictions for year {year}")
+
+    targets = [target] if isinstance(target, str) else list(target)
+    year = str(year)
+
+    if not root_dir.exists():
+        raise ValueError(f"root_dir not found: {root_dir}")
+    if not input_parquet_dir.exists():
+        raise ValueError(f"input_parquet_dir not found: {input_parquet_dir}")
+
+    model_dir = root_dir / "models"
+    xmin, ymin, xmax, ymax = geo_extent
+
+    df_original = (
+        ParquetIndexer(input_parquet_dir)
+        .scan(dates=(f"{year}-01-01", f"{year}-12-31"), bbox=(xmin, ymin, xmax, ymax))
+        .with_row_index()
+        .collect()
+    )
+
+    pred_columns: list[pl.Series] = []
+    succeeded = 0
+    for sp in targets:
+        model_path = model_dir / f"{sp}_{schema}_delta-model"
+        try:
+            model = DeltaFinalModel.load(model_path)
+            col_name = f"{sp}_{schema}"
+            series = _predict_delta_single(df_original, model, col_name=col_name, alpha=alpha)
+            pred_columns.extend(series)
+            interval_note = " (with intervals)" if len(series) == 3 else " (point only — no calibration)"
+            logger.info(f"Predicted: {sp}{interval_note}")
+            succeeded += 1
+        except FileNotFoundError:
+            logger.warning(f"Delta model not found for '{sp}', skipping: {model_path}")
+        except Exception as e:
+            logger.warning(f"Delta prediction failed for '{sp}', skipping: {e}")
+
+    if not pred_columns:
+        logger.warning(f"No delta predictions generated for year {year}.")
+        return df_original.select(["index", "time", "lon", "lat"])
+
+    logger.success(f"Delta predictions for year {year} completed ({succeeded}/{len(targets)} targets).")
     return df_original.select(["index", "time", "lon", "lat"]).with_columns(pred_columns)
 
 

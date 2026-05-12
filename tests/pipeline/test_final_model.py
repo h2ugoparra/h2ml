@@ -17,8 +17,11 @@ from h2ml.pipeline.base import TaskType
 from h2ml.pipeline.cv import CVResult, FoldResult
 from h2ml.pipeline.final_model import (
     ConformalCalibration,
+    DeltaFinalModel,
     FinalModel,
     _build_conformal_calibration,
+    _build_delta_conformal,
+    build_delta_final_model,
 )
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig, PipelineResult
 from h2ml.pipeline.step import make_classifier
@@ -507,3 +510,267 @@ class TestBuildFinalModelConformal:
         loaded = FinalModel.load(out)
         assert loaded.conformal is not None
         assert loaded.conformal.n == final.conformal.n
+
+
+# ---------------------------------------------------------------------------
+# DeltaFinalModel
+# ---------------------------------------------------------------------------
+
+N_DELTA = 80
+N_POS = 50
+DELTA_FEATURES = ["a", "b", "c", "d", "e"]
+
+
+def _make_delta_components(
+    n: int = N_DELTA,
+    n_pos: int = N_POS,
+    seed: int = 0,
+) -> tuple[FinalModel, FinalModel, np.ndarray, np.ndarray, np.ndarray]:
+    """Return (clf_model, reg_model, X_full, y_full, positive_indices)."""
+    rng = np.random.default_rng(seed)
+    X_full = rng.standard_normal((n, len(DELTA_FEATURES)))
+    y_full = rng.integers(0, 8, n).astype(float)
+    positive_indices = np.where(y_full > 0)[0][:n_pos]  # cap at n_pos for reproducibility
+
+    clf = RandomForestClassifier(n_estimators=5, random_state=42)
+    clf.fit(X_full, (y_full > 0).astype(int))
+    clf_model = FinalModel(estimator=clf, feature_names=DELTA_FEATURES, task_type=TaskType.CLASSIFICATION)
+
+    reg = RandomForestRegressor(n_estimators=5, random_state=42)
+    reg.fit(X_full[positive_indices], y_full[positive_indices])
+    reg_model = FinalModel(estimator=reg, feature_names=DELTA_FEATURES, task_type=TaskType.REGRESSION)
+
+    return clf_model, reg_model, X_full, y_full, positive_indices
+
+
+class TestDeltaFinalModel:
+    def test_predict_shape(self):
+        clf_model, reg_model, X_full, _, _ = _make_delta_components()
+        model = DeltaFinalModel(clf=clf_model, reg=reg_model)
+        assert model.predict(X_full).shape == (N_DELTA,)
+
+    def test_predict_non_negative(self):
+        clf_model, reg_model, X_full, _, _ = _make_delta_components()
+        model = DeltaFinalModel(clf=clf_model, reg=reg_model)
+        assert np.all(model.predict(X_full) >= 0)
+
+    def test_predict_accepts_dataframe(self):
+        clf_model, reg_model, X_full, _, _ = _make_delta_components()
+        model = DeltaFinalModel(clf=clf_model, reg=reg_model)
+        df = pd.DataFrame(X_full, columns=DELTA_FEATURES)
+        np.testing.assert_array_almost_equal(model.predict(X_full), model.predict(df))
+
+    def test_predict_interval_shape(self):
+        clf_model, reg_model, X_full, _, _ = _make_delta_components()
+        cal = ConformalCalibration(scores=np.linspace(0, 5, 100), n=100, task_type=TaskType.REGRESSION)
+        model = DeltaFinalModel(clf=clf_model, reg=reg_model, conformal=cal)
+        lower, upper = model.predict_interval(X_full)
+        assert lower.shape == (N_DELTA,)
+        assert upper.shape == (N_DELTA,)
+
+    def test_predict_interval_upper_ge_lower(self):
+        clf_model, reg_model, X_full, _, _ = _make_delta_components()
+        cal = ConformalCalibration(scores=np.linspace(0, 5, 100), n=100, task_type=TaskType.REGRESSION)
+        model = DeltaFinalModel(clf=clf_model, reg=reg_model, conformal=cal)
+        lower, upper = model.predict_interval(X_full)
+        assert np.all(upper >= lower)
+
+    def test_predict_interval_lower_non_negative(self):
+        clf_model, reg_model, X_full, _, _ = _make_delta_components()
+        cal = ConformalCalibration(scores=np.linspace(0, 5, 100), n=100, task_type=TaskType.REGRESSION)
+        model = DeltaFinalModel(clf=clf_model, reg=reg_model, conformal=cal)
+        lower, _ = model.predict_interval(X_full)
+        assert np.all(lower >= 0)
+
+    def test_predict_interval_smaller_alpha_gives_wider_interval(self):
+        clf_model, reg_model, X_full, _, _ = _make_delta_components()
+        cal = ConformalCalibration(scores=np.linspace(0, 5, 200), n=200, task_type=TaskType.REGRESSION)
+        model = DeltaFinalModel(clf=clf_model, reg=reg_model, conformal=cal)
+        l90, u90 = model.predict_interval(X_full, alpha=0.10)
+        l80, u80 = model.predict_interval(X_full, alpha=0.20)
+        assert np.all((u90 - l90) >= (u80 - l80))
+
+    def test_predict_interval_raises_without_calibration(self):
+        clf_model, reg_model, X_full, _, _ = _make_delta_components()
+        model = DeltaFinalModel(clf=clf_model, reg=reg_model)
+        with pytest.raises(ValueError, match="conformal calibration"):
+            model.predict_interval(X_full)
+
+    def test_save_creates_pkl_files(self, tmp_path):
+        clf_model, reg_model, _, _, _ = _make_delta_components()
+        cal = ConformalCalibration(scores=np.linspace(0, 1, 50), n=50, task_type=TaskType.REGRESSION)
+        model = DeltaFinalModel(clf=clf_model, reg=reg_model, conformal=cal)
+        model.save(tmp_path / "delta")
+        assert (tmp_path / "delta" / "clf.pkl").exists()
+        assert (tmp_path / "delta" / "reg.pkl").exists()
+        assert (tmp_path / "delta" / "conformal.pkl").exists()
+
+    def test_save_no_conformal_file_when_uncalibrated(self, tmp_path):
+        clf_model, reg_model, _, _, _ = _make_delta_components()
+        DeltaFinalModel(clf=clf_model, reg=reg_model).save(tmp_path / "delta")
+        assert not (tmp_path / "delta" / "conformal.pkl").exists()
+
+    def test_load_roundtrip_predictions(self, tmp_path):
+        clf_model, reg_model, X_full, _, _ = _make_delta_components()
+        model = DeltaFinalModel(clf=clf_model, reg=reg_model)
+        model.save(tmp_path / "delta")
+        loaded = DeltaFinalModel.load(tmp_path / "delta")
+        np.testing.assert_array_almost_equal(model.predict(X_full), loaded.predict(X_full))
+
+    def test_load_preserves_calibration(self, tmp_path):
+        clf_model, reg_model, _, _, _ = _make_delta_components()
+        cal = ConformalCalibration(scores=np.linspace(0, 2, 80), n=80, task_type=TaskType.REGRESSION)
+        model = DeltaFinalModel(clf=clf_model, reg=reg_model, conformal=cal)
+        model.save(tmp_path / "delta")
+        loaded = DeltaFinalModel.load(tmp_path / "delta")
+        assert loaded.conformal is not None
+        assert loaded.conformal.n == 80
+
+    def test_load_without_calibration(self, tmp_path):
+        clf_model, reg_model, _, _, _ = _make_delta_components()
+        DeltaFinalModel(clf=clf_model, reg=reg_model).save(tmp_path / "delta")
+        loaded = DeltaFinalModel.load(tmp_path / "delta")
+        assert loaded.conformal is None
+
+    def test_repr(self):
+        clf_model, reg_model, _, _, _ = _make_delta_components()
+        r = repr(DeltaFinalModel(clf=clf_model, reg=reg_model))
+        assert "DeltaFinalModel" in r
+
+
+# ---------------------------------------------------------------------------
+# _build_delta_conformal / build_delta_final_model
+# ---------------------------------------------------------------------------
+
+
+def _make_indexed_cv_result(task_type: TaskType, n: int, seed: int = 0) -> CVResult:
+    """CVResult with non-empty test_idx covering [0, n)."""
+    rng = np.random.default_rng(seed)
+    half = n // 2
+    idx0, idx1 = np.arange(0, half), np.arange(half, n)
+
+    def make_fold(fold_id, test_idx, train_idx):
+        size = len(test_idx)
+        if task_type == TaskType.REGRESSION:
+            return FoldResult(
+                fold_id=fold_id, model_name="M",
+                y_train=np.zeros(len(train_idx)), y_test=rng.uniform(1, 8, size),
+                y_pred_train=np.zeros(len(train_idx)), y_pred_test=rng.uniform(1, 8, size),
+                test_idx=test_idx, train_idx=train_idx,
+            )
+        return FoldResult(
+            fold_id=fold_id, model_name="M",
+            y_train=np.zeros(len(train_idx)), y_test=rng.integers(0, 2, size).astype(float),
+            y_pred_train=np.zeros(len(train_idx)), y_pred_test=rng.integers(0, 2, size).astype(float),
+            y_prob_train=rng.uniform(0, 1, len(train_idx)), y_prob_test=rng.uniform(0, 1, size),
+            test_idx=test_idx, train_idx=train_idx,
+        )
+
+    return CVResult(
+        model_name="M", task_type=task_type,
+        folds=[make_fold(0, idx0, idx1), make_fold(1, idx1, idx0)],
+    )
+
+
+class MockResult:
+    def __init__(self, cv: CVResult):
+        self.best_cv_result = cv
+
+
+class TestBuildDeltaConformal:
+    def _setup(self, n=60, seed=0):
+        rng = np.random.default_rng(seed)
+        X_full = rng.standard_normal((n, len(DELTA_FEATURES)))
+        y_full = rng.integers(0, 8, n).astype(float)
+        positive_indices = np.where(y_full > 0)[0]
+        n_pos = len(positive_indices)
+
+        reg = RandomForestRegressor(n_estimators=5, random_state=42)
+        reg.fit(X_full[positive_indices], y_full[positive_indices])
+        reg_final = FinalModel(estimator=reg, feature_names=DELTA_FEATURES, task_type=TaskType.REGRESSION)
+
+        clf_result = MockResult(cv=_make_indexed_cv_result(TaskType.CLASSIFICATION, n, seed))
+        reg_result = MockResult(cv=_make_indexed_cv_result(TaskType.REGRESSION, n_pos, seed + 1))
+
+        return clf_result, reg_result, reg_final, X_full, y_full, positive_indices
+
+    def test_returns_calibration(self):
+        clf_r, reg_r, reg_f, X, y, pos = self._setup()
+        cal = _build_delta_conformal(clf_r, reg_r, reg_f, X, y, pos)
+        assert cal is not None
+        assert isinstance(cal, ConformalCalibration)
+
+    def test_scores_non_negative(self):
+        clf_r, reg_r, reg_f, X, y, pos = self._setup()
+        cal = _build_delta_conformal(clf_r, reg_r, reg_f, X, y, pos)
+        assert np.all(cal.scores >= 0)
+
+    def test_scores_sorted_ascending(self):
+        clf_r, reg_r, reg_f, X, y, pos = self._setup()
+        cal = _build_delta_conformal(clf_r, reg_r, reg_f, X, y, pos)
+        assert np.all(np.diff(cal.scores) >= 0)
+
+    def test_n_equals_sample_count(self):
+        n = 60
+        clf_r, reg_r, reg_f, X, y, pos = self._setup(n=n)
+        cal = _build_delta_conformal(clf_r, reg_r, reg_f, X, y, pos)
+        assert cal.n == n
+
+    def test_returns_none_when_no_clf_cv(self):
+        _, reg_r, reg_f, X, y, pos = self._setup()
+
+        class NoCv:
+            best_cv_result = None
+
+        assert _build_delta_conformal(NoCv(), reg_r, reg_f, X, y, pos) is None
+
+    def test_returns_none_when_clf_length_mismatch(self):
+        clf_r, reg_r, reg_f, X, y, pos = self._setup(n=60)
+        X_wrong = X[:50]
+        y_wrong = y[:50]
+        assert _build_delta_conformal(clf_r, reg_r, reg_f, X_wrong, y_wrong, pos) is None
+
+
+class TestBuildDeltaFinalModel:
+    def test_returns_delta_final_model(self):
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.ensemble import RandomForestRegressor as RFR
+        from h2ml.pipeline.step import make_classifier, make_regressor
+
+        rng = np.random.default_rng(0)
+        n = 60
+        X_full = rng.standard_normal((n, len(DELTA_FEATURES))).astype(np.float32)
+        y_full = rng.integers(0, 8, n).astype(float)
+        positive_indices = np.where(y_full > 0)[0]
+
+        # Classifier pipeline (all N samples, no feature reduction)
+        clf_store = PipelineData(X=X_full, feature_names=DELTA_FEATURES, y=(y_full > 0).astype(np.float32))
+        clf_pipeline = H2MLPipeline(
+            models=[make_classifier(LogisticRegression(max_iter=200, random_state=42))],
+            config=PipelineConfig(task_type=TaskType.CLASSIFICATION, n_splits=3, n_trials=1),
+        )
+        mock_sel = MagicMock(spec=FeatureSelector)
+        mock_sel.fit_transform.side_effect = lambda s, y=None: s
+        mock_sel.transform.side_effect = lambda s: s
+        with patch("h2ml.pipeline.pipeline.FeatureSelector", return_value=mock_sel):
+            clf_result = clf_pipeline.run(clf_store)
+
+        # Regressor pipeline (positive samples only, no feature reduction)
+        X_pos = X_full[positive_indices]
+        y_pos = y_full[positive_indices].astype(np.float32)
+        reg_store = PipelineData(X=X_pos, feature_names=DELTA_FEATURES, y=y_pos)
+        reg_pipeline = H2MLPipeline(
+            models=[make_regressor(RFR(n_estimators=10, random_state=42))],
+            config=PipelineConfig(task_type=TaskType.REGRESSION, metric="R2", n_splits=3, n_trials=1),
+        )
+        with patch("h2ml.pipeline.pipeline.FeatureSelector", return_value=mock_sel):
+            reg_result = reg_pipeline.run(reg_store)
+
+        delta = build_delta_final_model(clf_result, reg_result, X_full, y_full, positive_indices)
+
+        assert isinstance(delta, DeltaFinalModel)
+        assert delta.conformal is not None
+        assert delta.predict(X_full).shape == (n,)
+        lower, upper = delta.predict_interval(X_full)
+        assert np.all(upper >= lower)
+        assert np.all(lower >= 0)

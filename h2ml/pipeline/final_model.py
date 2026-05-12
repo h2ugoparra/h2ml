@@ -31,6 +31,7 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
 from h2ml.pipeline.base import TaskType
+from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS
 
 
 # ---------------------------------------------------------------------------
@@ -380,3 +381,246 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
         conformal=_build_conformal_calibration(result, classes=classes),
         y_transform=result.y_transform,
     )
+
+
+# ---------------------------------------------------------------------------
+# Delta model — two-component presence × abundance
+# ---------------------------------------------------------------------------
+
+
+def _build_delta_conformal(
+    clf_result: "PipelineResult",
+    reg_result: "PipelineResult",
+    reg_final: FinalModel,
+    X_full: "pd.DataFrame | np.ndarray",
+    y_full: np.ndarray,
+    positive_indices: np.ndarray,
+) -> Optional[ConformalCalibration]:
+    """
+    Build a ConformalCalibration for the combined delta output using OOF predictions.
+
+    P_oof (all N samples) comes from clf_result.best_cv_result.
+    count_oof_pos (positive samples, already inverse-transformed by CV) comes from
+    reg_result.best_cv_result. For zero-count samples the regressor is called as a
+    regular predictor (not OOF) and the inverse transform is applied manually.
+
+    Pass X_full as a DataFrame (with all feature column names) when the clf and reg
+    were trained on different feature sets — reg_final.predict selects its own columns.
+
+    Nonconformity score: |y_full - (P_oof × count_hat)|
+    """
+    from loguru import logger
+
+    clf_cv = clf_result.best_cv_result
+    reg_cv = reg_result.best_cv_result
+
+    if clf_cv is None or not clf_cv.folds:
+        logger.warning("Delta conformal calibration skipped: no classifier CV folds available.")
+        return None
+    if reg_cv is None or not reg_cv.folds:
+        logger.warning("Delta conformal calibration skipped: no regressor CV folds available.")
+        return None
+
+    n_full = len(y_full)
+
+    P_oof = clf_cv.oof_predictions  # shape (n_full,) — 1D probabilities for binary
+    if P_oof is None:
+        logger.warning("Delta conformal calibration skipped: classifier OOF predictions unavailable.")
+        return None
+    if len(P_oof) != n_full:
+        logger.warning(
+            f"Delta conformal calibration skipped: classifier OOF length {len(P_oof)} "
+            f"does not match y_full length {n_full}. Pass the same X/y the classifier was trained on."
+        )
+        return None
+
+    # count_oof_pos: shape (n_pos,) — regressor OOF predictions, already inverse-transformed
+    # (CV applies inverse_fn to y_pred_test before storing in FoldResult)
+    count_oof_pos = reg_cv.oof_predictions
+    if count_oof_pos is None:
+        logger.warning("Delta conformal calibration skipped: regressor OOF predictions unavailable.")
+        return None
+
+    count_hat_full = np.full(n_full, np.nan)
+    count_hat_full[positive_indices] = count_oof_pos
+
+    # For zero-count samples, call the final regressor (not OOF) and inverse-transform manually
+    zero_mask = np.ones(n_full, dtype=bool)
+    zero_mask[positive_indices] = False
+    zero_indices = np.where(zero_mask)[0]
+    if zero_indices.size > 0:
+        # Slice preserving type: DataFrame slicing keeps column names so _prepare
+        # can select the reg's feature subset when clf and reg have different features.
+        X_zero = X_full.iloc[zero_indices] if isinstance(X_full, pd.DataFrame) else X_full[zero_indices]
+        zero_preds = reg_final.predict(X_zero)  # transform space
+        if reg_final.y_transform is not None:
+            inverse_fn = INVERSE_TRANSFORMS.get(reg_final.y_transform)
+            if inverse_fn is not None:
+                zero_preds = inverse_fn(zero_preds)
+        count_hat_full[zero_indices] = zero_preds
+
+    delta_oof = P_oof * count_hat_full
+    valid = np.isfinite(delta_oof)
+    n_excluded = int((~valid).sum())
+    if n_excluded:
+        logger.warning(
+            f"Delta conformal calibration: {n_excluded} samples excluded due to NaN (likely from failed CV folds)."
+        )
+
+    scores = np.abs(y_full[valid] - delta_oof[valid])
+    return ConformalCalibration(
+        scores=np.sort(scores),
+        n=int(valid.sum()),
+        task_type=TaskType.REGRESSION,
+    )
+
+
+@dataclass
+class DeltaFinalModel:
+    """
+    Two-component delta model combining a presence/absence classifier and a
+    count/abundance regressor.
+
+    Prediction: P(present) × E(count | present)
+    Conformal interval: [max(0, delta − q), delta + q]
+    where q is calibrated from combined out-of-fold residuals on the full delta output.
+
+    The regressor's y-transform (if any) is inverted inside predict() so the output is
+    always in the original count scale. This differs from FinalModel, where the caller
+    handles inversion — the multiplication P × count requires the original scale.
+
+    Example
+    -------
+    >>> positive_idx = np.where(y_all > 0)[0]
+    >>> delta = build_delta_final_model(clf_result, reg_result, X_all, y_all, positive_idx)
+    >>> delta.save("models/sparrow_delta-model")
+    >>> delta = DeltaFinalModel.load("models/sparrow_delta-model")
+    >>> lower, upper = delta.predict_interval(X_new, alpha=0.10)
+    """
+
+    clf: FinalModel
+    reg: FinalModel
+    conformal: Optional[ConformalCalibration] = field(default=None)
+
+    def predict(self, X: "pd.DataFrame | np.ndarray") -> np.ndarray:
+        """
+        Delta prediction: P(present) × E(count | present).
+
+        The regressor's y-transform is inverted here so the result is in the
+        original count scale. Pass a DataFrame to let each sub-model select its own
+        features by name; pass an ndarray only when both models share the same
+        feature set and column order.
+        """
+        p = self.clf.predict_proba(X)
+        count = self.reg.predict(X)
+        if self.reg.y_transform is not None:
+            inverse_fn = INVERSE_TRANSFORMS.get(self.reg.y_transform)
+            if inverse_fn is not None:
+                count = inverse_fn(count)
+        return p * count
+
+    def predict_interval(
+        self,
+        X: "pd.DataFrame | np.ndarray",
+        alpha: float = 0.10,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Conformal prediction interval for each sample (count scale).
+
+        Coverage is guaranteed for the full delta output, not each component
+        separately. The lower bound is clipped at zero (counts are non-negative).
+
+        Args:
+            X:     Input features.
+            alpha: Miscoverage level. Default 0.10 → 90% coverage.
+
+        Returns:
+            (lower, upper) pair of 1-D arrays.
+        """
+        if self.conformal is None:
+            raise ValueError(
+                "No conformal calibration available. "
+                "Rebuild via build_delta_final_model() with positive_indices provided."
+            )
+        delta = self.predict(X)
+        q = self.conformal.threshold(alpha)
+        return np.maximum(0.0, delta - q), delta + q
+
+    def save(self, path: "str | Path") -> None:
+        """
+        Persist to *path* (directory). Creates the directory if needed.
+        Saves clf.pkl, reg.pkl, and (when calibrated) conformal.pkl.
+        Reload with DeltaFinalModel.load(path).
+        """
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self.clf, path / "clf.pkl")
+        joblib.dump(self.reg, path / "reg.pkl")
+        if self.conformal is not None:
+            joblib.dump(self.conformal, path / "conformal.pkl")
+
+    @classmethod
+    def load(cls, path: "str | Path") -> "DeltaFinalModel":
+        """
+        Reload a DeltaFinalModel saved with :meth:`save`.
+
+        WARNING: only load files from trusted sources — joblib uses pickle,
+        which executes arbitrary code on deserialisation.
+        """
+        path = Path(path)
+        clf = joblib.load(path / "clf.pkl")
+        reg = joblib.load(path / "reg.pkl")
+        conformal_path = path / "conformal.pkl"
+        conformal = joblib.load(conformal_path) if conformal_path.exists() else None
+        return cls(clf=clf, reg=reg, conformal=conformal)
+
+    def __repr__(self) -> str:
+        return (
+            f"DeltaFinalModel("
+            f"clf={self.clf.best_model_name!r}, "
+            f"reg={self.reg.best_model_name!r}, "
+            f"calibrated={self.conformal is not None})"
+        )
+
+
+def build_delta_final_model(
+    clf_result: "PipelineResult",
+    reg_result: "PipelineResult",
+    X_full: "pd.DataFrame | np.ndarray",
+    y_full: np.ndarray,
+    positive_indices: np.ndarray,
+) -> DeltaFinalModel:
+    """
+    Fit a DeltaFinalModel from a classifier and a regressor PipelineResult.
+
+    Builds a clf FinalModel (all N samples) and a reg FinalModel (positive samples),
+    then constructs a ConformalCalibration using combined OOF delta predictions
+    following Option B — combined residual conformalization on the full output.
+
+    Args:
+        clf_result:       PipelineResult from the presence/absence classifier,
+                          trained on all N samples.
+        reg_result:       PipelineResult from the count regressor, trained on
+                          positive-count samples (X_full[positive_indices]).
+        X_full:           Feature matrix for ALL N samples. Pass a pandas DataFrame
+                          (with all feature column names) when clf and reg have different
+                          feature sets — the regressor will select its own columns by name.
+        y_full:           Raw count targets for ALL N samples (0 for absence,
+                          positive integer for presence).
+        positive_indices: Integer indices into X_full / y_full identifying the
+                          positive-count rows (i.e. those the regressor was trained on).
+
+    Returns:
+        DeltaFinalModel with clf, reg, and a combined ConformalCalibration.
+
+    Example
+    -------
+    >>> positive_idx = np.where(y_all > 0)[0]
+    >>> X_df = pd.DataFrame(X_all, columns=feature_names)
+    >>> delta = build_delta_final_model(clf_result, reg_result, X_df, y_all, positive_idx)
+    >>> delta.save("models/sparrow_delta-model")
+    """
+    clf_final = build_final_model(clf_result)
+    reg_final = build_final_model(reg_result)
+    conformal = _build_delta_conformal(clf_result, reg_result, reg_final, X_full, y_full, positive_indices)
+    return DeltaFinalModel(clf=clf_final, reg=reg_final, conformal=conformal)
