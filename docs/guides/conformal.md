@@ -2,6 +2,9 @@
 
 `build_final_model()` automatically builds a conformal calibrator from out-of-fold CV predictions — no separate calibration set is required.
 
+A conformal calibrator is essentially a recorded history of how wrong the model has been, used to answer one question at prediction time:
+*"how much buffer do I need around my estimate to be right X% of the time?"*
+
 ## Regression — prediction intervals
 
 ```python
@@ -26,16 +29,34 @@ A singleton set means the model is confident; a larger set means it is uncertain
 
 ## How it works
 
+The calibrator does not touch the model itself. It sits on top of any model and wraps its point predictions in a statistically honest band.
+The model could be a random forest, a neural network, a delta model — the calibrator doesn't care. It only cares about the distribution of past errors.
+
 **Nonconformity scores** are computed per sample from the OOF folds:
 
 - Regression: `|y_true − y_pred|`
 - Binary classification: `1 − p(true class)`
 - Multiclass: `1 − p(true class)` (looked up via `estimator.classes_`)
 
-The scores are sorted ascending and stored. At inference time the threshold `q` is the `⌈(1−alpha)(n+1)/n⌉` quantile, which guarantees marginal coverage ≥ 1−alpha.
+The scores are sorted ascending and stored — one score per training sample, not per fold. **n** is the total number of held-out samples across all folds (e.g. 5-fold CV on 1000 samples gives n = 1000).
 
-Interval: `ŷ ± q` (regression) — constant width.
-Prediction set: all classes with nonconformity score ≤ `q` (classification).
+```
+scores = [0.1, 0.3, 0.4, 0.5, 0.5, 0.7, 0.9, 1.2, 1.8, 3.1, ...]
+           ↑ model was almost right    ↑ typical error     ↑ model was badly wrong
+```
+
+At inference time, find the threshold `q` — the score that was exceeded only `alpha × 100%` of the time in the calibration data:
+
+```
+q = ⌈(1−alpha)(n+1)/n⌉ quantile of scores
+```
+
+Then apply it:
+
+- **Regression:** `interval = [ŷ − q,  ŷ + q]` — constant width
+- **Classification:** prediction set = all classes with nonconformity score ≤ `q`
+
+The logic: if the model's errors in the past rarely exceeded `q`, then adding `q` as a buffer around a new prediction will catch the true value most of the time.
 
 ## Limitations
 
