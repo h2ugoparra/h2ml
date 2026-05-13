@@ -61,7 +61,7 @@ def _predict_single(
 
     if alpha is not None and model.conformal is not None:
         q = model.conformal.threshold(alpha)
-        lower = (inverse_fn(raw - q) if inverse_fn else raw - q).astype(np.float32)
+        lower = np.maximum(0.0, inverse_fn(raw - q) if inverse_fn else raw - q).astype(np.float32)
         upper = (inverse_fn(raw + q) if inverse_fn else raw + q).astype(np.float32)
         lower_series = pl.Series(f"{col_name}_pi_lower", [None] * n, dtype=pl.Float32).scatter(idx, lower)
         upper_series = pl.Series(f"{col_name}_pi_upper", [None] * n, dtype=pl.Float32).scatter(idx, upper)
@@ -221,7 +221,7 @@ def predict_for_year_delta(
     Load DeltaFinalModels and generate delta predictions + conformal intervals for a calendar year.
 
     Delta model directories are expected at:
-        root_dir / "models" / "{target}_{schema}_delta-model/"
+        root_dir / "models" / "{target}_{schema}_final-model/"
 
     Output columns per succeeded target:
         {target}_{schema}            — delta point prediction: P(present) × E(count | present)
@@ -276,7 +276,7 @@ def predict_for_year_delta(
     pred_columns: list[pl.Series] = []
     succeeded = 0
     for sp in targets:
-        model_path = model_dir / f"{sp}_{schema}_delta-model"
+        model_path = model_dir / f"{sp}_{schema}_final-model"
         try:
             model = DeltaFinalModel.load(model_path)
             col_name = f"{sp}_{schema}"

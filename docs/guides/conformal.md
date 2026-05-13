@@ -40,14 +40,14 @@ The model could be a random forest, a neural network, a delta model — the cali
 
 The scores are sorted ascending and stored — one score per training sample, not per fold. **n** is the total number of held-out samples across all folds (e.g. 5-fold CV on 1000 samples gives n = 1000).
 
-```
+```python
 scores = [0.1, 0.3, 0.4, 0.5, 0.5, 0.7, 0.9, 1.2, 1.8, 3.1, ...]
            ↑ model was almost right    ↑ typical error     ↑ model was badly wrong
 ```
 
 At inference time, find the threshold `q` — the score that was exceeded only `alpha × 100%` of the time in the calibration data:
 
-```
+```python
 q = ⌈(1−alpha)(n+1)/n⌉ quantile of scores
 ```
 
