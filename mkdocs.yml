@@ -51,6 +51,7 @@ nav:
   - Guides:
     - Y-Transforms: guides/transforms.md
     - Conformal Prediction: guides/conformal.md
+    - Geo Prediction: guides/geo_predict.md
     - Comparing Runs: guides/comparison.md
     - Visualization: guides/visualization.md
     - Persistence: guides/persistence.md
