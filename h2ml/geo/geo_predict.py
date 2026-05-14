@@ -171,9 +171,11 @@ def predict_for_year(
         alpha:             Miscoverage level for conformal intervals (e.g. 0.10 → 90%).
                            When set, calibrated models produce additional
                            '{target}_{schema}_pi_lower' and '_pi_upper' columns.
-                           Regression: per-sample interval bounds. Binary classifiers:
-                           constant probability-bound columns defining the uncertainty
-                           region [1-q, q] where q = conformal.threshold(alpha).
+                           Regression: per-sample outcome bounds in the original scale.
+                           Binary classifiers: per-sample calibration bands in
+                           probability space — clip(p ± q, 0, 1) where q =
+                           conformal.threshold(alpha). Not a formal coverage guarantee;
+                           see conformal.md for interpretation.
                            Multiclass classifiers and uncalibrated models are unaffected.
 
     Returns:
