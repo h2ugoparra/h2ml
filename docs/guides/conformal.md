@@ -44,32 +44,28 @@ The bounds are per-sample and in the original (inverse-transformed) count scale.
 
 ### Binary classifiers
 
-Calibrated binary classifiers produce the same `_pi_lower` / `_pi_upper` column names, but with a different meaning: **constant probability thresholds** that define the uncertain region.
+Calibrated binary classifiers produce the same `_pi_lower` / `_pi_upper` column names, mirroring the regression formula applied to probability space:
+
+```
+pi_lower = clip(p − q, 0, 1)
+pi_upper = clip(p + q, 0, 1)
+```
+
+Where `p` is the per-sample predicted probability and `q = conformal.threshold(alpha)`. This works because nonconformity scores for binary classification are `1 − p(true class)`, which live on [0, 1] — the same units as `p` — so `q` and `p` are directly comparable.
 
 ```python
 df = predict_for_year(target="sparrow", year=2023, ..., alpha=0.10)
-# df columns: sparrow_v1  (per-sample predicted probability p)
-#             sparrow_v1_pi_lower  (constant: 1 − q)
-#             sparrow_v1_pi_upper  (constant: q)
+# df columns: sparrow_v1           (per-sample predicted probability p)
+#             sparrow_v1_pi_lower  (per-sample: clip(p − q, 0, 1))
+#             sparrow_v1_pi_upper  (per-sample: clip(p + q, 0, 1))
 ```
 
-Where `q = conformal.threshold(alpha)`. For each row:
+The bounds vary spatially — high-confidence pixels (p near 0 or 1) produce narrow intervals; uncertain pixels (p near 0.5) produce wide intervals that span the decision boundary.
 
-| Condition | Interpretation |
-|-----------|---------------|
-| `pred < pi_lower` | confident class 0 (absence) |
-| `pred > pi_upper` | confident class 1 (presence) |
-| `pi_lower ≤ pred ≤ pi_upper` | uncertain — both classes plausible at level alpha |
+!!! note "Interpretation differs from regression"
+    Regression `_pi_lower`/`_pi_upper` have a formal conformal coverage guarantee on the outcome. For binary classifiers the bounds are a calibration band in probability space — they convey *"given past calibration errors of size q, the predicted probability could plausibly be off by this much"*, not a coverage guarantee on the class label.
 
-The bounds are the same value for every row because `q` is a single scalar calibrated from the full OOF history — only the per-sample predicted probability `pred` varies. Multiclass classifiers and uncalibrated models always return point predictions only.
-
-**Quick filter example:**
-
-```python
-uncertain_mask = (df["sparrow_v1"] >= df["sparrow_v1_pi_lower"]) & \
-                 (df["sparrow_v1"] <= df["sparrow_v1_pi_upper"])
-df.filter(~uncertain_mask)  # keep only confident predictions
-```
+Multiclass classifiers and uncalibrated models always return point predictions only.
 
 ## How it works
 

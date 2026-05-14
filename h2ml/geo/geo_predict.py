@@ -37,15 +37,15 @@ def _predict_single(
         col_name:    Name for the prediction Series.
         alpha:       Miscoverage level for conformal intervals. When None or the
                      model has no calibration, only the point prediction is returned.
-                     Binary classifiers with calibration produce constant probability-
-                     bound columns (see Returns). Multiclass classifiers are unaffected.
+                     Multiclass classifiers are unaffected.
 
     Returns:
         (pred_series,) when alpha is None, uncalibrated, or multiclass classifier.
         (pred_series, lower_series, upper_series) for calibrated regression or
-        calibrated binary classifiers with alpha set. For binary classifiers the
-        bounds are constant: pi_lower = 1-q, pi_upper = q (where q is the conformal
-        threshold), defining the probability range where the model is uncertain.
+        calibrated binary classifiers with alpha set. For binary classifiers:
+        pi_lower = clip(p − q, 0, 1), pi_upper = clip(p + q, 0, 1), where q is
+        the conformal threshold in probability units (nonconformity scores are
+        1 − p(true class), so q and p share the same scale).
     """
     df_clean = df_original.select(model.feature_names + ["index"]).drop_nulls()
     X = df_clean.drop("index").to_numpy()
@@ -56,18 +56,16 @@ def _predict_single(
         preds = model.predict_proba(X).astype(np.float32)
         pred_series = pl.Series(col_name, [None] * n, dtype=pl.Float32).scatter(idx, preds)
         if alpha is not None and model.conformal is not None and preds.ndim == 1:
-            # Binary only: broadcast the conformal uncertainty region as constant columns.
-            # pi_lower = 1-q → positive class enters the prediction set above this threshold.
-            # pi_upper = q   → negative class leaves the prediction set above this threshold.
-            # Samples with pred < pi_lower are confidently class 0; pred > pi_upper are
-            # confidently class 1; between them the model is uncertain at level alpha.
+            # Binary only: mirror the regression formula into probability space.
+            # q is in probability units (nonconformity = 1 - p(true_class) ∈ [0,1]),
+            # so p ± q is a meaningful calibration band. Clipped to [0, 1].
             q = float(model.conformal.threshold(alpha))
             lower_series = pl.Series(
                 f"{col_name}_pi_lower", [None] * n, dtype=pl.Float32
-            ).scatter(idx, np.full(len(preds), 1.0 - q, dtype=np.float32))
+            ).scatter(idx, np.clip(preds - q, 0.0, 1.0).astype(np.float32))
             upper_series = pl.Series(
                 f"{col_name}_pi_upper", [None] * n, dtype=pl.Float32
-            ).scatter(idx, np.full(len(preds), q, dtype=np.float32))
+            ).scatter(idx, np.clip(preds + q, 0.0, 1.0).astype(np.float32))
             return pred_series, lower_series, upper_series
         return (pred_series,)
 
