@@ -35,13 +35,17 @@ def _predict_single(
         df_original: Full feature DataFrame with a row 'index' column.
         model:       Loaded FinalModel (handles scaling and task type internally).
         col_name:    Name for the prediction Series.
-        alpha:       Miscoverage level for conformal intervals. When None, or when
-                     the model has no calibration or is a classifier, only the point
-                     prediction Series is returned.
+        alpha:       Miscoverage level for conformal intervals. When None or the
+                     model has no calibration, only the point prediction is returned.
+                     Binary classifiers with calibration produce constant probability-
+                     bound columns (see Returns). Multiclass classifiers are unaffected.
 
     Returns:
-        (pred_series,) for classifiers or uncalibrated regression, or
-        (pred_series, lower_series, upper_series) for calibrated regression with alpha set.
+        (pred_series,) when alpha is None, uncalibrated, or multiclass classifier.
+        (pred_series, lower_series, upper_series) for calibrated regression or
+        calibrated binary classifiers with alpha set. For binary classifiers the
+        bounds are constant: pi_lower = 1-q, pi_upper = q (where q is the conformal
+        threshold), defining the probability range where the model is uncertain.
     """
     df_clean = df_original.select(model.feature_names + ["index"]).drop_nulls()
     X = df_clean.drop("index").to_numpy()
@@ -50,7 +54,22 @@ def _predict_single(
 
     if model.task_type == TaskType.CLASSIFICATION:
         preds = model.predict_proba(X).astype(np.float32)
-        return (pl.Series(col_name, [None] * n, dtype=pl.Float32).scatter(idx, preds),)
+        pred_series = pl.Series(col_name, [None] * n, dtype=pl.Float32).scatter(idx, preds)
+        if alpha is not None and model.conformal is not None and preds.ndim == 1:
+            # Binary only: broadcast the conformal uncertainty region as constant columns.
+            # pi_lower = 1-q → positive class enters the prediction set above this threshold.
+            # pi_upper = q   → negative class leaves the prediction set above this threshold.
+            # Samples with pred < pi_lower are confidently class 0; pred > pi_upper are
+            # confidently class 1; between them the model is uncertain at level alpha.
+            q = float(model.conformal.threshold(alpha))
+            lower_series = pl.Series(
+                f"{col_name}_pi_lower", [None] * n, dtype=pl.Float32
+            ).scatter(idx, np.full(len(preds), 1.0 - q, dtype=np.float32))
+            upper_series = pl.Series(
+                f"{col_name}_pi_upper", [None] * n, dtype=pl.Float32
+            ).scatter(idx, np.full(len(preds), q, dtype=np.float32))
+            return pred_series, lower_series, upper_series
+        return (pred_series,)
 
     # Regression: keep raw (transform-space) predictions so we can build intervals
     # in transform space before inverting, which gives correct asymmetric bounds.
@@ -152,9 +171,12 @@ def predict_for_year(
         schema:            Schema identifier used to locate model files.
         geo_extent:        Spatial bounding box as (xmin, ymin, xmax, ymax).
         alpha:             Miscoverage level for conformal intervals (e.g. 0.10 → 90%).
-                           When set, calibrated regression models produce additional
+                           When set, calibrated models produce additional
                            '{target}_{schema}_pi_lower' and '_pi_upper' columns.
-                           Classifiers and uncalibrated models are unaffected.
+                           Regression: per-sample interval bounds. Binary classifiers:
+                           constant probability-bound columns defining the uncertainty
+                           region [1-q, q] where q = conformal.threshold(alpha).
+                           Multiclass classifiers and uncalibrated models are unaffected.
 
     Returns:
         DataFrame with columns ['index', 'time', 'lon', 'lat'] plus one Float32

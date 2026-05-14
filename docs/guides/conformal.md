@@ -27,6 +27,50 @@ sets = final.predict_set(X_new, alpha=0.10)
 
 A singleton set means the model is confident; a larger set means it is uncertain.
 
+## Geo prediction — conformal columns
+
+`predict_for_year` accepts an `alpha` argument that adds conformal columns to the output parquet for any calibrated model.
+
+### Regression
+
+Calibrated regression models produce two extra columns per target:
+
+```python
+df = predict_for_year(target="sparrow", year=2023, ..., alpha=0.10)
+# df columns: sparrow_v1, sparrow_v1_pi_lower, sparrow_v1_pi_upper
+```
+
+The bounds are per-sample and in the original (inverse-transformed) count scale.
+
+### Binary classifiers
+
+Calibrated binary classifiers produce the same `_pi_lower` / `_pi_upper` column names, but with a different meaning: **constant probability thresholds** that define the uncertain region.
+
+```python
+df = predict_for_year(target="sparrow", year=2023, ..., alpha=0.10)
+# df columns: sparrow_v1  (per-sample predicted probability p)
+#             sparrow_v1_pi_lower  (constant: 1 − q)
+#             sparrow_v1_pi_upper  (constant: q)
+```
+
+Where `q = conformal.threshold(alpha)`. For each row:
+
+| Condition | Interpretation |
+|-----------|---------------|
+| `pred < pi_lower` | confident class 0 (absence) |
+| `pred > pi_upper` | confident class 1 (presence) |
+| `pi_lower ≤ pred ≤ pi_upper` | uncertain — both classes plausible at level alpha |
+
+The bounds are the same value for every row because `q` is a single scalar calibrated from the full OOF history — only the per-sample predicted probability `pred` varies. Multiclass classifiers and uncalibrated models always return point predictions only.
+
+**Quick filter example:**
+
+```python
+uncertain_mask = (df["sparrow_v1"] >= df["sparrow_v1_pi_lower"]) & \
+                 (df["sparrow_v1"] <= df["sparrow_v1_pi_upper"])
+df.filter(~uncertain_mask)  # keep only confident predictions
+```
+
 ## How it works
 
 The calibrator does not touch the model itself. It sits on top of any model and wraps its point predictions in a statistically honest band.
