@@ -34,7 +34,7 @@ Rows with any null feature value appear as `null` in the prediction columns, pre
 
 ### Conformal interval columns
 
-Pass `alpha` to add conformal bound columns for calibrated models. See [Conformal Prediction — Geo prediction](conformal.md#geo-prediction-conformal-columns) for full details on how regression and binary classifier bounds differ.
+Pass `alpha` to add conformal bound columns for calibrated models. Uncalibrated models and multiclass classifiers always return point predictions only.
 
 ```python
 df = predict_for_year(
@@ -48,6 +48,29 @@ df = predict_for_year(
 )
 # columns: sparrow_v1, sparrow_v1_pi_lower, sparrow_v1_pi_upper
 ```
+
+The meaning of the bound columns differs by task type:
+
+**Regression** — per-sample outcome bounds in the original (inverse-transformed) count scale:
+
+```
+pi_lower = max(0, ŷ − q)
+pi_upper = ŷ + q
+```
+
+These carry a formal conformal coverage guarantee: the true value falls inside `[pi_lower, pi_upper]` with probability ≥ 1 − alpha.
+
+**Binary classification** — per-sample calibration bands in probability space:
+
+```
+pi_lower = clip(p − q, 0, 1)
+pi_upper = clip(p + q, 0, 1)
+```
+
+Where `p` is the predicted positive-class probability and `q` is the conformal threshold. Because nonconformity scores for binary classification are `1 − p(true class)` — which live on [0, 1] — `q` and `p` share the same units and the formula is directly analogous to regression. The bands vary spatially: pixels with `p` near 0 or 1 (confident) produce narrow intervals; pixels near 0.5 (uncertain) produce wide intervals spanning the decision boundary.
+
+!!! note
+    Unlike regression, these bounds are not a formal coverage guarantee on the class label — they are a calibration band expressing how much the predicted probability could plausibly shift given past model errors.
 
 ## predict_for_year_delta
 
