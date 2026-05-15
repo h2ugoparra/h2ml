@@ -37,7 +37,7 @@ config = PipelineConfig(
 
 ### SPCV splitter (`spatial_cv_method="spcv"`)
 
-Two-stage method based on Wang et al. (2023):
+Two-stage method based on [Wang et al. 2023](https://www.sciencedirect.com/science/article/pii/S1569843223001887?via%3Dihub):
 
 1. **AHC blocks** — Agglomerative Hierarchical Clustering on coordinates groups samples into spatially coherent blocks
 2. **Cluster ensemble (HBGF)** — three independent KMeans runs (on location, covariates, and target) are combined into a consensus fold assignment via SpectralClustering
@@ -53,6 +53,8 @@ config = PipelineConfig(
     knn_neighbors=15,           # k for the k-NN connectivity graph
 )
 ```
+
+> **Note:** AHC uses `linkage="ward"` by default. Ward requires Euclidean distances, so when `spatial_cv_metric="haversine"` it is automatically downgraded to `"average"`. For projected coordinates (metres, km) `spatial_cv_metric="euclidean"` keeps ward valid.
 
 ---
 

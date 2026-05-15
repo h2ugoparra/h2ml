@@ -67,6 +67,41 @@ The bounds vary spatially — high-confidence pixels (p near 0 or 1) produce nar
 
 Multiclass classifiers and uncalibrated models always return point predictions only.
 
+## Delta model — presence × abundance
+
+`DeltaFinalModel` combines a presence/absence classifier and a count regressor into a single deployment artifact. Prediction is `P(present) × E(count | present)`, always in the original count scale.
+
+```python
+from h2ml.pipeline.final_model import build_delta_final_model, DeltaFinalModel
+
+positive_idx = np.where(y_all > 0)[0]
+X_df = pd.DataFrame(X_all, columns=feature_names)
+
+delta = build_delta_final_model(
+    clf_result=clf_result,          # PipelineResult from presence/absence classifier (all N samples)
+    reg_result=reg_result,          # PipelineResult from count regressor (positive samples only)
+    X_full=X_df,                    # all N samples; pass DataFrame when clf and reg have different feature sets
+    y_full=y_all,                   # raw counts for all N samples
+    positive_indices=positive_idx,  # indices into X_full/y_full where count > 0
+)
+```
+
+Point predictions and conformal intervals:
+
+```python
+preds = delta.predict(X_new)                          # P × count, original scale
+lower, upper = delta.predict_interval(X_new, alpha=0.10)  # lower clipped at 0
+```
+
+**Coverage:** the conformal calibration is built on combined out-of-fold delta residuals (`|y_true − P_oof × count_oof|`), giving a coverage guarantee on the full product rather than each component separately.
+
+**Save / load** — saves to a directory (clf.pkl, reg.pkl, conformal.pkl), not a single file:
+
+```python
+delta.save("models/sparrow_delta-model")
+delta = DeltaFinalModel.load("models/sparrow_delta-model")
+```
+
 ## How it works
 
 The calibrator does not touch the model itself. It sits on top of any model and wraps its point predictions in a statistically honest band.
@@ -102,7 +137,7 @@ The logic: if the model's errors in the past rarely exceeded `q`, then adding `q
 
 - **Constant-width intervals (regression):** the same `q` is applied to every sample. Regions of the input space with higher inherent variance get the same interval as low-variance regions. For heteroscedastic data this means intervals are too wide in easy regions and too narrow in hard ones.
 - **Marginal coverage only:** the guarantee holds on average over the training distribution. Out-of-distribution inputs (e.g., spatial extrapolation beyond the training extent) may not achieve nominal coverage.
-- **Transformed targets:** if `result.y_transform` is set, intervals are in the transformed space. Apply the inverse transform to the bounds manually — see [Y-Transforms](transforms.md).
+- **Transformed targets:** `FinalModel.predict_interval()` returns bounds in the transformed space. Apply the inverse transform to the bounds manually if needed — see [Y-Transforms](transforms.md). `predict_for_year` handles this automatically, applying the inverse transform in the transform space before inverting to produce correct asymmetric bounds. `DeltaFinalModel` always outputs in the original count scale.
 
 ## Interpretation
 

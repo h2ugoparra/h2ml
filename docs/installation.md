@@ -7,6 +7,8 @@
 ## Standard install
 
 ```bash
+uv pip install h2ml
+# or
 pip install h2ml
 ```
 
@@ -15,6 +17,8 @@ pip install h2ml
 LightGBM, XGBoost, and CatBoost are optional. Install the `[boosting]` extra to include them:
 
 ```bash
+uv pip install h2ml[boosting]
+# or
 pip install h2ml[boosting]
 ```
 
@@ -25,6 +29,8 @@ Without this extra, the pipeline runs all sklearn models only. The registry dete
 The geo module (`h2ml.geo.geo_predict`) depends on [h2mare](https://github.com/h2ugoparra/h2mare), available on PyPI via the `[geo]` extra:
 
 ```bash
+uv pip install h2ml[geo]
+# or
 pip install h2ml[geo]
 ```
 

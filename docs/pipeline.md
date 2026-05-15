@@ -49,8 +49,11 @@ result.summary()              # combined agg DataFrame across all stages
 result.summary("AUC_Test_Mean", ascending=False)
 
 result.best_model_name        # winning model class name
+result.best_model_value       # best CV score (maximised internally)
+result.best_model_std         # std of that score across folds
 result.best_stage             # "default" | "reduced" | "optimized"
 result.best_feature_stage     # "default" | "reduced" (never "optimized")
+result.best_params            # dict of HPO params (or registry defaults if step 4 skipped)
 result.y_transform            # winning y-transform (regression only, or None)
 result.cv_type                # "spatial" | "random"
 result.cv_warnings            # list[str] — models with failed CV folds

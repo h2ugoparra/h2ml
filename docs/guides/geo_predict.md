@@ -51,14 +51,19 @@ df = predict_for_year(
 
 The meaning of the bound columns differs by task type:
 
-**Regression** — per-sample outcome bounds in the original (inverse-transformed) count scale:
+**Regression** — per-sample outcome bounds in the original (inverse-transformed) count scale. The bounds are computed in the transform space before inverting, which gives correct asymmetric intervals:
 
 ```
+# without y_transform (symmetric)
 pi_lower = max(0, ŷ − q)
 pi_upper = ŷ + q
+
+# with y_transform (asymmetric — e.g. log or sqrt)
+pi_lower = max(0, inverse_fn(raw − q))
+pi_upper = inverse_fn(raw + q)
 ```
 
-These carry a formal conformal coverage guarantee: the true value falls inside `[pi_lower, pi_upper]` with probability ≥ 1 − alpha.
+where `raw` is the prediction in transform space. Because `inverse_fn` is non-linear, the lower and upper offsets from `ŷ` will differ. These carry a formal conformal coverage guarantee: the true value falls inside `[pi_lower, pi_upper]` with probability ≥ 1 − alpha.
 
 **Binary classification** — per-sample calibration bands in probability space:
 
@@ -75,6 +80,8 @@ Where `p` is the predicted positive-class probability and `q` is the conformal t
 ## predict_for_year_delta
 
 Same as `predict_for_year` but loads `DeltaFinalModel`s (two-component presence × abundance models). Model directories are expected at `root_dir/models/{target}_{schema}_final-model/`.
+
+Unlike `predict_for_year` where `alpha` defaults to `None` (point predictions only), here `alpha` defaults to `0.10` — intervals are always attempted and omitted only when the model has no `ConformalCalibration`.
 
 ```python
 from h2ml.geo.geo_predict import predict_for_year_delta
