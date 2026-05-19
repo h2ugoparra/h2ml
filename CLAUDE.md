@@ -6,7 +6,7 @@ A 4-step AutoML pipeline wrapping sklearn-compatible estimators.
 
 ## Tech Stack
 
-Python 3.11+. Key libraries: `scikit-learn`, `optuna` (HPO), `shap` (feature selection), `joblib` (parallel CV), `lightgbm`/`xgboost`/`catboost` (`[boosting]` extra), `h2mare` (`[geo]` extra). Dev: `uv`, `ruff`, `pytest`, `tox`, `mkdocs`.
+Python 3.11+. Key libraries: `scikit-learn`, `optuna` (HPO), `shap` (feature selection), `joblib` (parallel CV), `lightgbm`/`xgboost`/`catboost` (`[boosting]` extra), `h2mare` (core dep; `[geo]` extra adds `cartopy` + `polars` for `predict_map`). Dev: `uv`, `ruff`, `pytest`, `tox`, `mkdocs`.
 
 ## Commands
 
@@ -35,6 +35,7 @@ FeatureSelector (features/selector.py)       → shap_importance.py + correlatio
 SpatialBlockSplitter / SPCVSplitter          → activated when store.coords is set; built once in step 1
   (features/spatial_cv.py)
 FinalModel (pipeline/final_model.py)         → predict/predict_proba + optional ConformalCalibration
+DeltaFinalModel (pipeline/final_model.py)    → P(present) × E(count|present); built via build_delta_final_model()
 ModelRegistry (utils/registry.py)            → single source of truth; build_models(task)
 Optimizer (optimization/optimizer.py)        → run_study(); optimize_all() for batch use
 ```
@@ -46,7 +47,7 @@ result = pipeline.run_step1_only(store)     # quick model screening
 result = pipeline.run_step1_to_step2(store) # steps 1–2
 result = pipeline.run_step1_to_step3(store) # steps 1–3, no HPO
 result = pipeline.run_from_step3(result)    # resume (needs features, features_reduced, best_model_name, selector)
-result = pipeline.run_step4_only(result)    # re-run HPO only
+result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + best_stage, best_model_value)
 ```
 
 ## PipelineConfig
@@ -70,7 +71,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only
 
 ## PipelineResult
 
-Key fields: `best_model_name`, `best_stage`, `best_feature_stage`, `best_params`, `y_transform`, `metric`, `cv_type`, `cv_warnings`, `splitter`, `step3_reduced_stores`.
+Key fields: `best_model_name`, `best_stage`, `best_feature_stage`, `best_params`, `y_transform`, `metric`, `cv_type`, `cv_warnings`, `splitter`, `step3_reduced_stores`. Note: `splitter` and `step3_reduced_stores` are not persisted — both are `None` after `PipelineResult.load()`.
 
 ```python
 result.summary(metric=None, ascending=False)   # combined agg DataFrame across all stages
@@ -95,4 +96,4 @@ compare_results(results, labels, metric, n_folds)  # sort direction auto-derived
 
 ## h2mare dependency
 
-`h2mare` (PyPI, `[geo]` extra) — geospatial storage (`ParquetIndexer`), aggregation, map plotting. Import paths in `h2ml/geo/geo_predict.py` use `h2mare.*`.
+`h2mare` (PyPI, core dependency) — geospatial storage (`ParquetIndexer`), aggregation, map plotting. Import paths in `h2ml/geo/geo_predict.py` use `h2mare.*`. The `[geo]` extra adds `cartopy` and `polars`, required only for `predict_map`.
