@@ -341,12 +341,14 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     """
     from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
 
+    assert result.step1_cv_result is not None
     task_type = result.step1_cv_result[0].task_type
 
     feature_stage = result.best_feature_stage or result.best_stage
     store = result.features_reduced if feature_stage == "reduced" else result.features
 
     registry = CLASSIFIER_REGISTRY if task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
+    assert result.best_model_name is not None
     entry = registry.get(result.best_model_name)
     if entry is None:
         raise ValueError(
@@ -359,7 +361,7 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     else:
         estimator = entry.model_cls(**entry.default_kwargs)
 
-    # Scale if required — fit scaler on the full training set
+    assert store is not None
     X = store.X
     scaler = None
     if entry.requires_scaling:

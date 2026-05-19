@@ -21,7 +21,7 @@ What this module does NOT do:
 from __future__ import annotations
 
 from loguru import logger
-from typing import Literal, Optional
+from typing import Literal, Optional, cast
 
 import pandas as pd
 
@@ -84,7 +84,10 @@ def remove_correlated_features(
                 continue
 
             # Remove if correlation exceeds threshold in any method
-            correlated = any(abs(corr_matrices[method].loc[feature, other]) > corr_threshold for method in methods)
+            correlated = any(
+                abs(cast(float, corr_matrices[method].loc[feature, other])) > corr_threshold
+                for method in methods
+            )
 
             if correlated:
                 removed_features.add(other)

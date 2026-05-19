@@ -12,7 +12,10 @@ from loguru import logger
 import time
 from joblib import Parallel, delayed
 from dataclasses import dataclass, field
-from typing import Optional, Any, Callable, Sequence, cast
+from typing import TYPE_CHECKING, Optional, Any, Callable, Sequence, cast
+
+if TYPE_CHECKING:
+    from h2ml.features.spatial_cv import SpatialMetric
 
 import numpy as np
 from sklearn.model_selection import KFold, StratifiedKFold
@@ -95,8 +98,7 @@ class CVResult:
             return None
         n_samples = int(max(f.test_idx.max() for f in self.folds)) + 1
         first = self.folds[0]
-        is_clf = first.y_prob_test is not None
-        if is_clf:
+        if first.y_prob_test is not None:
             shape = (n_samples, first.y_prob_test.shape[1]) if first.y_prob_test.ndim == 2 else (n_samples,)
             oof = np.full(shape, np.nan)
             for f in self.folds:
@@ -173,7 +175,7 @@ class CrossValidator:
         n_blocks_per_fold: int = 5,
         spatial_cv_method: str = "block",
         ahc_threshold: Optional[float] = None,
-        spatial_cv_metric: str = "euclidean",
+        spatial_cv_metric: SpatialMetric = "euclidean",
         pca_components: float = 0.95,
         exact_max_samples: int = 5_000,
         knn_neighbors: int = 15,
@@ -281,7 +283,7 @@ class CrossValidator:
         n_blocks_per_fold: int = 5,
         spatial_cv_method: str = "block",
         ahc_threshold: Optional[float] = None,
-        spatial_cv_metric: str = "euclidean",
+        spatial_cv_metric: SpatialMetric = "euclidean",
         pca_components: float = 0.95,
         exact_max_samples: int = 5_000,
         knn_neighbors: int = 15,
@@ -366,7 +368,7 @@ class CrossValidator:
         y: Optional[np.ndarray] = None,
         spatial_cv_method: str = "block",
         ahc_threshold: Optional[float] = None,
-        spatial_cv_metric: str = "euclidean",
+        spatial_cv_metric: SpatialMetric = "euclidean",
         pca_components: float = 0.95,
         exact_max_samples: int = 5_000,
         knn_neighbors: int = 15,
@@ -376,6 +378,7 @@ class CrossValidator:
             if spatial_cv_method == "spcv":
                 from h2ml.features.spatial_cv import SPCVSplitter
 
+                assert X is not None and y is not None
                 return SPCVSplitter(
                     coords=coords,
                     X=X,

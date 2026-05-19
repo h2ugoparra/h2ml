@@ -9,10 +9,11 @@ from __future__ import annotations
 from loguru import logger
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Optional, Any
+from typing import TYPE_CHECKING, Iterable, Optional, Any, cast
 
 if TYPE_CHECKING:
     from h2ml.pipeline.final_model import FinalModel
+    from h2ml.features.spatial_cv import SpatialMetric
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
@@ -143,7 +144,7 @@ class PipelineConfig:
     n_blocks_per_fold: int = 5
     spatial_cv_method: str = "block"
     ahc_threshold: Optional[float] = None
-    spatial_cv_metric: str = "euclidean"
+    spatial_cv_metric: SpatialMetric = "euclidean"
     pca_components: float = 0.95
     exact_max_samples: int = 5_000
     knn_neighbors: int = 15
@@ -654,8 +655,11 @@ class H2MLPipeline:
                 _scaled_folds=sf,
             )
 
-        raw = Parallel(n_jobs=-1, backend="loky")(
-            delayed(_run_one)(tn, st, m) for tn, st in stores.items() for m in self.models
+        raw = cast(
+            list[tuple[str, CVResult]],
+            Parallel(n_jobs=-1, backend="loky")(
+                delayed(_run_one)(tn, st, m) for tn, st in stores.items() for m in self.models
+            ),
         )
 
         # Group by transform and compute metrics — identical to the serial path.

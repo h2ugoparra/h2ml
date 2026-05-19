@@ -162,7 +162,7 @@ CLASSIFIER_REGISTRY: dict[str, ModelEntry] = {
 
 # Optional heavy dependencies
 try:
-    from lightgbm import LGBMClassifier
+    from lightgbm import LGBMClassifier  # type: ignore[import-not-found]
 
     CLASSIFIER_REGISTRY["LGBMClassifier"] = ModelEntry(
         LGBMClassifier,
@@ -174,7 +174,7 @@ except ImportError:
     pass
 
 try:
-    from catboost import CatBoostClassifier
+    from catboost import CatBoostClassifier  # type: ignore[import-not-found]
 
     CLASSIFIER_REGISTRY["CatBoostClassifier"] = ModelEntry(
         CatBoostClassifier,
@@ -185,7 +185,7 @@ except ImportError:
     pass
 
 try:
-    from xgboost import XGBClassifier
+    from xgboost import XGBClassifier  # type: ignore[import-not-found]
 
     CLASSIFIER_REGISTRY["XGBClassifier"] = ModelEntry(
         XGBClassifier,
@@ -258,7 +258,7 @@ REGRESSOR_REGISTRY: dict[str, ModelEntry] = {
 
 # Optional heavy dependencies
 try:
-    from lightgbm import LGBMRegressor
+    from lightgbm import LGBMRegressor # type: ignore[import-not-found]
 
     REGRESSOR_REGISTRY["LGBMRegressor"] = ModelEntry(
         LGBMRegressor,
@@ -269,7 +269,7 @@ except ImportError:
     pass
 
 try:
-    from catboost import CatBoostRegressor
+    from catboost import CatBoostRegressor # type: ignore[import-not-found]
 
     REGRESSOR_REGISTRY["CatBoostRegressor"] = ModelEntry(
         CatBoostRegressor,
@@ -280,7 +280,7 @@ except ImportError:
     pass
 
 try:
-    from xgboost import XGBRegressor
+    from xgboost import XGBRegressor # type: ignore[import-not-found]
 
     REGRESSOR_REGISTRY["XGBRegressor"] = ModelEntry(
         XGBRegressor,

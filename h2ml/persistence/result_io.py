@@ -207,6 +207,7 @@ def load_result(path: str | Path):
         cv_type=meta.get("cv_type", "random"),
         cv_warnings=meta.get("cv_warnings", []),
         metric=meta.get("metric"),
+        step3_reduced_stores=None,
         **dfs,
     )
 

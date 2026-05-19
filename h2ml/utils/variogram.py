@@ -102,7 +102,7 @@ def autocorrelation_range(
     gamma = 0.5 * dz**2  # semivariance for each pair
 
     if max_dist is None:
-        max_dist = h.max() / 2.0
+        max_dist = float(h.max()) / 2.0
 
     mask = h <= max_dist
     h, gamma = h[mask], gamma[mask]

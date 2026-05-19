@@ -358,7 +358,7 @@ def predict_map(
     full_series = full_series.scatter(df_pred["index"], preds)
 
     df_results = df_orig.select(["index", "time", "lon", "lat"]).with_columns(full_series)
-    df_plot = aggregate_by_space_time(df_results, vars_name=target_col, agg_by=agg_by)
+    df_plot = aggregate_by_space_time(df_results, vars_name=target_col, agg_by=agg_by).collect()
 
     plot_maps(
         df_plot,

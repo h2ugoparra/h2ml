@@ -15,13 +15,16 @@ SPCVSplitter — two-stage method:
 from __future__ import annotations
 
 import math
-from typing import Iterator, Optional
+from typing import Iterator, Literal, Optional
 
 import numpy as np
 from loguru import logger
 
+SpatialMetric = Literal["euclidean", "haversine"]
+LinkageCriterion = Literal["ward", "complete", "average", "single"]
 
-def _warn_if_degrees(coords: np.ndarray, metric: str) -> None:
+
+def _warn_if_degrees(coords: np.ndarray, metric: SpatialMetric) -> None:
     """Warn when coords look like lat/lon degrees but metric is Euclidean."""
     if metric != "euclidean":
         return
@@ -68,7 +71,7 @@ class SpatialBlockSplitter:
         n_splits: int = 5,
         n_blocks_per_fold: int = 5,
         random_state: int = 42,
-        metric: str = "euclidean",
+        metric: SpatialMetric = "euclidean",
     ) -> None:
         coords = np.asarray(coords)
         if coords.ndim != 2 or coords.shape[1] != 2:
@@ -85,7 +88,7 @@ class SpatialBlockSplitter:
         self.n_splits = n_splits
         self.n_blocks_per_fold = n_blocks_per_fold
         self.random_state = random_state
-        self.metric = metric
+        self.metric: SpatialMetric = metric
         self._fold_of_sample = self._assign_blocks()
 
     # ------------------------------------------------------------------
@@ -228,9 +231,9 @@ class SPCVSplitter:
         y: np.ndarray,
         n_splits: int = 5,
         threshold: Optional[float] = None,
-        linkage: str = "ward",
+        linkage: LinkageCriterion = "ward",
         random_state: int = 42,
-        metric: str = "euclidean",
+        metric: SpatialMetric = "euclidean",
         pca_components: float = 0.95,
         exact_max_samples: int = 5_000,
         knn_neighbors: int = 15,
@@ -255,9 +258,9 @@ class SPCVSplitter:
         self.y = y
         self.n_splits = n_splits
         self.threshold = threshold
-        self.linkage = linkage
+        self.linkage: LinkageCriterion = linkage
         self.random_state = random_state
-        self.metric = metric
+        self.metric: SpatialMetric = metric
         self.pca_components = pca_components
         self.exact_max_samples = exact_max_samples
         self.knn_neighbors = knn_neighbors
@@ -371,7 +374,7 @@ class SPCVSplitter:
         else:
             from scipy.spatial.distance import pdist
 
-            distances = pdist(self.coords, metric=self.metric)
+            distances = pdist(self.coords, metric=self.metric)  # type: ignore[call-overload]
 
         linkage = self.linkage
         if self.metric == "haversine" and linkage == "ward":
@@ -425,7 +428,7 @@ class SPCVSplitter:
         clustering = AgglomerativeClustering(
             n_clusters=None,
             distance_threshold=threshold,
-            connectivity=connectivity,
+            connectivity=connectivity,  # type: ignore[arg-type]
             linkage=linkage,
             metric="euclidean" if linkage == "ward" else sklearn_metric,
         )
@@ -443,7 +446,7 @@ class SPCVSplitter:
             return float(np.deg2rad(self.threshold))
         return float(self.threshold)
 
-    def _resolve_threshold_approximate(self, coords_for_graph: np.ndarray, sklearn_metric: str) -> float:
+    def _resolve_threshold_approximate(self, coords_for_graph: np.ndarray, sklearn_metric: SpatialMetric) -> float:
         """
         Return threshold for sklearn AgglomerativeClustering.
         When threshold=None, estimate from a sample of pairwise distances to
@@ -464,7 +467,7 @@ class SPCVSplitter:
             replace=False,
         )
         sub = coords_for_graph[idx]
-        dists = cdist(sub, sub, metric=sklearn_metric)
+        dists = cdist(sub, sub, metric=sklearn_metric)  # type: ignore[call-overload]
         upper = dists[np.triu_indices_from(dists, k=1)]
         t = float(np.percentile(upper, 10))
         units = "rad" if self.metric == "haversine" else "coord units"

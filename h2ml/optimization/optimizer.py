@@ -22,7 +22,10 @@ Interface contract (expected by pipeline/pipeline.py):
 from __future__ import annotations
 
 from loguru import logger
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
+
+if TYPE_CHECKING:
+    from h2ml.features.spatial_cv import SpatialMetric
 
 import numpy as np
 import optuna
@@ -122,31 +125,40 @@ def _score_f1(model, X_train, X_test, y_train, y_test) -> float:
     return float(f1_score(y_test, y_pred, average=average, zero_division=0))
 
 
-def _score_r2(model, X_train, X_test, y_train, y_test, *, y_true_test=None, inverse_fn=None) -> float:
+def _score_r2(
+    model, X_train, X_test, y_train, y_test, *, y_true_test: np.ndarray | None = None, inverse_fn=None
+) -> float:
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     if inverse_fn is not None:
         y_pred = inverse_fn(y_pred)
+        assert y_true_test is not None
         y_test = y_true_test
     return float(r2_score(y_test, y_pred))
 
 
-def _score_mae(model, X_train, X_test, y_train, y_test, *, y_true_test=None, inverse_fn=None) -> float:
+def _score_mae(
+    model, X_train, X_test, y_train, y_test, *, y_true_test: np.ndarray | None = None, inverse_fn=None
+) -> float:
     """Negated MAE so higher is better."""
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     if inverse_fn is not None:
         y_pred = inverse_fn(y_pred)
+        assert y_true_test is not None
         y_test = y_true_test
     return float(-mean_absolute_error(y_test, y_pred))
 
 
-def _score_rmse(model, X_train, X_test, y_train, y_test, *, y_true_test=None, inverse_fn=None) -> float:
+def _score_rmse(
+    model, X_train, X_test, y_train, y_test, *, y_true_test: np.ndarray | None = None, inverse_fn=None
+) -> float:
     """Negated RMSE so higher is better."""
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     if inverse_fn is not None:
         y_pred = inverse_fn(y_pred)
+        assert y_true_test is not None
         y_test = y_true_test
     return float(-np.sqrt(mean_squared_error(y_test, y_pred)))
 
@@ -200,7 +212,7 @@ def _build_objective(
     n_blocks_per_fold: int = 5,
     spatial_cv_method: str = "block",
     ahc_threshold: Optional[float] = None,
-    spatial_cv_metric: str = "euclidean",
+    spatial_cv_metric: SpatialMetric = "euclidean",
     pca_components: float = 0.95,
     exact_max_samples: int = 5_000,
     knn_neighbors: int = 15,
@@ -303,6 +315,7 @@ def _build_objective(
             y_train, y_test = y[train_idx], y[test_idx]
 
             if task == "regression" and inverse_fn is not None:
+                assert y_true_folds is not None
                 score = score_fn(
                     model,
                     X_train,
@@ -346,7 +359,7 @@ def run_study(
     n_blocks_per_fold: int = 5,
     spatial_cv_method: str = "block",
     ahc_threshold: Optional[float] = None,
-    spatial_cv_metric: str = "euclidean",
+    spatial_cv_metric: SpatialMetric = "euclidean",
     pca_components: float = 0.95,
     exact_max_samples: int = 5_000,
     knn_neighbors: int = 15,

@@ -17,7 +17,7 @@ Winsorize-based transforms replace upper outliers with the IQR upper limit.
 """
 
 from __future__ import annotations
-from typing import Optional
+from typing import Callable, Optional
 import numpy as np
 
 
@@ -55,7 +55,7 @@ Y_TRANSFORMS = {
 
 # Inverse transform registry — mirrors Y_TRANSFORMS
 # Winsorize clipping is not reversible; the log/sqrt step underneath is reversed instead.
-INVERSE_TRANSFORMS: dict[str, callable] = {
+INVERSE_TRANSFORMS: dict[str, Callable] = {
     "count": lambda y: y,
     "log": np.expm1,  # inverse of log1p
     "sqrt": np.square,  # inverse of sqrt
