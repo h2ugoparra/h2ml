@@ -20,6 +20,9 @@ venv/
 # Tox
 .tox/
 
+# Ruff
+.ruff_cache/
+
 # Claude Code — local and auto-generated only
 .claude/
 
