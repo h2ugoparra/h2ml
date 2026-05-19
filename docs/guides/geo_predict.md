@@ -1,5 +1,7 @@
 # Geo Prediction
 
+> **Prerequisites:** The functions in this module read features directly from a hive-partitioned parquet store. The feature data for all requested targets, years, and spatial tiles must be present in the store before calling any prediction function — missing partitions will produce no rows for those combinations rather than raising an error.
+
 The `h2ml.geo` module bridges trained `FinalModel`s and hive-partitioned parquet feature stores (via `h2mare.ParquetIndexer`) to generate spatial predictions at scale.
 
 Requires the `[geo]` optional dependencies:

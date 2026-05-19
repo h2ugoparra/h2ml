@@ -95,15 +95,9 @@ def _make_regression_fold(fold_id: int, model_name: str = "TestReg") -> FoldResu
     )
 
 
-def _make_cv_result(
-    task: TaskType, n_folds: int = 5, model_name: Optional[str] = None
-) -> CVResult:
+def _make_cv_result(task: TaskType, n_folds: int = 5, model_name: Optional[str] = None) -> CVResult:
     name = model_name or ("TestClf" if task == TaskType.CLASSIFICATION else "TestReg")
-    make_fold = (
-        _make_classification_fold
-        if task == TaskType.CLASSIFICATION
-        else _make_regression_fold
-    )
+    make_fold = _make_classification_fold if task == TaskType.CLASSIFICATION else _make_regression_fold
     result = CVResult(model_name=name, task_type=task)
     for i in range(n_folds):
         result.folds.append(make_fold(i, model_name=name))
@@ -548,9 +542,7 @@ class TestSelectBest:
         # Without LCB: Volatile wins (0.92 > 0.90)
         assert select_best(df, metric="AUC_Test_Mean")["model_name"] == "Volatile"
         # LCB scores: Stable=0.90-0.01/√5≈0.8955, Volatile=0.92-0.10/√5≈0.8753
-        assert (
-            select_best(df, metric="AUC_Test_Mean", n_folds=5)["model_name"] == "Stable"
-        )
+        assert select_best(df, metric="AUC_Test_Mean", n_folds=5)["model_name"] == "Stable"
 
     def test_lcb_preserves_winner_when_std_equal(self):
         """When std is equal, higher mean still wins."""
@@ -573,17 +565,9 @@ class TestSelectBest:
             }
         )
         # Without UCB: Volatile wins (0.36 < 0.40)
-        assert (
-            select_best(df, metric="RMSE_Test_Mean", minimize=True)["model_name"]
-            == "Volatile"
-        )
+        assert select_best(df, metric="RMSE_Test_Mean", minimize=True)["model_name"] == "Volatile"
         # UCB scores: Stable=0.40+0.02/√5≈0.409, Volatile=0.36+0.15/√5≈0.427
-        assert (
-            select_best(df, metric="RMSE_Test_Mean", minimize=True, n_folds=5)[
-                "model_name"
-            ]
-            == "Stable"
-        )
+        assert select_best(df, metric="RMSE_Test_Mean", minimize=True, n_folds=5)["model_name"] == "Stable"
 
     def test_lcb_value_is_raw_mean(self):
         """Returned value is still the raw mean, not the adjusted score."""
@@ -625,8 +609,6 @@ def _make_multiclass_fold(fold_id: int, n_classes: int = 3) -> FoldResult:
     """Build a FoldResult with multiclass 2D probability arrays."""
     rng = np.random.default_rng(fold_id)
     n_test, n_train = 20, 80
-    classes = np.arange(n_classes)
-
     y_train = rng.integers(0, n_classes, size=n_train)
     y_test = rng.integers(0, n_classes, size=n_test)
 
@@ -652,9 +634,7 @@ def _make_multiclass_fold(fold_id: int, n_classes: int = 3) -> FoldResult:
 class TestMulticlassClassificationMetrics:
     @pytest.fixture
     def multiclass_cv_result(self) -> CVResult:
-        result = CVResult(
-            model_name="MulticlassModel", task_type=TaskType.CLASSIFICATION
-        )
+        result = CVResult(model_name="MulticlassModel", task_type=TaskType.CLASSIFICATION)
         for i in range(5):
             result.folds.append(_make_multiclass_fold(i))
         return result

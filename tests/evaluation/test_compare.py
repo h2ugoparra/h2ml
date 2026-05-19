@@ -6,8 +6,13 @@ Tests for compare_results().
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pytest
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 from h2ml.evaluation.compare import compare_results
 from h2ml.pipeline.pipeline import PipelineResult
@@ -28,9 +33,7 @@ def _make_store(n: int = 50, f: int = 3) -> PipelineData:
     )
 
 
-def _make_agg_df(
-    model: str = "RFC", stage: str = "default", auc: float = 0.85, brier: float = 0.15
-) -> "pd.DataFrame":
+def _make_agg_df(model: str = "RFC", stage: str = "default", auc: float = 0.85, brier: float = 0.15) -> "pd.DataFrame":
     import pandas as pd
 
     return pd.DataFrame(
@@ -47,17 +50,10 @@ def _make_agg_df(
     )
 
 
-def _make_fold_df(
-    model: str = "RFC", stage: str = "default", n_folds: int = 5
-) -> "pd.DataFrame":
+def _make_fold_df(model: str = "RFC", stage: str = "default", n_folds: int = 5) -> "pd.DataFrame":
     import pandas as pd
 
-    return pd.DataFrame(
-        [
-            {"Model": model, "Stage": stage, "Fold": i, "AUC_Test": 0.85}
-            for i in range(n_folds)
-        ]
-    )
+    return pd.DataFrame([{"Model": model, "Stage": stage, "Fold": i, "AUC_Test": 0.85} for i in range(n_folds)])
 
 
 def _make_result(
@@ -210,13 +206,10 @@ class TestFieldExtraction:
         import pandas as pd
 
         result = _make_result()
-        result.step1_agg_df = pd.DataFrame(
-            [{"Model": "RFC", "Stage": "default", "AUC_Test_Mean": 0.85}]
-        )
+        result.step1_agg_df = pd.DataFrame([{"Model": "RFC", "Stage": "default", "AUC_Test_Mean": 0.85}])
         df = compare_results([result])
         assert df.iloc[0]["Brier_Mean"] is None or (
-            isinstance(df.iloc[0]["Brier_Mean"], float)
-            and np.isnan(df.iloc[0]["Brier_Mean"])
+            isinstance(df.iloc[0]["Brier_Mean"], float) and np.isnan(df.iloc[0]["Brier_Mean"])
         )
 
 
@@ -245,8 +238,7 @@ class TestConservativeBound:
         result.best_model_std = None
         df = compare_results([result])
         assert df.iloc[0]["Conservative_Bound"] is None or (
-            isinstance(df.iloc[0]["Conservative_Bound"], float)
-            and np.isnan(df.iloc[0]["Conservative_Bound"])
+            isinstance(df.iloc[0]["Conservative_Bound"], float) and np.isnan(df.iloc[0]["Conservative_Bound"])
         )
 
     def test_cb_penalises_higher_variance(self):

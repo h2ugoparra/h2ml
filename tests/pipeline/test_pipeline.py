@@ -75,33 +75,25 @@ def _make_positive_reg_store(seed: int = 7) -> PipelineData:
 
 def _lr_only() -> list:
     """Single LR — opt_enabled=False in registry, so step 4 skips Optuna automatically."""
-    return [
-        make_classifier(LogisticRegression(max_iter=200, random_state=42), name="LR")
-    ]
+    return [make_classifier(LogisticRegression(max_iter=200, random_state=42), name="LR")]
 
 
 def _clf_steps() -> list:
     return [
         make_classifier(LogisticRegression(max_iter=200, random_state=42), name="LR"),
-        make_classifier(
-            RandomForestClassifier(n_estimators=10, random_state=42), name="RF"
-        ),
+        make_classifier(RandomForestClassifier(n_estimators=10, random_state=42), name="RF"),
     ]
 
 
 def _reg_steps() -> list:
     return [
         make_regressor(Ridge(), name="Ridge"),
-        make_regressor(
-            RandomForestRegressor(n_estimators=10, random_state=42), name="RF"
-        ),
+        make_regressor(RandomForestRegressor(n_estimators=10, random_state=42), name="RF"),
     ]
 
 
 def _clf_config(**kwargs) -> PipelineConfig:
-    defaults = dict(
-        task_type=TaskType.CLASSIFICATION, metric="AUC", n_splits=3, n_trials=1
-    )
+    defaults = dict(task_type=TaskType.CLASSIFICATION, metric="AUC", n_splits=3, n_trials=1)
     defaults.update(kwargs)
     return PipelineConfig(**defaults)
 
@@ -273,9 +265,7 @@ class TestPipelineConfig:
 
 
 class TestHandleImbalance:
-    def _make_imbalanced_store(
-        self, minority_n: int = 5, majority_n: int = 95
-    ) -> PipelineData:
+    def _make_imbalanced_store(self, minority_n: int = 5, majority_n: int = 95) -> PipelineData:
         rng = np.random.default_rng(0)
         n = minority_n + majority_n
         X = rng.standard_normal((n, 3))
@@ -431,27 +421,17 @@ class TestPipelineResult:
         assert stages == {"default", "reduced", "optimized"}
 
     def test_summary_sort_by_metric_descending(self):
-        result = PipelineResult(
-            step1_agg_df=pd.DataFrame(
-                {"Model": ["LR", "RF"], "AUC_Test_Mean": [0.75, 0.85]}
-            )
-        )
+        result = PipelineResult(step1_agg_df=pd.DataFrame({"Model": ["LR", "RF"], "AUC_Test_Mean": [0.75, 0.85]}))
         df = result.summary(metric="AUC_Test_Mean")
         assert df.iloc[0]["AUC_Test_Mean"] >= df.iloc[1]["AUC_Test_Mean"]
 
     def test_summary_sort_ascending_for_loss_metric(self):
-        result = PipelineResult(
-            step1_agg_df=pd.DataFrame(
-                {"Model": ["LR", "RF"], "RMSE_Test_Mean": [0.5, 0.3]}
-            )
-        )
+        result = PipelineResult(step1_agg_df=pd.DataFrame({"Model": ["LR", "RF"], "RMSE_Test_Mean": [0.5, 0.3]}))
         df = result.summary(metric="RMSE_Test_Mean", ascending=True)
         assert df.iloc[0]["RMSE_Test_Mean"] <= df.iloc[1]["RMSE_Test_Mean"]
 
     def test_summary_raises_on_unknown_metric(self):
-        result = PipelineResult(
-            step1_agg_df=pd.DataFrame({"Model": ["RF"], "AUC_Test_Mean": [0.8]})
-        )
+        result = PipelineResult(step1_agg_df=pd.DataFrame({"Model": ["RF"], "AUC_Test_Mean": [0.8]}))
         with pytest.raises(ValueError, match="not found"):
             result.summary(metric="NonExistentMetric_Mean")
 
@@ -561,17 +541,11 @@ class TestStep1WithTransforms:
         return H2MLPipeline(models=_reg_steps(), config=_reg_config())
 
     def test_fold_df_has_y_transform_column(self, reg_pipeline_2models, pos_reg_store):
-        result = reg_pipeline_2models.run_step1_only(
-            pos_reg_store, transforms=["log", "count"]
-        )
+        result = reg_pipeline_2models.run_step1_only(pos_reg_store, transforms=["log", "count"])
         assert "Y_transform" in result.step1_fold_df.columns
 
-    def test_fold_df_row_count_equals_models_times_transforms_times_folds(
-        self, reg_pipeline_2models, pos_reg_store
-    ):
-        result = reg_pipeline_2models.run_step1_only(
-            pos_reg_store, transforms=["log", "count"]
-        )
+    def test_fold_df_row_count_equals_models_times_transforms_times_folds(self, reg_pipeline_2models, pos_reg_store):
+        result = reg_pipeline_2models.run_step1_only(pos_reg_store, transforms=["log", "count"])
         n_models, n_transforms, n_folds = (
             len(reg_pipeline_2models.models),
             2,
@@ -579,55 +553,31 @@ class TestStep1WithTransforms:
         )
         assert len(result.step1_fold_df) == n_models * n_transforms * n_folds
 
-    def test_agg_df_has_one_row_per_model_per_transform(
-        self, reg_pipeline_2models, pos_reg_store
-    ):
-        result = reg_pipeline_2models.run_step1_only(
-            pos_reg_store, transforms=["log", "count"]
-        )
+    def test_agg_df_has_one_row_per_model_per_transform(self, reg_pipeline_2models, pos_reg_store):
+        result = reg_pipeline_2models.run_step1_only(pos_reg_store, transforms=["log", "count"])
         assert len(result.step1_agg_df) == len(reg_pipeline_2models.models) * 2
 
-    def test_cv_result_count_equals_models_times_transforms(
-        self, reg_pipeline_2models, pos_reg_store
-    ):
-        result = reg_pipeline_2models.run_step1_only(
-            pos_reg_store, transforms=["log", "count"]
-        )
+    def test_cv_result_count_equals_models_times_transforms(self, reg_pipeline_2models, pos_reg_store):
+        result = reg_pipeline_2models.run_step1_only(pos_reg_store, transforms=["log", "count"])
         assert len(result.step1_cv_result) == len(reg_pipeline_2models.models) * 2
 
-    def test_y_transform_set_to_one_of_the_input_transforms(
-        self, reg_pipeline_2models, pos_reg_store
-    ):
-        result = reg_pipeline_2models.run_step1_only(
-            pos_reg_store, transforms=["log", "count"]
-        )
+    def test_y_transform_set_to_one_of_the_input_transforms(self, reg_pipeline_2models, pos_reg_store):
+        result = reg_pipeline_2models.run_step1_only(pos_reg_store, transforms=["log", "count"])
         assert result.y_transform in ("log", "count")
 
-    def test_both_transforms_appear_in_agg_df(
-        self, reg_pipeline_2models, pos_reg_store
-    ):
-        result = reg_pipeline_2models.run_step1_only(
-            pos_reg_store, transforms=["log", "count"]
-        )
+    def test_both_transforms_appear_in_agg_df(self, reg_pipeline_2models, pos_reg_store):
+        result = reg_pipeline_2models.run_step1_only(pos_reg_store, transforms=["log", "count"])
         assert set(result.step1_agg_df["Y_transform"]) == {"log", "count"}
 
-    def test_run_step1_to_step3_with_transforms_completes(
-        self, reg_pipeline_2models, pos_reg_store
-    ):
+    def test_run_step1_to_step3_with_transforms_completes(self, reg_pipeline_2models, pos_reg_store):
         with _mock_selector():
-            result = reg_pipeline_2models.run_step1_to_step3(
-                pos_reg_store, transforms=["log", "count"]
-            )
+            result = reg_pipeline_2models.run_step1_to_step3(pos_reg_store, transforms=["log", "count"])
         assert result.completed_steps == [1, 2, 3]
         assert result.y_transform in ("log", "count")
 
-    def test_single_transform_behaves_like_no_transform_sweep(
-        self, reg_pipeline_2models, pos_reg_store
-    ):
+    def test_single_transform_behaves_like_no_transform_sweep(self, reg_pipeline_2models, pos_reg_store):
         """Passing one transform should produce the same structure as no sweep."""
-        result_sweep = reg_pipeline_2models.run_step1_only(
-            pos_reg_store, transforms=["count"]
-        )
+        result_sweep = reg_pipeline_2models.run_step1_only(pos_reg_store, transforms=["count"])
         result_plain = reg_pipeline_2models.run_step1_only(pos_reg_store)
         # Both should have 1 entry per model in the agg_df
         assert len(result_sweep.step1_agg_df) == len(result_plain.step1_agg_df)
@@ -757,13 +707,9 @@ class TestRunFromStep3:
         """selector.selected_features_ matches the winning stage's feature set."""
         result = lr_pipeline.run_from_step3(partial_result)
         if result.best_stage == "default":
-            assert result.selector.selected_features_ == list(
-                result.features.feature_names
-            )
+            assert result.selector.selected_features_ == list(result.features.feature_names)
         else:
-            assert result.selector.selected_features_ == list(
-                result.features_reduced.feature_names
-            )
+            assert result.selector.selected_features_ == list(result.features_reduced.feature_names)
 
     def test_best_feature_stage_preserved(self, lr_pipeline, partial_result):
         """best_feature_stage is never overwritten to 'optimized'."""
@@ -792,11 +738,7 @@ class TestStep4Optimisation:
     def test_step4_fold_df_populated_when_opt_runs(self, clf_store):
         """RF has opt_enabled=True — step 4 runs CV with the optimised params."""
         rf_pipeline = H2MLPipeline(
-            models=[
-                make_classifier(
-                    RandomForestClassifier(n_estimators=10, random_state=42), name="RF"
-                )
-            ],
+            models=[make_classifier(RandomForestClassifier(n_estimators=10, random_state=42), name="RF")],
             config=_clf_config(),
         )
         with _mock_selector(), _mock_optimizer({"n_estimators": 10, "max_depth": 3}):
@@ -1026,7 +968,6 @@ class TestValidateStore:
 class TestCVWarnings:
     def test_cv_warnings_empty_on_successful_run(self):
         """A clean run should produce no cv_warnings."""
-        store = _make_clf_store()
         result = PipelineResult()
         assert result.cv_warnings == []
 
@@ -1047,9 +988,7 @@ class TestCVWarnings:
             return results
 
         mock_sel = MagicMock(spec=FeatureSelector)
-        mock_sel.fit_transform.side_effect = lambda s, y=None: s.select(
-            s.feature_names[:4]
-        )
+        mock_sel.fit_transform.side_effect = lambda s, y=None: s.select(s.feature_names[:4])
         mock_sel.transform.side_effect = lambda s: s.select(s.feature_names[:4])
 
         with (
@@ -1083,9 +1022,7 @@ class TestSpatialCVPipeline:
 
     def test_full_run_with_coords_completes_all_steps(self):
         store = _make_spatial_store()
-        pipeline = H2MLPipeline(
-            models=_lr_only(), config=_clf_config(n_blocks_per_fold=3)
-        )
+        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(n_blocks_per_fold=3))
         with _mock_selector():
             result = pipeline.run(store)
         assert result.completed_steps == [1, 2, 3, 4]
@@ -1093,9 +1030,7 @@ class TestSpatialCVPipeline:
     def test_result_has_same_structure_as_without_coords(self):
         store_no_coords = _make_clf_store()
         store_with_coords = _make_spatial_store()
-        pipeline = H2MLPipeline(
-            models=_lr_only(), config=_clf_config(n_blocks_per_fold=3)
-        )
+        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(n_blocks_per_fold=3))
         with _mock_selector():
             result_plain = pipeline.run(store_no_coords)
             result_spatial = pipeline.run(store_with_coords)
@@ -1105,9 +1040,7 @@ class TestSpatialCVPipeline:
     def test_coords_forwarded_to_cv_run_all(self):
         """Verify coords are passed through to CrossValidator.run_all."""
         store = _make_spatial_store()
-        pipeline = H2MLPipeline(
-            models=_lr_only(), config=_clf_config(n_blocks_per_fold=2)
-        )
+        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(n_blocks_per_fold=2))
         coords_seen = []
 
         original_run_all = pipeline._cv.run_all
@@ -1146,9 +1079,7 @@ class TestSpatialCVPipeline:
         from h2ml.features.spatial_cv import SpatialBlockSplitter
 
         store = _make_spatial_store()
-        pipeline = H2MLPipeline(
-            models=_lr_only(), config=_clf_config(n_blocks_per_fold=2)
-        )
+        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(n_blocks_per_fold=2))
         result = pipeline.run_step1_only(store)
         assert isinstance(result.splitter, SpatialBlockSplitter)
 

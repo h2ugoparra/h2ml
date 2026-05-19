@@ -29,6 +29,10 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.svm import SVC
 
+from h2ml.pipeline.base import TaskType
+from h2ml.pipeline.cv import CrossValidator, CVResult, FoldResult
+from h2ml.pipeline.step import make_classifier, make_regressor
+
 try:
     from lightgbm import LGBMClassifier
     from xgboost import XGBRegressor
@@ -43,10 +47,6 @@ requires_boosting = pytest.mark.skipif(
     not HAS_BOOSTING,
     reason="lightgbm and xgboost not installed (install the [boosting] extra)",
 )
-
-from h2ml.pipeline.base import TaskType
-from h2ml.pipeline.cv import CrossValidator, CVResult, FoldResult
-from h2ml.pipeline.step import make_classifier, make_regressor
 
 
 # ---------------------------------------------------------------------------
@@ -68,9 +68,7 @@ def cv_3fold() -> CrossValidator:
 # Classifiers
 @pytest.fixture
 def svc_step():
-    return make_classifier(
-        SVC(random_state=42, probability=True), requires_scaling=True
-    )
+    return make_classifier(SVC(random_state=42, probability=True), requires_scaling=True)
 
 
 @pytest.fixture
@@ -319,9 +317,7 @@ class TestCrossValidatorRun:
         result = cv.run(lgbm_step, X, y)
         assert result.n_folds == 5
 
-    def test_correct_number_of_folds_3fold(
-        self, cv_3fold, lgbm_step, classification_data
-    ):
+    def test_correct_number_of_folds_3fold(self, cv_3fold, lgbm_step, classification_data):
         X, y = classification_data
         result = cv_3fold.run(lgbm_step, X, y)
         assert result.n_folds == 3
@@ -452,9 +448,7 @@ class TestCrossValidatorScaling:
         result = cv.run(lr_step, X, y)
         assert result.n_folds == 5
 
-    def test_scaling_does_not_leak_across_folds(
-        self, cv, svc_step, classification_data
-    ):
+    def test_scaling_does_not_leak_across_folds(self, cv, svc_step, classification_data):
         """Each fold should produce valid probabilities — sign that scaler was fit per fold."""
         X, y = classification_data
         result = cv.run(svc_step, X, y)
@@ -494,9 +488,7 @@ class TestCrossValidatorRunAll:
         X, y = classification_data
         steps = [
             make_classifier(LGBMClassifier(random_state=42, verbosa=-1), name="LGBM"),
-            make_classifier(
-                RandomForestClassifier(n_estimators=10, random_state=42), name="RF"
-            ),
+            make_classifier(RandomForestClassifier(n_estimators=10, random_state=42), name="RF"),
         ]
         results = cv.run_all(steps, X, y)
         assert len(results) == 2
@@ -505,9 +497,7 @@ class TestCrossValidatorRunAll:
         X, y = classification_data
         steps = [
             make_classifier(LGBMClassifier(random_state=42, verbosa=-1), name="LGBM"),
-            make_classifier(
-                RandomForestClassifier(n_estimators=10, random_state=42), name="RF"
-            ),
+            make_classifier(RandomForestClassifier(n_estimators=10, random_state=42), name="RF"),
         ]
         results = cv.run_all(steps, X, y)
         names = [r.model_name for r in results]
@@ -609,17 +599,11 @@ class TestSpatialBlockCV:
         result = cv5.run(step, X, y, coords=spatial_coords)
         assert result.n_folds == 5
 
-    def test_run_all_with_coords_returns_one_result_per_step(
-        self, cv5, spatial_data, spatial_coords
-    ):
+    def test_run_all_with_coords_returns_one_result_per_step(self, cv5, spatial_data, spatial_coords):
         X, y = spatial_data
         steps = [
-            make_classifier(
-                RandomForestClassifier(n_estimators=5, random_state=42), name="RF1"
-            ),
-            make_classifier(
-                RandomForestClassifier(n_estimators=5, random_state=0), name="RF2"
-            ),
+            make_classifier(RandomForestClassifier(n_estimators=5, random_state=42), name="RF1"),
+            make_classifier(RandomForestClassifier(n_estimators=5, random_state=0), name="RF2"),
         ]
         results = cv5.run_all(steps, X, y, coords=spatial_coords)
         assert len(results) == 2
@@ -630,9 +614,7 @@ class TestSpatialBlockCV:
         result = cv5.run(step, X, y, coords=None)
         assert result.n_folds == 5
 
-    def test_spatial_splitter_used_when_coords_provided(
-        self, cv5, spatial_data, spatial_coords
-    ):
+    def test_spatial_splitter_used_when_coords_provided(self, cv5, spatial_data, spatial_coords):
         from unittest.mock import patch
 
         X, y = spatial_data
@@ -670,9 +652,7 @@ class TestSpatialBlockCV:
                 pass
             mock_skf.assert_called_once()
 
-    def test_train_test_disjoint_with_spatial_coords(
-        self, cv5, spatial_data, spatial_coords
-    ):
+    def test_train_test_disjoint_with_spatial_coords(self, cv5, spatial_data, spatial_coords):
         X, y = spatial_data
         step = make_classifier(RandomForestClassifier(n_estimators=5, random_state=42))
         result = cv5.run(step, X, y, coords=spatial_coords)
@@ -680,9 +660,7 @@ class TestSpatialBlockCV:
             overlap = np.intersect1d(fold.train_idx, fold.test_idx)
             assert len(overlap) == 0
 
-    def test_all_indices_covered_with_spatial_coords(
-        self, cv5, spatial_data, spatial_coords
-    ):
+    def test_all_indices_covered_with_spatial_coords(self, cv5, spatial_data, spatial_coords):
         X, y = spatial_data
         step = make_classifier(RandomForestClassifier(n_estimators=5, random_state=42))
         result = cv5.run(step, X, y, coords=spatial_coords)
@@ -730,27 +708,21 @@ class TestScaledFolds:
         from sklearn.model_selection import StratifiedKFold
         from sklearn.preprocessing import StandardScaler
 
-        kf = StratifiedKFold(
-            n_splits=cv.n_splits, shuffle=cv.shuffle, random_state=cv.random_state
-        )
+        kf = StratifiedKFold(n_splits=cv.n_splits, shuffle=cv.shuffle, random_state=cv.random_state)
         folds = []
         for tr, te in kf.split(X, y):
             sc = StandardScaler()
             folds.append((sc.fit_transform(X[tr]), sc.transform(X[te])))
         return folds
 
-    def test_correct_fold_count_with_scaled_folds(
-        self, cv, svc_step, classification_data
-    ):
+    def test_correct_fold_count_with_scaled_folds(self, cv, svc_step, classification_data):
         """run() with _scaled_folds returns the same number of folds as without."""
         X, y = classification_data
         scaled = self._precompute(cv, X, y)
         result = cv.run(svc_step, X, y, _scaled_folds=scaled)
         assert result.n_folds == cv.n_splits
 
-    def test_maybe_scale_not_called_when_scaled_folds_provided(
-        self, cv, svc_step, classification_data
-    ):
+    def test_maybe_scale_not_called_when_scaled_folds_provided(self, cv, svc_step, classification_data):
         """_maybe_scale must be bypassed entirely when _scaled_folds is given."""
         from unittest.mock import patch
 
@@ -760,9 +732,7 @@ class TestScaledFolds:
             cv.run(svc_step, X, y, _scaled_folds=scaled)
         mock.assert_not_called()
 
-    def test_maybe_scale_called_when_scaled_folds_is_none(
-        self, cv, svc_step, classification_data
-    ):
+    def test_maybe_scale_called_when_scaled_folds_is_none(self, cv, svc_step, classification_data):
         """When _scaled_folds=None (default), _maybe_scale is called once per fold."""
         from unittest.mock import patch
 
