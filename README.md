@@ -2,6 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)
 [![PyPI](https://img.shields.io/pypi/v/h2ml)](https://pypi.org/project/h2ml/)
+[![Docs](https://img.shields.io/badge/docs-h2ugoparra.github.io%2Fh2ml-blue)](https://h2ugoparra.github.io/h2ml/)
 
 A 4-step AutoML pipeline for tabular data that wraps sklearn-compatible estimators. Given a feature matrix and target, it screens all registered models, reduces features via SHAP importance and correlation filtering, and tunes the winner with Optuna — all in one call.
 
@@ -13,6 +14,8 @@ pip install h2ml
 uv add h2ml
 ```
 
+The [`h2mare`](https://github.com/h2ugoparra/h2mare) companion package is included with the base install.
+
 For boosting libraries (LightGBM, XGBoost, CatBoost):
 
 ```bash
@@ -21,7 +24,7 @@ pip install h2ml[boosting]
 uv add h2ml[boosting]
 ```
 
-For spatial inference via `h2ml.geo.geo_predict` (requires [h2mare](https://github.com/h2ugoparra/h2mare)):
+For spatial map inference via `h2ml.geo.geo_predict` (adds `cartopy` and `polars` for `predict_map`):
 
 ```bash
 pip install h2ml[geo]
@@ -75,6 +78,8 @@ Available transform names: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`
 
 ### Partial runs
 
+All partial-run methods accept an optional `transforms` list (same as `pipeline.run()`).
+
 ```python
 # Screen models only (step 1)
 result = pipeline.run_step1_only(store)
@@ -87,10 +92,13 @@ print(result.features_reduced.feature_names)
 # Steps 1–3: full model and stage selection without HPO
 result = pipeline.run_step1_to_step3(store)
 
-# Resume from step 3 using a result that already has features_reduced
+# Resume from step 3 using a result that already has features_reduced.
+# Pass transform_stores if the original run used y-transforms.
 result = pipeline.run_from_step3(result)
 
-# Re-run HPO only on a previously saved result (skips steps 1–3)
+# Re-run HPO only on a previously saved result (skips steps 1–3).
+# Requires: features, features_reduced, selector, best_model_name,
+#           best_stage, best_model_value.
 result = PipelineResult.load("runs/experiment_01")
 result = pipeline.run_step4_only(result)
 ```
@@ -101,7 +109,7 @@ result = pipeline.run_step4_only(result)
 |------|-------------|-------------------------------|
 | 1 | K-fold CV all models (× optional y-transforms) on all features | `best_model_name`, `step1_agg_df` |
 | 2 | Fit best model → SHAP importance → correlation-based feature drop | `features_reduced`, `selector` |
-| 3 | K-fold CV all models on reduced features (winning transform only); compare vs step 1 | `best_stage` (`"default"` or `"reduced"`) |
+| 3 | K-fold CV all models on reduced features (winning transform only); compare vs step 1 | `best_stage` (`"default"` or `"reduced"`), `best_feature_stage` |
 | 4 | Optuna HPO on the winning (model, stage, transform) | `best_params`, `step4_agg_df` |
 
 Step 4 is skipped when the winning model has `opt_enabled=False` in the registry (e.g. LogisticRegression, GaussianNB, KNeighborsClassifier).
@@ -152,13 +160,19 @@ result.summary("AUC_Test_Mean")   # sorted by metric
 result.completed_steps            # e.g. [1, 2, 3, 4]
 result.best_model_name            # winning model
 result.best_stage                 # "default" | "reduced" | "optimized"
+result.best_feature_stage         # "default" | "reduced" — feature store used by build_final_model()
 result.y_transform                # winning y-transform (regression only)
 result.cv_type                    # "spatial" | "random" — set from store.coords
 result.cv_warnings                # list of warning strings for models with failed folds
 result.step1_agg_df               # per-model mean/std metrics from step 1
 result.features_reduced           # PipelineData after feature selection
 result.selector.importance_summary()  # SHAP importances as a DataFrame
+result.oof_predictions            # assembled OOF predictions (None if step 1 only)
+result.oof_labels                 # true labels paired with oof_predictions
+result.best_cv_result             # CVResult for the final winning model
 ```
+
+> **Note:** `result.splitter` is not persisted. It will be `None` after `PipelineResult.load()`.
 
 ### Exporting the final model
 
@@ -202,6 +216,36 @@ Both methods work on any input — held-out test samples, a prediction grid, spa
 - Coverage is **marginal**, not conditional: the guarantee holds on average over new draws from the training distribution. Predictions on out-of-distribution inputs (e.g. spatial extrapolation beyond the training extent) may not achieve nominal coverage.
 - If `result.y_transform` is set, the interval is in the **transformed space**. Apply `INVERSE_TRANSFORMS[result.y_transform]` to the bounds if you need original-scale intervals.
 
+### Delta model (presence/abundance)
+
+`DeltaFinalModel` combines a presence/absence classifier and a count/abundance regressor into a single model:
+
+```
+ŷ = P(present) × E(count | present)
+```
+
+The regressor's y-transform is inverted automatically inside `predict()`, so the output is always in the original count scale.
+
+```python
+from h2ml.pipeline.final_model import build_delta_final_model, DeltaFinalModel
+
+# clf_result: PipelineResult from a binary classifier trained on all N samples
+# reg_result: PipelineResult from a regressor trained on positive-only samples
+positive_idx = np.where(y_all > 0)[0]
+X_df = pd.DataFrame(X_all, columns=feature_names)
+
+delta = build_delta_final_model(clf_result, reg_result, X_df, y_all, positive_idx)
+delta.predict(X_new)                                 # delta predictions
+lower, upper = delta.predict_interval(X_new, alpha=0.10)  # conformal interval
+
+delta.save("models/sparrow_delta-model")
+delta = DeltaFinalModel.load("models/sparrow_delta-model")
+```
+
+Pass a DataFrame when the classifier and regressor use different feature sets — each sub-model selects its own columns by name. Pass a numpy array only when both share the same feature order.
+
+The conformal interval is calibrated on the combined OOF delta output (not each component separately) and the lower bound is clipped at zero.
+
 ## Persistence
 
 ```python
@@ -226,6 +270,8 @@ df = compare_results([r1, r2], labels=["baseline", "spatial_cv"], metric="AUC")
 
 Returns a DataFrame with one row per result: `Run`, `Metric`, `Best_Model`, `Best_Stage`, `Y_Transform`, `Score_Mean`, `Score_Std`, `Conservative_Bound` (variance-penalised score), `Brier_Mean`, `OOF_Brier`, `N_Features`, `Completed_Steps`.
 
+Pass `n_folds` to override automatic fold-count inference — useful when comparing results loaded from disk whose fold DataFrames may be absent.
+
 ## Visualization
 
 ```python
@@ -245,7 +291,7 @@ All functions accept an optional `save_path`; omit it to call `plt.show()` inste
 
 ## Spatial inference (h2mare integration)
 
-`h2ml.geo.geo_predict` provides functions for spatial-temporal prediction on gridded data via the companion `h2mare` package:
+`h2ml.geo.geo_predict` provides functions for spatial-temporal prediction on gridded data via the `h2mare` package. Requires the `[geo]` extra (`cartopy` and `polars`).
 
 ```python
 from h2ml.geo.geo_predict import predict_map
@@ -295,4 +341,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-This project was developed under the framework of [COSTA project](https://costaproject.org/en/).
+This project was developed under the framework of [COSTA project](https://costaproject.org/en/) and [Marine Beacon](https://marinebeacon.eu/).
