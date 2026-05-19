@@ -7,9 +7,16 @@ import numpy as np
 from h2ml import H2MLPipeline, PipelineConfig, PipelineData, TaskType
 
 store = PipelineData(
-    X=X_arr,                   # np.ndarray (n_samples, n_features)
-    feature_names=feature_cols, # list[str]
-    y=y_arr,                   # np.ndarray (n_samples,)
+    X=X_arr,                     # np.ndarray (n_samples, n_features)
+    feature_names=feature_cols,  # list[str]
+    y=y_arr,                     # np.ndarray (n_samples,)
+)
+
+or
+
+store = PipelineData.from_frame(
+    X,                           # pd.DataFrame with features
+    y=y_arr,                     # np.ndarray (n_samples,)
 )
 
 pipeline = H2MLPipeline(config=PipelineConfig(

@@ -232,9 +232,7 @@ class TestNoneFiltering:
     def test_result_only_contains_valid_stores(self, X, clean_y):
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES)
         for key, store in result.items():
-            assert isinstance(store, PipelineData), (
-                f"Store for '{key}' is not a PipelineData"
-            )
+            assert isinstance(store, PipelineData), f"Store for '{key}' is not a PipelineData"
 
     def test_empty_result_when_all_skipped(self):
         """
@@ -244,9 +242,7 @@ class TestNoneFiltering:
         y = np.ones(50) * 5.0  # uniform — winsorize always returns None
         X = np.ones((50, 3))
         # Only request winsorize-based transforms
-        result = build_transformed_stores(
-            X, y, ["f1", "f2", "f3"], transforms=["wincount", "winlog", "winsqrt"]
-        )
+        result = build_transformed_stores(X, y, ["f1", "f2", "f3"], transforms=["wincount", "winlog", "winsqrt"])
         assert result == {}
 
 
@@ -257,15 +253,11 @@ class TestNoneFiltering:
 
 class TestTransformsParameter:
     def test_subset_of_transforms(self, X, clean_y):
-        result = build_transformed_stores(
-            X, clean_y, FEATURE_NAMES, transforms=["count", "log"]
-        )
+        result = build_transformed_stores(X, clean_y, FEATURE_NAMES, transforms=["count", "log"])
         assert set(result.keys()).issubset({"count", "log"})
 
     def test_count_only(self, X, clean_y):
-        result = build_transformed_stores(
-            X, clean_y, FEATURE_NAMES, transforms=["count"]
-        )
+        result = build_transformed_stores(X, clean_y, FEATURE_NAMES, transforms=["count"])
         assert list(result.keys()) == ["count"]
 
     def test_all_transforms_when_none(self, X, clean_y):
@@ -277,9 +269,7 @@ class TestTransformsParameter:
 
     def test_unknown_transform_raises_key_error(self, X, clean_y):
         with pytest.raises(KeyError, match="unknown_transform"):
-            build_transformed_stores(
-                X, clean_y, FEATURE_NAMES, transforms=["count", "unknown_transform"]
-            )
+            build_transformed_stores(X, clean_y, FEATURE_NAMES, transforms=["count", "unknown_transform"])
 
     def test_empty_transforms_list_returns_empty_dict(self, X, clean_y):
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES, transforms=[])
@@ -296,9 +286,7 @@ class TestPipelineDataIntegrity:
         """PipelineData.__post_init__ validates shape — should not raise."""
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES)
         for name, store in result.items():
-            assert store.X.shape[1] == len(store.feature_names), (
-                f"Shape mismatch in store '{name}'"
-            )
+            assert store.X.shape[1] == len(store.feature_names), f"Shape mismatch in store '{name}'"
 
     def test_y_length_matches_n_samples(self, X, clean_y):
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES)
@@ -315,6 +303,4 @@ class TestPipelineDataIntegrity:
         result = build_transformed_stores(X, clean_y, FEATURE_NAMES)
         for name, store in result.items():
             df = store.to_frame()
-            assert list(df.columns) == FEATURE_NAMES, (
-                f"Column mismatch in store '{name}'"
-            )
+            assert list(df.columns) == FEATURE_NAMES, f"Column mismatch in store '{name}'"

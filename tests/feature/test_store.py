@@ -106,16 +106,12 @@ class TestConstruction:
     def test_mismatched_y_true_rows_raises(self):
         X = np.ones((10, 2))
         with pytest.raises(ValueError, match="y_true has 7 rows"):
-            PipelineData(
-                X=X, feature_names=["a", "b"], y=np.zeros(10), y_true=np.zeros(7)
-            )
+            PipelineData(X=X, feature_names=["a", "b"], y=np.zeros(10), y_true=np.zeros(7))
 
     def test_mismatched_coords_rows_raises(self):
         X = np.ones((10, 2))
         with pytest.raises(ValueError, match="coords has 6 rows"):
-            PipelineData(
-                X=X, feature_names=["a", "b"], y=np.zeros(10), coords=np.zeros((6, 2))
-            )
+            PipelineData(X=X, feature_names=["a", "b"], y=np.zeros(10), coords=np.zeros((6, 2)))
 
     def test_n_samples_property(self, store):
         assert store.n_samples == store.X.shape[0]
@@ -285,9 +281,7 @@ class TestCoords:
 
     def test_coords_stored_correctly(self, store):
         coords = self._make_coords(store.n_samples)
-        s = PipelineData(
-            X=store.X, feature_names=store.feature_names, y=store.y, coords=coords
-        )
+        s = PipelineData(X=store.X, feature_names=store.feature_names, y=store.y, coords=coords)
         np.testing.assert_array_equal(s.coords, coords)
 
     def test_coords_none_by_default(self, store):
@@ -322,9 +316,7 @@ class TestCoords:
 
     def test_select_preserves_coords(self, store):
         coords = self._make_coords(store.n_samples)
-        s = PipelineData(
-            X=store.X, feature_names=store.feature_names, y=store.y, coords=coords
-        )
+        s = PipelineData(X=store.X, feature_names=store.feature_names, y=store.y, coords=coords)
         reduced = s.select(["feat_a", "feat_c"])
         np.testing.assert_array_equal(reduced.coords, coords)
 

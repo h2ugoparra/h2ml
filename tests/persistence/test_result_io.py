@@ -274,9 +274,7 @@ class TestPipelineDataRoundTrip:
         result.features.y_true = rng.standard_normal(50).astype(np.float32)
         save_result(result, tmp_path / "run")
         loaded = load_result(tmp_path / "run")
-        np.testing.assert_array_almost_equal(
-            loaded.features.y_true, result.features.y_true
-        )
+        np.testing.assert_array_almost_equal(loaded.features.y_true, result.features.y_true)
 
     def test_y_true_none_when_absent(self, tmp_path):
         result = _full_result()

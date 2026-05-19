@@ -99,9 +99,7 @@ class TestRunStudy:
 
     def test_returns_optuna_study_regression(self, reg_data):
         X, y = reg_data
-        study = run_study(
-            "RandomForestRegressor", X, y, task="regression", n_trials=3, n_splits=2
-        )
+        study = run_study("RandomForestRegressor", X, y, task="regression", n_trials=3, n_splits=2)
         assert isinstance(study, optuna.Study)
 
     def test_best_params_is_non_empty_dict(self, clf_data):
@@ -144,9 +142,7 @@ class TestRunStudy:
     def test_regression_default_metric_is_r2(self, reg_data):
         """Default regression metric is R², which can range from -∞ to 1."""
         X, y = reg_data
-        study = run_study(
-            "RandomForestRegressor", X, y, task="regression", n_trials=3, n_splits=2
-        )
+        study = run_study("RandomForestRegressor", X, y, task="regression", n_trials=3, n_splits=2)
         assert study.best_value <= 1.0
 
     def test_study_direction_is_maximize(self, clf_data):
@@ -555,9 +551,7 @@ class TestBuildObjective:
         from sklearn.ensemble import RandomForestClassifier
 
         with pytest.raises(ValueError, match="param_fn"):
-            ModelEntry(
-                model_cls=RandomForestClassifier, param_fn=None, opt_enabled=True
-            )
+            ModelEntry(model_cls=RandomForestClassifier, param_fn=None, opt_enabled=True)
 
 
 # ---------------------------------------------------------------------------
@@ -822,9 +816,7 @@ class TestSpatialCV:
         rng = np.random.default_rng(5)
         return rng.standard_normal((self.N, 4)), rng.standard_normal(self.N)
 
-    def test_build_objective_with_coords_returns_callable(
-        self, small_clf_data, spatial_coords
-    ):
+    def test_build_objective_with_coords_returns_callable(self, small_clf_data, spatial_coords):
         X, y = small_clf_data
         obj = _build_objective(
             _fast_clf_entry(),
@@ -839,9 +831,7 @@ class TestSpatialCV:
         )
         assert callable(obj)
 
-    def test_build_objective_with_coords_returns_float(
-        self, small_clf_data, spatial_coords
-    ):
+    def test_build_objective_with_coords_returns_float(self, small_clf_data, spatial_coords):
         X, y = small_clf_data
         study = optuna.create_study(direction="maximize")
         study.optimize(
@@ -860,9 +850,7 @@ class TestSpatialCV:
         )
         assert isinstance(study.best_value, float)
 
-    def test_spatial_splitter_instantiated_when_coords_provided(
-        self, small_clf_data, spatial_coords
-    ):
+    def test_spatial_splitter_instantiated_when_coords_provided(self, small_clf_data, spatial_coords):
         from unittest.mock import patch
 
         X, y = small_clf_data
@@ -928,9 +916,7 @@ class TestSpatialCV:
                 score_fn=_score_auc,
                 coords=None,
             )
-        mock_cls.assert_called_once_with(
-            n_splits=n_splits, shuffle=True, random_state=42
-        )
+        mock_cls.assert_called_once_with(n_splits=n_splits, shuffle=True, random_state=42)
 
     def test_run_study_with_coords_completes(self, small_clf_data, spatial_coords):
         X, y = small_clf_data
@@ -947,9 +933,7 @@ class TestSpatialCV:
         assert isinstance(study, optuna.Study)
         assert isinstance(study.best_value, float)
 
-    def test_run_study_regression_with_coords_completes(
-        self, small_reg_data, spatial_coords
-    ):
+    def test_run_study_regression_with_coords_completes(self, small_reg_data, spatial_coords):
         X, y = small_reg_data
         study = run_study(
             "RandomForestRegressor",

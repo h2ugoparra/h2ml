@@ -86,16 +86,10 @@ def _mock_shap(selected: Optional[list[str]] = None, use_oof: bool = True):
     or get_shap_values when use_oof=False.
     """
     selected = selected or ["feat_a", "feat_c", "feat_e"]
-    fake_importance = pd.Series(
-        [0.5, 0.4, 0.3, 0.2, 0.1], index=FEATURE_NAMES
-    ).sort_values(ascending=False)
+    fake_importance = pd.Series([0.5, 0.4, 0.3, 0.2, 0.1], index=FEATURE_NAMES).sort_values(ascending=False)
     fake_shap_arr = np.ones((100, 5))
 
-    shap_target = (
-        "h2ml.features.selector.get_oof_shap_values"
-        if use_oof
-        else "h2ml.features.selector.get_shap_values"
-    )
+    shap_target = "h2ml.features.selector.get_oof_shap_values" if use_oof else "h2ml.features.selector.get_shap_values"
     patch_shap = patch(shap_target, return_value=(fake_shap_arr, fake_importance))
     patch_corr = patch(
         "h2ml.features.selector.remove_correlated_features",
@@ -207,17 +201,12 @@ class TestFit:
 
     def test_fit_passes_corr_threshold(self, clf_step, store):
         """corr_threshold should be forwarded to remove_correlated_features."""
-        selector = FeatureSelector(
-            clf_step, TaskType.CLASSIFICATION, corr_threshold=0.5
-        )
+        selector = FeatureSelector(clf_step, TaskType.CLASSIFICATION, corr_threshold=0.5)
         patch_shap, patch_corr = _mock_shap()
         with patch_shap, patch_corr as mock_corr:
             selector.fit(store)
             _, call_kwargs = mock_corr.call_args
-            assert (
-                call_kwargs.get("corr_threshold") == 0.5
-                or mock_corr.call_args[0][2] == 0.5
-            )  # positional fallback
+            assert call_kwargs.get("corr_threshold") == 0.5 or mock_corr.call_args[0][2] == 0.5  # positional fallback
 
     def test_fit_calls_oof_shap_by_default(self, clf_step, store):
         """Default use_oof=True should call get_oof_shap_values with step=self.step."""
@@ -389,9 +378,7 @@ class TestRepr:
 
 
 class TestMinFeatures:
-    def _make_selector(
-        self, clf_step, min_features: int, selected: list[str]
-    ) -> FeatureSelector:
+    def _make_selector(self, clf_step, min_features: int, selected: list[str]) -> FeatureSelector:
         """Build a selector whose corr filter would return `selected`, then fit with mocks."""
         selector = FeatureSelector(
             clf_step,
@@ -425,16 +412,12 @@ class TestMinFeatures:
     def test_order_preserved_by_importance(self, clf_step):
         """Selected features maintain importance order after restoration."""
         sel = self._make_selector(clf_step, min_features=3, selected=["feat_a"])
-        expected_order = [
-            f for f in sel.feature_importance_.index if f in set(sel.selected_features_)
-        ]
+        expected_order = [f for f in sel.feature_importance_.index if f in set(sel.selected_features_)]
         assert sel.selected_features_ == expected_order
 
     def test_no_restoration_when_already_above_min(self, clf_step):
         """When corr filter keeps enough features, no restoration occurs."""
-        sel = self._make_selector(
-            clf_step, min_features=2, selected=["feat_a", "feat_b", "feat_c"]
-        )
+        sel = self._make_selector(clf_step, min_features=2, selected=["feat_a", "feat_b", "feat_c"])
         assert len(sel.selected_features_) == 3
 
     def test_min_features_exceeds_total_features(self, clf_step):

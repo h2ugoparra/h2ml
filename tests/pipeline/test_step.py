@@ -90,9 +90,7 @@ class TestCheckFitted:
         with pytest.raises(RuntimeError, match="not been fitted"):
             rf_classifier_step.transform(X)
 
-    def test_predict_proba_raises_before_fit(
-        self, rf_classifier_step, classification_data
-    ):
+    def test_predict_proba_raises_before_fit(self, rf_classifier_step, classification_data):
         X, _ = classification_data
         with pytest.raises(RuntimeError, match="not been fitted"):
             rf_classifier_step.predict_proba(X)
@@ -119,9 +117,7 @@ class TestPredict:
         preds = fitted_rf_regressor.predict(X)
         assert preds.shape == (100,)
 
-    def test_predict_regressor_is_continuous(
-        self, fitted_rf_regressor, regression_data
-    ):
+    def test_predict_regressor_is_continuous(self, fitted_rf_regressor, regression_data):
         X, _ = regression_data
         preds = fitted_rf_regressor.predict(X)
         assert preds.dtype in [np.float32, np.float64]
@@ -133,9 +129,7 @@ class TestPredict:
 
 
 class TestPredictProba:
-    def test_predict_proba_classifier_shape(
-        self, fitted_rf_classifier, classification_data
-    ):
+    def test_predict_proba_classifier_shape(self, fitted_rf_classifier, classification_data):
         X, _ = classification_data
         proba = fitted_rf_classifier.predict_proba(X)
         assert proba.shape == (100, 2)
@@ -145,9 +139,7 @@ class TestPredictProba:
         proba = fitted_rf_classifier.predict_proba(X)
         np.testing.assert_allclose(proba.sum(axis=1), np.ones(100), atol=1e-6)
 
-    def test_predict_proba_raises_on_regressor(
-        self, fitted_rf_regressor, regression_data
-    ):
+    def test_predict_proba_raises_on_regressor(self, fitted_rf_regressor, regression_data):
         X, _ = regression_data
         with pytest.raises(TypeError, match="only available for classifiers"):
             fitted_rf_regressor.predict_proba(X)
@@ -159,23 +151,17 @@ class TestPredictProba:
 
 
 class TestTransform:
-    def test_transform_classifier_passthrough(
-        self, fitted_rf_classifier, classification_data
-    ):
+    def test_transform_classifier_passthrough(self, fitted_rf_classifier, classification_data):
         X, _ = classification_data
         result = fitted_rf_classifier.transform(X)
         np.testing.assert_array_equal(result, X)
 
-    def test_transform_regressor_passthrough(
-        self, fitted_rf_regressor, regression_data
-    ):
+    def test_transform_regressor_passthrough(self, fitted_rf_regressor, regression_data):
         X, _ = regression_data
         result = fitted_rf_regressor.transform(X)
         np.testing.assert_array_equal(result, X)
 
-    def test_transform_preprocessor_changes_data(
-        self, scaler_step, classification_data
-    ):
+    def test_transform_preprocessor_changes_data(self, scaler_step, classification_data):
         X, y = classification_data
         scaler_step.fit(X, y)
         result = scaler_step.transform(X)

@@ -36,9 +36,7 @@ class TestModelEntry:
 
     def _entry_with_param_fn(self, **kwargs) -> ModelEntry:
         """Minimal valid entry: param_fn provided so opt_enabled=True is legal."""
-        return ModelEntry(
-            model_cls=RandomForestClassifier, param_fn=lambda t: {}, **kwargs
-        )
+        return ModelEntry(model_cls=RandomForestClassifier, param_fn=lambda t: {}, **kwargs)
 
     def test_requires_scaling_false_by_default(self):
         entry = self._entry_with_param_fn()
@@ -55,15 +53,11 @@ class TestModelEntry:
     def test_opt_enabled_true_without_param_fn_raises(self):
         """opt_enabled=True with param_fn=None is an invalid combination."""
         with pytest.raises(ValueError, match="param_fn"):
-            ModelEntry(
-                model_cls=RandomForestClassifier, opt_enabled=True, param_fn=None
-            )
+            ModelEntry(model_cls=RandomForestClassifier, opt_enabled=True, param_fn=None)
 
     def test_opt_enabled_false_without_param_fn_is_valid(self):
         """opt_enabled=False with param_fn=None is the legitimate disabled state."""
-        entry = ModelEntry(
-            model_cls=LogisticRegression, opt_enabled=False, param_fn=None
-        )
+        entry = ModelEntry(model_cls=LogisticRegression, opt_enabled=False, param_fn=None)
         assert entry.opt_enabled is False
 
 

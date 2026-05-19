@@ -139,9 +139,7 @@ class TestSpatialIntegrity:
         rng = np.random.default_rng(1)
         # 4 clusters, 20 samples each — clusters far apart so each maps to one block
         cluster_centers = np.array([[0.1, 0.1], [0.9, 0.1], [0.1, 0.9], [0.9, 0.9]])
-        coords = np.vstack(
-            [center + rng.normal(0, 0.005, size=(20, 2)) for center in cluster_centers]
-        )  # shape (80, 2)
+        coords = np.vstack([center + rng.normal(0, 0.005, size=(20, 2)) for center in cluster_centers])  # shape (80, 2)
         splitter = SpatialBlockSplitter(coords, n_splits=4, n_blocks_per_fold=1)
         fold_assignments = splitter._fold_of_sample
 
@@ -184,8 +182,7 @@ class TestSpatialIntegrity:
             # One group should dominate (at least 90% from one hemisphere)
             total = len(test_idx)
             assert max(north_in_test, south_in_test) / total >= 0.9, (
-                f"Test fold is not spatially homogeneous: "
-                f"{north_in_test} north, {south_in_test} south out of {total}"
+                f"Test fold is not spatially homogeneous: {north_in_test} north, {south_in_test} south out of {total}"
             )
 
 

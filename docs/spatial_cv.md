@@ -25,7 +25,7 @@ The splitter is built **once** in step 1 and reused across all steps and HPO rep
 
 ### Block splitter (`spatial_cv_method="block"`)
 
-Quantile-grid blocking: divides the spatial domain into a regular grid of blocks and assigns blocks to folds round-robin. Fast, no clustering, good default.
+Quantile-grid blocking: divides the spatial domain into a regular grid of blocks and assigns blocks to folds round-robin. Fast, no clustering.
 
 ```python
 config = PipelineConfig(
@@ -75,11 +75,13 @@ config = PipelineConfig(
 ## Choosing a method
 
 Use **block** when:
+
 - Data is large (> 10k samples) — block splitting is O(n) vs O(n²) for AHC
 - You want a fast, interpretable split with no tuning
 - Spatial distribution is roughly uniform
 
 Use **spcv** when:
+
 - Spatial autocorrelation is the primary concern
 - You have covariate and target structure you want folds to respect
 - Dataset is small enough for AHC (or approximate AHC handles the scale)

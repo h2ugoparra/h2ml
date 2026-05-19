@@ -213,9 +213,7 @@ class TestRepr:
 
 
 class TestBuildFinalModel:
-    def _run_pipeline_with_lr(
-        self, seed: int = 0
-    ) -> tuple[PipelineResult, PipelineData]:
+    def _run_pipeline_with_lr(self, seed: int = 0) -> tuple[PipelineResult, PipelineData]:
         """Helper: run a minimal LR pipeline (no custom name — registry name required)."""
         from sklearn.linear_model import LogisticRegression
 
@@ -228,9 +226,7 @@ class TestBuildFinalModel:
         # No custom name — defaults to "LogisticRegression" matching the registry key
         pipeline = H2MLPipeline(
             models=[make_classifier(LogisticRegression(max_iter=200, random_state=42))],
-            config=PipelineConfig(
-                task_type=TaskType.CLASSIFICATION, n_splits=3, n_trials=1
-            ),
+            config=PipelineConfig(task_type=TaskType.CLASSIFICATION, n_splits=3, n_trials=1),
         )
         selected = [f"f{i}" for i in range(3)]
         mock_sel = MagicMock(spec=FeatureSelector)
@@ -309,21 +305,15 @@ def _make_cv_result(task_type: TaskType, n: int = 50, seed: int = 0) -> CVResult
 
 class TestConformalCalibration:
     def test_threshold_returns_float(self):
-        cal = ConformalCalibration(
-            scores=np.linspace(0, 1, 100), n=100, task_type=TaskType.REGRESSION
-        )
+        cal = ConformalCalibration(scores=np.linspace(0, 1, 100), n=100, task_type=TaskType.REGRESSION)
         assert isinstance(cal.threshold(0.10), float)
 
     def test_threshold_increases_with_coverage(self):
-        cal = ConformalCalibration(
-            scores=np.linspace(0, 1, 100), n=100, task_type=TaskType.REGRESSION
-        )
+        cal = ConformalCalibration(scores=np.linspace(0, 1, 100), n=100, task_type=TaskType.REGRESSION)
         assert cal.threshold(0.20) <= cal.threshold(0.05)
 
     def test_threshold_clamps_to_max_score(self):
-        cal = ConformalCalibration(
-            scores=np.linspace(0, 1, 10), n=10, task_type=TaskType.REGRESSION
-        )
+        cal = ConformalCalibration(scores=np.linspace(0, 1, 10), n=10, task_type=TaskType.REGRESSION)
         # alpha=0 → should return the maximum score (clamped at level=1.0)
         assert cal.threshold(0.0) == pytest.approx(1.0)
 
@@ -371,35 +361,27 @@ class TestConformalCalibration:
 
 class TestPredictInterval:
     def test_returns_lower_upper_arrays(self, reg_model, X):
-        cal = ConformalCalibration(
-            scores=np.linspace(0, 1, 50), n=50, task_type=TaskType.REGRESSION
-        )
+        cal = ConformalCalibration(scores=np.linspace(0, 1, 50), n=50, task_type=TaskType.REGRESSION)
         reg_model.conformal = cal
         lower, upper = reg_model.predict_interval(X)
         assert lower.shape == (N,)
         assert upper.shape == (N,)
 
     def test_upper_greater_than_lower(self, reg_model, X):
-        cal = ConformalCalibration(
-            scores=np.linspace(0, 1, 50), n=50, task_type=TaskType.REGRESSION
-        )
+        cal = ConformalCalibration(scores=np.linspace(0, 1, 50), n=50, task_type=TaskType.REGRESSION)
         reg_model.conformal = cal
         lower, upper = reg_model.predict_interval(X)
         assert np.all(upper >= lower)
 
     def test_smaller_alpha_gives_wider_interval(self, reg_model, X):
-        cal = ConformalCalibration(
-            scores=np.linspace(0, 2, 100), n=100, task_type=TaskType.REGRESSION
-        )
+        cal = ConformalCalibration(scores=np.linspace(0, 2, 100), n=100, task_type=TaskType.REGRESSION)
         reg_model.conformal = cal
         l90, u90 = reg_model.predict_interval(X, alpha=0.10)
         l80, u80 = reg_model.predict_interval(X, alpha=0.20)
         assert np.all((u90 - l90) >= (u80 - l80))
 
     def test_raises_for_classification_model(self, clf_model, X):
-        clf_model.conformal = ConformalCalibration(
-            scores=np.array([0.1, 0.2]), n=2, task_type=TaskType.CLASSIFICATION
-        )
+        clf_model.conformal = ConformalCalibration(scores=np.array([0.1, 0.2]), n=2, task_type=TaskType.CLASSIFICATION)
         with pytest.raises(ValueError, match="regression"):
             clf_model.predict_interval(X)
 
@@ -411,9 +393,7 @@ class TestPredictInterval:
 
 class TestPredictSet:
     def test_returns_list_of_arrays(self, clf_model, X):
-        cal = ConformalCalibration(
-            scores=np.linspace(0, 1, 50), n=50, task_type=TaskType.CLASSIFICATION
-        )
+        cal = ConformalCalibration(scores=np.linspace(0, 1, 50), n=50, task_type=TaskType.CLASSIFICATION)
         clf_model.conformal = cal
         sets = clf_model.predict_set(X)
         assert len(sets) == N
@@ -421,26 +401,20 @@ class TestPredictSet:
 
     def test_high_coverage_includes_both_classes(self, clf_model, X):
         # alpha=0 → q=1.0, every sample gets {0, 1}
-        cal = ConformalCalibration(
-            scores=np.ones(100), n=100, task_type=TaskType.CLASSIFICATION
-        )
+        cal = ConformalCalibration(scores=np.ones(100), n=100, task_type=TaskType.CLASSIFICATION)
         clf_model.conformal = cal
         sets = clf_model.predict_set(X, alpha=0.0)
         assert all(len(s) == 2 for s in sets)
 
     def test_labels_are_subset_of_0_1(self, clf_model, X):
-        cal = ConformalCalibration(
-            scores=np.linspace(0, 1, 50), n=50, task_type=TaskType.CLASSIFICATION
-        )
+        cal = ConformalCalibration(scores=np.linspace(0, 1, 50), n=50, task_type=TaskType.CLASSIFICATION)
         clf_model.conformal = cal
         sets = clf_model.predict_set(X)
         for s in sets:
             assert set(s.tolist()).issubset({0, 1})
 
     def test_raises_for_regression_model(self, reg_model, X):
-        reg_model.conformal = ConformalCalibration(
-            scores=np.array([0.1, 0.2]), n=2, task_type=TaskType.REGRESSION
-        )
+        reg_model.conformal = ConformalCalibration(scores=np.array([0.1, 0.2]), n=2, task_type=TaskType.REGRESSION)
         with pytest.raises(ValueError, match="classification"):
             reg_model.predict_set(X)
 
@@ -463,9 +437,7 @@ class TestBuildFinalModelConformal:
         )
         pipeline = H2MLPipeline(
             models=[make_classifier(LogisticRegression(max_iter=200, random_state=42))],
-            config=PipelineConfig(
-                task_type=TaskType.CLASSIFICATION, n_splits=3, n_trials=1
-            ),
+            config=PipelineConfig(task_type=TaskType.CLASSIFICATION, n_splits=3, n_trials=1),
         )
         selected = [f"f{i}" for i in range(3)]
         mock_sel = MagicMock(spec=FeatureSelector)
@@ -492,9 +464,7 @@ class TestBuildFinalModelConformal:
         )
         pipeline = H2MLPipeline(
             models=[make_classifier(LogisticRegression(max_iter=200, random_state=42))],
-            config=PipelineConfig(
-                task_type=TaskType.CLASSIFICATION, n_splits=3, n_trials=1
-            ),
+            config=PipelineConfig(task_type=TaskType.CLASSIFICATION, n_splits=3, n_trials=1),
         )
         selected = [f"f{i}" for i in range(3)]
         mock_sel = MagicMock(spec=FeatureSelector)
@@ -653,21 +623,31 @@ def _make_indexed_cv_result(task_type: TaskType, n: int, seed: int = 0) -> CVRes
         size = len(test_idx)
         if task_type == TaskType.REGRESSION:
             return FoldResult(
-                fold_id=fold_id, model_name="M",
-                y_train=np.zeros(len(train_idx)), y_test=rng.uniform(1, 8, size),
-                y_pred_train=np.zeros(len(train_idx)), y_pred_test=rng.uniform(1, 8, size),
-                test_idx=test_idx, train_idx=train_idx,
+                fold_id=fold_id,
+                model_name="M",
+                y_train=np.zeros(len(train_idx)),
+                y_test=rng.uniform(1, 8, size),
+                y_pred_train=np.zeros(len(train_idx)),
+                y_pred_test=rng.uniform(1, 8, size),
+                test_idx=test_idx,
+                train_idx=train_idx,
             )
         return FoldResult(
-            fold_id=fold_id, model_name="M",
-            y_train=np.zeros(len(train_idx)), y_test=rng.integers(0, 2, size).astype(float),
-            y_pred_train=np.zeros(len(train_idx)), y_pred_test=rng.integers(0, 2, size).astype(float),
-            y_prob_train=rng.uniform(0, 1, len(train_idx)), y_prob_test=rng.uniform(0, 1, size),
-            test_idx=test_idx, train_idx=train_idx,
+            fold_id=fold_id,
+            model_name="M",
+            y_train=np.zeros(len(train_idx)),
+            y_test=rng.integers(0, 2, size).astype(float),
+            y_pred_train=np.zeros(len(train_idx)),
+            y_pred_test=rng.integers(0, 2, size).astype(float),
+            y_prob_train=rng.uniform(0, 1, len(train_idx)),
+            y_prob_test=rng.uniform(0, 1, size),
+            test_idx=test_idx,
+            train_idx=train_idx,
         )
 
     return CVResult(
-        model_name="M", task_type=task_type,
+        model_name="M",
+        task_type=task_type,
         folds=[make_fold(0, idx0, idx1), make_fold(1, idx1, idx0)],
     )
 

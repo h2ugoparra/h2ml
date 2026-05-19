@@ -60,12 +60,12 @@ def _predict_single(
             # q is in probability units (nonconformity = 1 - p(true_class) ∈ [0,1]),
             # so p ± q is a meaningful calibration band. Clipped to [0, 1].
             q = float(model.conformal.threshold(alpha))
-            lower_series = pl.Series(
-                f"{col_name}_pi_lower", [None] * n, dtype=pl.Float32
-            ).scatter(idx, np.clip(preds - q, 0.0, 1.0).astype(np.float32))
-            upper_series = pl.Series(
-                f"{col_name}_pi_upper", [None] * n, dtype=pl.Float32
-            ).scatter(idx, np.clip(preds + q, 0.0, 1.0).astype(np.float32))
+            lower_series = pl.Series(f"{col_name}_pi_lower", [None] * n, dtype=pl.Float32).scatter(
+                idx, np.clip(preds - q, 0.0, 1.0).astype(np.float32)
+            )
+            upper_series = pl.Series(f"{col_name}_pi_upper", [None] * n, dtype=pl.Float32).scatter(
+                idx, np.clip(preds + q, 0.0, 1.0).astype(np.float32)
+            )
             return pred_series, lower_series, upper_series
         return (pred_series,)
 

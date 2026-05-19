@@ -167,18 +167,14 @@ class TestStage1Blocks:
         """Samples within a tiny spatial cluster should all share the same block ID."""
         rng = np.random.default_rng(0)
         centers = np.array([[0.1, 0.1], [0.9, 0.1], [0.1, 0.9], [0.9, 0.9]])
-        coords = np.vstack(
-            [center + rng.normal(0, 0.002, (25, 2)) for center in centers]
-        )
+        coords = np.vstack([center + rng.normal(0, 0.002, (25, 2)) for center in centers])
         X = rng.standard_normal((100, 3))
         y = rng.standard_normal(100)
         # threshold small enough to keep tight clusters intact
         sp = SPCVSplitter(coords, X, y, n_splits=4, threshold=0.05)
         for i in range(4):
             cluster_blocks = sp.block_id_[i * 25 : (i + 1) * 25]
-            assert len(np.unique(cluster_blocks)) == 1, (
-                f"Cluster {i} spans blocks: {np.unique(cluster_blocks)}"
-            )
+            assert len(np.unique(cluster_blocks)) == 1, f"Cluster {i} spans blocks: {np.unique(cluster_blocks)}"
 
 
 # ---------------------------------------------------------------------------
