@@ -67,8 +67,231 @@ class ConformalCalibration:
         Args:
             alpha: Miscoverage level (e.g. 0.10 for 90% coverage).
         """
-        level = min(np.ceil((1 - alpha) * (self.n + 1)) / self.n, 1.0)
-        return float(np.quantile(self.scores, level))
+        return _conformal_quantile(self.scores, alpha)
+
+
+def _conformal_quantile(scores: np.ndarray, alpha: float) -> float:
+    """Return the conformal quantile giving ≥ 1-alpha coverage."""
+    n = len(scores)
+    level = min(np.ceil((1 - alpha) * (n + 1)) / n, 1.0)
+    return float(np.quantile(scores, level))
+
+
+def _time_bin(times: np.ndarray, resolution: str) -> np.ndarray:
+    """Convert dates to integer time bins.
+
+    resolution="month"  → 1–12
+    resolution="season" → 0=DJF, 1=MAM, 2=JJA, 3=SON
+    """
+    t = np.asarray(times, dtype="datetime64[D]")
+    month = (t.astype("datetime64[M]").astype(int) % 12) + 1
+    if resolution == "month":
+        return month.astype(np.int8)
+    return ((month % 12) // 3).astype(np.int8)
+
+
+def _encode_times(times: np.ndarray) -> np.ndarray:
+    """
+    Encode a date array to (sin_doy, cos_doy, year) columns.
+
+    sin/cos capture seasonal position circularly (Dec is adjacent to Jan).
+    year is passed raw so StandardScaler normalises it relative to the training
+    period, capturing inter-annual drift proportionally.
+
+    Args:
+        times: (n,) array of datetime64[D] or YYYY-MM-DD strings.
+
+    Returns:
+        (n, 3) float array — columns [sin_doy, cos_doy, year].
+    """
+    t = np.asarray(times, dtype="datetime64[D]")
+    year = (t.astype("datetime64[Y]").astype(int) + 1970).astype(float)
+    doy = (t - t.astype("datetime64[Y]")).astype(int) + 1
+    tau = 2.0 * np.pi * doy / 365.25
+    return np.column_stack([np.sin(tau), np.cos(tau), year])
+
+
+def _build_context(
+    coords: Optional[np.ndarray],
+    times: Optional[np.ndarray],
+) -> np.ndarray:
+    """Stack available spatial and temporal context into one matrix."""
+    parts = []
+    if coords is not None:
+        parts.append(np.asarray(coords, dtype=float))
+    if times is not None:
+        parts.append(_encode_times(times))
+    if not parts:
+        raise ValueError("At least one of coords or times must be provided.")
+    return np.hstack(parts)
+
+
+@dataclass
+class LocalConformalCalibration:
+    """
+    Block-local conformal calibration in combined space-time.
+
+    Threshold lookup uses three levels of fallback:
+      1. Compound cell (spatial block × time bin) — finest granularity.
+      2. Spatial block (all time bins pooled) — if compound cell has < min_compound_n samples.
+      3. Global fallback — if spatial block has < min_block_n samples.
+
+    At inference each query point is assigned to the spatial block of its nearest OOF
+    training sample via k-NN in a jointly normalised context space. The time bin is
+    derived from the query point's own date (not the nearest OOF sample's date), so
+    the seasonal threshold reflects when the prediction is being made.
+
+    Nearest-OOF-sample lookup (not centroid) is used so that non-convex or elongated
+    AHC clusters (SPCVSplitter) are handled correctly.
+
+    Attributes
+    ----------
+    scores_by_block:     Sorted nonconformity scores per spatial block.
+                         Index i matches oof_block_indices == i.
+    oof_context_scaled:  (n_oof, D) OOF context already normalised by context_mean/std.
+                         Used as the k-NN index at inference.
+    oof_block_indices:   (n_oof,) int index into scores_by_block per OOF sample.
+    context_mean:        (D,) scaler mean — applied to normalise query context.
+    context_std:         (D,) scaler std.
+    fallback_scores:     Global sorted scores — level-3 fallback.
+    metric:              "euclidean" or "haversine". Haversine only applies when
+                         has_coords=True, has_times=False, and D==2.
+    min_block_n:         Minimum OOF samples a spatial block needs to use its own
+                         scores (level 2). Smaller blocks fall to global (level 3).
+    has_coords:          Whether spatial coordinates were included at calibration time.
+                         Coords passed at inference are silently ignored if False.
+    has_times:           Whether temporal context was included at calibration time.
+                         Times passed at inference are silently ignored if False.
+    compound_scores:     {(block_idx, time_bin): sorted np.ndarray} — level-1 lookup.
+                         None when times were absent at calibration.
+    time_bin_resolution: "month" (bins 1–12) or "season" (0=DJF…3=SON).
+                         None when times were absent at calibration.
+    min_compound_n:      Minimum OOF samples a compound cell needs to be used (level 1).
+                         Lower than min_block_n because compound cells are smaller by
+                         construction (n_blocks × n_bins cells share the same total count).
+    """
+
+    scores_by_block: list[np.ndarray]
+    oof_context_scaled: np.ndarray
+    oof_block_indices: np.ndarray
+    context_mean: np.ndarray
+    context_std: np.ndarray
+    fallback_scores: np.ndarray
+    metric: str
+    min_block_n: int = 20
+    has_coords: bool = True   # whether coords were included at calibration time
+    has_times: bool = False   # whether times were included at calibration time
+    compound_scores: Optional[dict] = field(default=None)
+    # {(block_idx, time_bin): sorted np.ndarray} — None when times absent at calibration
+    time_bin_resolution: Optional[str] = field(default=None)
+    # "month" or "season"; None when times absent at calibration
+    min_compound_n: int = 5
+    # Lower threshold for compound (spatial × time) cells — these are smaller by
+    # construction (n_blocks × n_bins cells sharing the same total sample count),
+    # so a tighter minimum than min_block_n is appropriate.
+
+    def threshold(
+        self,
+        alpha: float,
+        coords: Optional[np.ndarray] = None,
+        times: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """
+        Return per-sample nonconformity thresholds.
+
+        Only the context dimensions present at calibration time are used —
+        extra dimensions silently dropped so scaler shapes always match (e.g.
+        times passed to a model built without store.times are ignored).
+
+        When times is provided and time_bin_resolution is set, each sample's
+        threshold is looked up from the compound (spatial block × time bin) cell
+        first, falling back through spatial block and global as needed.
+
+        Args:
+            alpha:  Miscoverage level (e.g. 0.10 → 90% coverage).
+            coords: (n_samples, 2) spatial coordinates. Degrees when metric="haversine".
+            times:  (n_samples,) datetime64[D] or YYYY-MM-DD strings.
+
+        Returns:
+            (n_samples,) float array of per-sample thresholds.
+        """
+        _coords = coords if self.has_coords else None
+        _times = times if self.has_times else None
+        context = _build_context(_coords, _times)
+
+        # Determine which columns of the stored scaler to use.
+        # The scaler was fitted on [coords (2 cols), times (3 cols)] in that order.
+        # When only a subset is available at inference, project to matching columns.
+        n_coord_cols = 2 if self.has_coords else 0
+        if self.has_times and _times is None:
+            # Times expected but not provided — use spatial subspace only for k-NN.
+            col_slice = slice(0, n_coord_cols)
+        elif not self.has_coords and _coords is None:
+            # Coords expected but not provided — use temporal subspace only.
+            col_slice = slice(n_coord_cols, None)
+        else:
+            col_slice = slice(None)
+
+        use_haversine = (
+            self.metric == "haversine"
+            and not self.has_times
+            and _times is None
+            and context.shape[1] == 2
+        )
+        if use_haversine:
+            context_scaled = np.deg2rad(context)
+            oof_ctx = self.oof_context_scaled
+        else:
+            mean = self.context_mean[col_slice]
+            std = self.context_std[col_slice]
+            context_scaled = (context - mean) / std
+            oof_ctx = self.oof_context_scaled[:, col_slice]
+
+        block_indices = self._nearest_block(context_scaled, oof_ctx, use_haversine)
+
+        time_bins = None
+        if self.has_times and times is not None and self.time_bin_resolution:
+            time_bins = _time_bin(times, self.time_bin_resolution)
+
+        return np.array([
+            self._block_threshold(
+                bi, alpha,
+                time_bin=None if time_bins is None else int(time_bins[i]),
+            )
+            for i, bi in enumerate(block_indices)
+        ])
+
+    def _nearest_block(
+        self, context_scaled: np.ndarray, oof_ctx: np.ndarray, use_haversine: bool
+    ) -> np.ndarray:
+        """Return block index of the nearest OOF training sample per query point."""
+        from sklearn.neighbors import NearestNeighbors
+        if use_haversine:
+            nn = NearestNeighbors(n_neighbors=1, metric="haversine", algorithm="ball_tree")
+        else:
+            nn = NearestNeighbors(n_neighbors=1, metric="euclidean")
+        nn.fit(oof_ctx)
+        nearest = nn.kneighbors(context_scaled, return_distance=False).ravel()
+        return self.oof_block_indices[nearest]
+
+    def _block_threshold(self, block_idx: int, alpha: float, time_bin: Optional[int] = None) -> float:
+        """Return threshold for one sample using the three-level fallback.
+
+        Level 1: compound cell (block_idx, time_bin) if ≥ min_compound_n samples.
+        Level 2: spatial block scores if ≥ min_block_n samples.
+        Level 3: global fallback_scores.
+        """
+        # Level 1 — compound (spatial block × time bin)
+        if self.compound_scores is not None and time_bin is not None:
+            cs = self.compound_scores.get((block_idx, time_bin))
+            if cs is not None and len(cs) >= self.min_compound_n:
+                return _conformal_quantile(cs, alpha)
+        # Level 2 — spatial block only
+        scores = self.scores_by_block[block_idx]
+        if len(scores) >= self.min_block_n:
+            return _conformal_quantile(scores, alpha)
+        # Level 3 — global fallback
+        return _conformal_quantile(self.fallback_scores, alpha)
 
 
 @dataclass
@@ -103,6 +326,8 @@ class FinalModel:
     best_params: Optional[dict] = field(default=None)
     conformal: Optional[ConformalCalibration] = field(default=None)
     y_transform: Optional[str] = None
+    local_conformal: Optional[LocalConformalCalibration] = field(default=None)
+    variogram: Optional[Any] = field(default=None)  # VariogramResult — imported lazily
 
     # ------------------------------------------------------------------
     # Inference
@@ -140,6 +365,8 @@ class FinalModel:
         self,
         X: pd.DataFrame | np.ndarray,
         alpha: float = 0.10,
+        coords: Optional[np.ndarray] = None,
+        times: Optional[np.ndarray] = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Conformal prediction interval for each sample (regression only).
@@ -148,12 +375,20 @@ class FinalModel:
         is the conformal threshold calibrated from out-of-fold residuals.
         Coverage is guaranteed to be ≥ 1-alpha in expectation.
 
+        When coords and/or times are provided and the model has a
+        LocalConformalCalibration, q varies per sample based on the nearest
+        spatial block's residual distribution, giving wider intervals in
+        high-error regions and narrower ones where the model is well calibrated.
+
         Note: if the pipeline used a y-transform, the interval is in the
         transformed space. Apply the inverse transform to the bounds if needed.
 
         Args:
-            X:     Input features (DataFrame or ndarray).
-            alpha: Miscoverage level. Default 0.10 → 90% prediction intervals.
+            X:      Input features (DataFrame or ndarray).
+            alpha:  Miscoverage level. Default 0.10 → 90% prediction intervals.
+            coords: (n_samples, 2) spatial coordinates. Enables local calibration.
+            times:  (n_samples,) datetime64[D] or YYYY-MM-DD strings. Enables
+                    temporal calibration.
 
         Returns:
             (lower, upper) as a pair of 1-D arrays.
@@ -166,13 +401,18 @@ class FinalModel:
                 "Rebuild FinalModel via result.build_final_model() after a full pipeline run."
             )
         y_hat = self.predict(X)
-        q = self.conformal.threshold(alpha)
+        if (coords is not None or times is not None) and self.local_conformal is not None:
+            q = self.local_conformal.threshold(alpha, coords=coords, times=times)
+        else:
+            q = self.conformal.threshold(alpha)
         return y_hat - q, y_hat + q
 
     def predict_set(
         self,
         X: pd.DataFrame | np.ndarray,
         alpha: float = 0.10,
+        coords: Optional[np.ndarray] = None,
+        times: Optional[np.ndarray] = None,
     ) -> list[np.ndarray]:
         """
         Conformal prediction set for each sample (classification only).
@@ -187,9 +427,14 @@ class FinalModel:
         Nonconformity score per class k: 1 - p_k. Class k is included in the
         set when its score does not exceed the calibrated threshold q.
 
+        When coords and/or times are provided and the model has a
+        LocalConformalCalibration, q varies per sample.
+
         Args:
-            X:     Input features (DataFrame or ndarray).
-            alpha: Miscoverage level. Default 0.10 → 90% coverage sets.
+            X:      Input features (DataFrame or ndarray).
+            alpha:  Miscoverage level. Default 0.10 → 90% coverage sets.
+            coords: (n_samples, 2) spatial coordinates. Enables local calibration.
+            times:  (n_samples,) datetime64[D] or YYYY-MM-DD strings.
 
         Returns:
             List of arrays of class labels, one per sample.
@@ -202,12 +447,16 @@ class FinalModel:
                 "Rebuild FinalModel via result.build_final_model() after a full pipeline run."
             )
         p = self.predict_proba(X)  # 1-D for binary, 2-D for multiclass
-        q = self.conformal.threshold(alpha)
         classes = self.estimator.classes_
+
+        if (coords is not None or times is not None) and self.local_conformal is not None:
+            q_arr = self.local_conformal.threshold(alpha, coords=coords, times=times)
+        else:
+            q_arr = np.full(len(p) if p.ndim == 1 else p.shape[0], self.conformal.threshold(alpha))
+
         sets = []
         if p.ndim == 1:
-            # Binary: p is positive-class probability; nonconformity for class 0 = p, for class 1 = 1-p
-            for pi in p:
+            for pi, q in zip(p, q_arr):
                 labels = []
                 if pi <= q:
                     labels.append(classes[0])
@@ -215,8 +464,7 @@ class FinalModel:
                     labels.append(classes[1])
                 sets.append(np.array(labels))
         else:
-            # Multiclass: nonconformity for class k = 1 - p_k
-            for row in p:
+            for row, q in zip(p, q_arr):
                 labels = [classes[k] for k in range(len(classes)) if 1 - row[k] <= q]
                 sets.append(np.array(labels))
         return sets
@@ -324,6 +572,167 @@ def _build_conformal_calibration(result, classes=None) -> Optional[ConformalCali
     )
 
 
+def _classification_scores(f: Any, classes: Optional[Any]) -> Optional[np.ndarray]:
+    """
+    Compute per-sample nonconformity scores for one classification fold.
+
+    Binary:     score = 1 - p(true_class)
+    Multiclass: score = 1 - p(true_class), looked up via classes array.
+
+    Returns None when the class mapping cannot be resolved (multiclass only).
+    """
+    from loguru import logger
+
+    if f.y_prob_test.ndim == 1:
+        return np.where(f.y_test == 1, 1.0 - f.y_prob_test, f.y_prob_test)
+
+    if classes is None:
+        logger.warning(
+            "Local conformal calibration skipped: multiclass folds require "
+            "estimator.classes_ to map labels to probability columns."
+        )
+        return None
+    label_to_idx = {c: i for i, c in enumerate(classes)}
+    try:
+        col_idx = np.array([label_to_idx[label] for label in f.y_test])
+    except KeyError as e:
+        logger.warning(
+            f"Local conformal calibration skipped: y_test contains label {e} "
+            "not found in estimator.classes_."
+        )
+        return None
+    return 1.0 - f.y_prob_test[np.arange(len(col_idx)), col_idx]
+
+
+def _build_local_conformal(
+    result: "PipelineResult",
+    coords: Optional[np.ndarray],
+    times: Optional[np.ndarray],
+    metric: str,
+    min_block_n: int = 20,
+    min_compound_n: int = 5,
+    classes: Optional[Any] = None,
+    time_bin_resolution: str = "month",
+) -> Optional[LocalConformalCalibration]:
+    """
+    Build a LocalConformalCalibration from OOF residuals.
+
+    Residuals are partitioned by spatial block (from splitter.block_id_) and,
+    when times are provided, additionally by time bin to form compound
+    (block × time_bin) cells.
+
+    Requires result.splitter to have a block_id_ attribute — set by both
+    SpatialBlockSplitter and SPCVSplitter. Returns None when the splitter is
+    absent (e.g. after PipelineResult.load()), is a plain KFold, or when fewer
+    than 2 spatial blocks are represented in the OOF data.
+
+    Args:
+        result:              PipelineResult with splitter and best_cv_result.
+        coords:              (n_samples, 2) spatial coordinates, or None.
+        times:               (n_samples,) dates as datetime64[D] or strings, or None.
+        metric:              "euclidean" or "haversine" for k-NN lookup.
+        min_block_n:         Minimum OOF samples for a spatial block to use its own
+                             scores (level 2 fallback).
+        min_compound_n:      Minimum OOF samples for a compound cell to be used
+                             (level 1). Lower than min_block_n because compound cells
+                             are smaller by construction.
+        classes:             estimator.classes_ for multiclass classification scoring.
+        time_bin_resolution: "month" (1–12) or "season" (0–3). Only used when
+                             times is not None.
+
+    Block assignment at inference uses nearest-OOF-sample lookup in a jointly
+    normalised context space [lat, lon, sin_doy, cos_doy, year], so the
+    threshold adapts to both location and season. When only spatial context is
+    supplied with metric="haversine", the k-NN runs in haversine space instead.
+    """
+    from loguru import logger
+
+    splitter = result.splitter
+    if splitter is None or not hasattr(splitter, "block_id_"):
+        return None
+    cv = result.best_cv_result
+    if cv is None or not cv.folds:
+        return None
+
+    block_id_all: np.ndarray = splitter.block_id_
+    task_type = cv.task_type
+
+    sample_scores: dict[int, float] = {}
+    for f in cv.folds:
+        if task_type == TaskType.REGRESSION:
+            fold_scores: Optional[np.ndarray] = np.abs(f.y_test - f.y_pred_test)
+        else:
+            fold_scores = _classification_scores(f, classes)
+            if fold_scores is None:
+                return None
+        for idx, score in zip(f.test_idx, fold_scores):
+            sample_scores[int(idx)] = float(score)
+
+    if not sample_scores:
+        return None
+
+    indices = np.array(list(sample_scores.keys()))
+    scores_arr = np.array([sample_scores[i] for i in indices])
+    block_ids = block_id_all[indices]
+
+    unique_blocks = np.unique(block_ids)
+    block_to_idx = {int(bid): i for i, bid in enumerate(unique_blocks)}
+    scores_by_block = [np.sort(scores_arr[block_ids == bid]) for bid in unique_blocks]
+    oof_block_indices = np.array([block_to_idx[int(b)] for b in block_ids])
+
+    oof_coords = coords[indices] if coords is not None else None
+    oof_times = times[indices] if times is not None else None
+
+    use_haversine = metric == "haversine" and times is None and coords is not None
+
+    if use_haversine:
+        oof_context_scaled = np.deg2rad(oof_coords)
+        context_mean = np.zeros(2)
+        context_std = np.ones(2)
+    else:
+        from sklearn.preprocessing import StandardScaler
+
+        oof_context = _build_context(oof_coords, oof_times)
+        scaler = StandardScaler().fit(oof_context)
+        oof_context_scaled = scaler.transform(oof_context)
+        context_mean = scaler.mean_
+        context_std = scaler.scale_
+
+    n_blocks = len(unique_blocks)
+    if n_blocks < 2:
+        logger.warning(
+            "Local conformal calibration skipped: fewer than 2 spatial blocks found in OOF data."
+        )
+        return None
+
+    # Build compound (spatial block, time bin) score distributions when times are available
+    compound: Optional[dict] = None
+    _resolution: Optional[str] = None
+    if oof_times is not None:
+        bins = _time_bin(oof_times, time_bin_resolution)
+        raw_compound: dict = {}
+        for bi, tb, score in zip(oof_block_indices, bins, scores_arr):
+            raw_compound.setdefault((int(bi), int(tb)), []).append(float(score))
+        compound = {k: np.sort(v) for k, v in raw_compound.items()}
+        _resolution = time_bin_resolution
+
+    return LocalConformalCalibration(
+        scores_by_block=scores_by_block,
+        oof_context_scaled=oof_context_scaled,
+        oof_block_indices=oof_block_indices,
+        context_mean=context_mean,
+        context_std=context_std,
+        fallback_scores=np.sort(scores_arr),
+        metric=metric,
+        min_block_n=min_block_n,
+        min_compound_n=min_compound_n,
+        has_coords=coords is not None,
+        has_times=times is not None,
+        compound_scores=compound,
+        time_bin_resolution=_resolution,
+    )
+
+
 def build_final_model(result: "PipelineResult") -> FinalModel:
     """
     Fit the overall best model on the full training dataset and return a
@@ -372,6 +781,33 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
 
     classes = getattr(estimator, "classes_", None)
 
+    local_conformal: Optional[LocalConformalCalibration] = None
+    variogram = None
+    if result.splitter is not None and (store.coords is not None or store.times is not None):
+        local_conformal = _build_local_conformal(
+            result,
+            coords=store.coords,
+            times=store.times,
+            metric=result.spatial_cv_metric,
+            time_bin_resolution=result.time_bin_resolution,
+            classes=classes,
+        )
+    if store.coords is not None:
+        oof_preds = result.oof_predictions
+        oof_labels = result.oof_labels
+        if oof_preds is not None and oof_labels is not None and oof_preds.ndim == 1:
+            valid = np.isfinite(oof_preds) & np.isfinite(oof_labels)
+            if valid.sum() >= 10:
+                from h2ml.utils.variogram import autocorrelation_range
+
+                try:
+                    variogram = autocorrelation_range(
+                        store.coords[valid],
+                        np.abs(oof_preds[valid] - oof_labels[valid]),
+                    )
+                except Exception:
+                    pass
+
     return FinalModel(
         estimator=estimator,
         feature_names=store.feature_names,
@@ -382,6 +818,8 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
         best_params=result.best_params,
         conformal=_build_conformal_calibration(result, classes=classes),
         y_transform=result.y_transform,
+        local_conformal=local_conformal,
+        variogram=variogram,
     )
 
 
@@ -503,6 +941,8 @@ class DeltaFinalModel:
     clf: FinalModel
     reg: FinalModel
     conformal: Optional[ConformalCalibration] = field(default=None)
+    local_conformal: Optional[LocalConformalCalibration] = field(default=None)
+    variogram: Optional[Any] = field(default=None)  # VariogramResult — imported lazily
 
     def predict(self, X: "pd.DataFrame | np.ndarray") -> np.ndarray:
         """
@@ -525,6 +965,8 @@ class DeltaFinalModel:
         self,
         X: "pd.DataFrame | np.ndarray",
         alpha: float = 0.10,
+        coords: Optional[np.ndarray] = None,
+        times: Optional[np.ndarray] = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Conformal prediction interval for each sample (count scale).
@@ -532,9 +974,14 @@ class DeltaFinalModel:
         Coverage is guaranteed for the full delta output, not each component
         separately. The lower bound is clipped at zero (counts are non-negative).
 
+        When coords and/or times are provided and the model has a
+        LocalConformalCalibration, q varies per sample.
+
         Args:
-            X:     Input features.
-            alpha: Miscoverage level. Default 0.10 → 90% coverage.
+            X:      Input features.
+            alpha:  Miscoverage level. Default 0.10 → 90% coverage.
+            coords: (n_samples, 2) spatial coordinates. Enables local calibration.
+            times:  (n_samples,) datetime64[D] or YYYY-MM-DD strings.
 
         Returns:
             (lower, upper) pair of 1-D arrays.
@@ -545,13 +992,16 @@ class DeltaFinalModel:
                 "Rebuild via build_delta_final_model() with positive_indices provided."
             )
         delta = self.predict(X)
-        q = self.conformal.threshold(alpha)
+        if (coords is not None or times is not None) and self.local_conformal is not None:
+            q = self.local_conformal.threshold(alpha, coords=coords, times=times)
+        else:
+            q = self.conformal.threshold(alpha)
         return np.maximum(0.0, delta - q), delta + q
 
     def save(self, path: "str | Path") -> None:
         """
         Persist to *path* (directory). Creates the directory if needed.
-        Saves clf.pkl, reg.pkl, and (when calibrated) conformal.pkl.
+        Saves clf.pkl, reg.pkl, conformal.pkl, local_conformal.pkl, variogram.pkl.
         Reload with DeltaFinalModel.load(path).
         """
         path = Path(path)
@@ -560,6 +1010,10 @@ class DeltaFinalModel:
         joblib.dump(self.reg, path / "reg.pkl")
         if self.conformal is not None:
             joblib.dump(self.conformal, path / "conformal.pkl")
+        if self.local_conformal is not None:
+            joblib.dump(self.local_conformal, path / "local_conformal.pkl")
+        if self.variogram is not None:
+            joblib.dump(self.variogram, path / "variogram.pkl")
 
     @classmethod
     def load(cls, path: "str | Path") -> "DeltaFinalModel":
@@ -574,7 +1028,11 @@ class DeltaFinalModel:
         reg = joblib.load(path / "reg.pkl")
         conformal_path = path / "conformal.pkl"
         conformal = joblib.load(conformal_path) if conformal_path.exists() else None
-        return cls(clf=clf, reg=reg, conformal=conformal)
+        lc_path = path / "local_conformal.pkl"
+        local_conformal = joblib.load(lc_path) if lc_path.exists() else None
+        vg_path = path / "variogram.pkl"
+        variogram = joblib.load(vg_path) if vg_path.exists() else None
+        return cls(clf=clf, reg=reg, conformal=conformal, local_conformal=local_conformal, variogram=variogram)
 
     def __repr__(self) -> str:
         return (
@@ -625,4 +1083,28 @@ def build_delta_final_model(
     clf_final = build_final_model(clf_result)
     reg_final = build_final_model(reg_result)
     conformal = _build_delta_conformal(clf_result, reg_result, reg_final, X_full, y_full, positive_indices)
-    return DeltaFinalModel(clf=clf_final, reg=reg_final, conformal=conformal)
+
+    # Local conformal: use clf_result's splitter (covers all N samples) and
+    # build from the combined delta OOF residuals via the clf store's coords/times.
+    local_conformal: Optional[LocalConformalCalibration] = None
+    _clf_stage = clf_result.best_feature_stage or clf_result.best_stage
+    clf_store = clf_result.features_reduced if _clf_stage == "reduced" else clf_result.features
+    if clf_store is not None and clf_result.splitter is not None:
+        if clf_store.coords is not None or clf_store.times is not None:
+            local_conformal = _build_local_conformal(
+                clf_result,
+                coords=clf_store.coords,
+                times=clf_store.times,
+                metric=clf_result.spatial_cv_metric,
+                time_bin_resolution=clf_result.time_bin_resolution,
+            )
+
+    variogram = clf_final.variogram  # reuse — same spatial residual structure
+
+    return DeltaFinalModel(
+        clf=clf_final,
+        reg=reg_final,
+        conformal=conformal,
+        local_conformal=local_conformal,
+        variogram=variogram,
+    )

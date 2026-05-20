@@ -27,49 +27,171 @@ sets = final.predict_set(X_new, alpha=0.10)
 
 A singleton set means the model is confident; a larger set means it is uncertain.
 
+---
+
+## Spatio-temporal local calibration
+
+When `store.coords` (and optionally `store.times`) are provided, `build_final_model()` also builds a `LocalConformalCalibration` alongside the global one. This enables **spatially and temporally varying interval widths** — regions where the model is historically less accurate get wider intervals.
+
+### How it works
+
+OOF residuals are partitioned into a two-level structure:
+
+1. **Spatial blocks** — from the CV splitter's `block_id_` (quantile-grid cells or AHC clusters). Each block gets its own sorted score distribution.
+2. **Compound cells `(block, time_bin)`** — when `store.times` is provided, residuals within each block are further split by month or season.
+
+At inference, threshold lookup uses three levels of fallback:
+
+| Level | Cell | Used when |
+|-------|------|-----------|
+| 1 | Compound `(block × time_bin)` | ≥ `min_compound_n` samples (default 5) |
+| 2 | Spatial block | ≥ `min_block_n` samples (default 20) |
+| 3 | Global fallback | all other cases |
+
+Block assignment at inference uses **nearest-OOF-sample k-NN** (not centroid), so non-convex AHC clusters are handled correctly. The time bin is derived from the **query point's own date**, not the nearest OOF sample's date.
+
+### Activation
+
+Pass `coords` and optionally `times` when constructing `PipelineData`:
+
+```python
+store = PipelineData.from_frame(
+    df=features,
+    y=counts,
+    coords=np.column_stack([lats, lons]),  # (n_samples, 2) — activates spatial blocks
+    times=date_array,                      # (n_samples,) YYYY-MM-DD — activates compound cells
+)
+result = H2MLPipeline(PipelineConfig(
+    spatial_cv_method="block",    # or "spcv"
+    time_bin_resolution="season", # "month" (1–12) or "season" (DJF/MAM/JJA/SON)
+)).run(store)
+
+final = result.build_final_model()
+print(final.local_conformal)          # LocalConformalCalibration if built, None otherwise
+print(final.local_conformal.has_times)
+print(final.local_conformal.time_bin_resolution)
+```
+
+`local_conformal` is `None` when:
+
+- No spatial CV was used (`store.coords` was `None`)
+- `result.splitter` is absent (e.g. after `PipelineResult.load()` — rebuild with `build_final_model()` before saving)
+- Fewer than 2 spatial blocks were found in the OOF data
+
+### Local intervals at inference
+
+Pass `coords` and/or `times` to `predict_interval` / `predict_set` to activate local thresholds:
+
+```python
+# Spatially varying widths
+lower, upper = final.predict_interval(X_new, alpha=0.10, coords=test_coords)
+
+# Spatially + temporally varying widths
+lower, upper = final.predict_interval(
+    X_new, alpha=0.10,
+    coords=test_coords,
+    times=test_dates,   # YYYY-MM-DD strings or datetime64[D]
+)
+
+# Global threshold (original behaviour) — omit coords/times
+lower, upper = final.predict_interval(X_new, alpha=0.10)
+```
+
+Extra context dimensions not present at calibration time are silently ignored — passing `times` to a model built without `store.times` is safe and falls back to spatial-only calibration.
+
+### Diagnostics
+
+```python
+lc = final.local_conformal
+from h2ml.pipeline.final_model import _conformal_quantile
+
+print("n_spatial_blocks:", len(lc.scores_by_block))
+if lc.compound_scores:
+    sizes = {k: len(v) for k, v in lc.compound_scores.items()}
+    print("compound cells populated:", len(sizes))
+    print("cells ≥ min_compound_n:", sum(v >= lc.min_compound_n for v in sizes.values()))
+
+    season_names = {0: "DJF", 1: "MAM", 2: "JJA", 3: "SON"}
+    for block_idx in range(min(5, len(lc.scores_by_block))):
+        spatial_q = _conformal_quantile(lc.scores_by_block[block_idx], 0.10)
+        print(f"block {block_idx} (spatial q={spatial_q:.3f}):")
+        for season in range(4):
+            cs = lc.compound_scores.get((block_idx, season))
+            if cs is not None:
+                print(f"  {season_names[season]}: n={len(cs)}, q={_conformal_quantile(cs, 0.10):.3f}")
+```
+
+### Tuning
+
+**Too few samples per compound cell** — with many spatial blocks and monthly bins, average cell size can be very small. Prefer seasonal bins (`time_bin_resolution="season"`, 4 bins) over monthly (12 bins), or lower `min_compound_n` directly on the built model:
+
+```python
+final.local_conformal.min_compound_n = 3  # runtime change, no rebuild needed
+```
+
+Note: at α=0.10, compound cells need ≥ 10 samples before the conformal quantile formula can return anything other than the cell maximum. Very small cells are conservative (always return the worst observed residual).
+
+**SPCVSplitter** produces more and smaller blocks than the block splitter (AHC cluster count is controlled by `ahc_threshold`). With many small blocks, most compound cells will have few samples and fall back to spatial level. Increasing `ahc_threshold` reduces the block count and increases cell density.
+
+---
+
 ## Geo prediction — conformal columns
 
-`predict_for_year` accepts an `alpha` argument that adds conformal columns to the output parquet for any calibrated model.
+`predict_for_year` and `predict_for_year_delta` accept `alpha` to add conformal bound columns. When the model has a `LocalConformalCalibration`, the `lon`, `lat`, and `time` columns from the scan are automatically used — interval widths vary across space and time.
+
+```python
+# Spatio-temporally varying intervals (default when local_conformal is present)
+df = predict_for_year(target="sparrow", year=2023, ..., alpha=0.10)
+
+# Global constant-width intervals (opt out of local calibration)
+df = predict_for_year(target="sparrow", year=2023, ..., alpha=0.10, local=False)
+```
 
 ### Regression
 
-Calibrated regression models produce two extra columns per target:
-
 ```python
 df = predict_for_year(target="sparrow", year=2023, ..., alpha=0.10)
-# df columns: sparrow_v1, sparrow_v1_pi_lower, sparrow_v1_pi_upper
+# columns: sparrow_v1, sparrow_v1_pi_lower, sparrow_v1_pi_upper
 ```
 
-The bounds are per-sample and in the original (inverse-transformed) count scale.
+Bounds are in the original (inverse-transformed) count scale. Computed in transform space before inverting, giving correct asymmetric intervals:
+
+```
+# without y_transform (symmetric)
+pi_lower = max(0, ŷ − q)
+pi_upper = ŷ + q
+
+# with y_transform (asymmetric — e.g. log or sqrt)
+pi_lower = max(0, inverse_fn(raw − q))
+pi_upper = inverse_fn(raw + q)
+```
+
+When `local=True` (default), `q` is a per-sample value from `LocalConformalCalibration.threshold()`.
 
 ### Binary classifiers
 
-Calibrated binary classifiers produce the same `_pi_lower` / `_pi_upper` column names, mirroring the regression formula applied to probability space:
+```python
+df = predict_for_year(target="sparrow", year=2023, ..., alpha=0.10)
+# columns: sparrow_v1, sparrow_v1_pi_lower, sparrow_v1_pi_upper
+```
+
+Calibration bands in probability space:
 
 ```
 pi_lower = clip(p − q, 0, 1)
 pi_upper = clip(p + q, 0, 1)
 ```
 
-Where `p` is the per-sample predicted probability and `q = conformal.threshold(alpha)`. This works because nonconformity scores for binary classification are `1 − p(true class)`, which live on [0, 1] — the same units as `p` — so `q` and `p` are directly comparable.
-
-```python
-df = predict_for_year(target="sparrow", year=2023, ..., alpha=0.10)
-# df columns: sparrow_v1           (per-sample predicted probability p)
-#             sparrow_v1_pi_lower  (per-sample: clip(p − q, 0, 1))
-#             sparrow_v1_pi_upper  (per-sample: clip(p + q, 0, 1))
-```
-
-The bounds vary spatially — high-confidence pixels (p near 0 or 1) produce narrow intervals; uncertain pixels (p near 0.5) produce wide intervals that span the decision boundary.
-
 !!! note "Interpretation differs from regression"
     Regression `_pi_lower`/`_pi_upper` have a formal conformal coverage guarantee on the outcome. For binary classifiers the bounds are a calibration band in probability space — they convey *"given past calibration errors of size q, the predicted probability could plausibly be off by this much"*, not a coverage guarantee on the class label.
 
 Multiclass classifiers and uncalibrated models always return point predictions only.
 
+---
+
 ## Delta model — presence × abundance
 
-`DeltaFinalModel` combines a presence/absence classifier and a count regressor into a single deployment artifact. Prediction is `P(present) × E(count | present)`, always in the original count scale.
+`DeltaFinalModel` combines a presence/absence classifier and a count regressor. Prediction is `P(present) × E(count | present)`, always in the original count scale.
 
 ```python
 from h2ml.pipeline.final_model import build_delta_final_model, DeltaFinalModel
@@ -78,34 +200,56 @@ positive_idx = np.where(y_all > 0)[0]
 X_df = pd.DataFrame(X_all, columns=feature_names)
 
 delta = build_delta_final_model(
-    clf_result=clf_result,          # PipelineResult from presence/absence classifier (all N samples)
-    reg_result=reg_result,          # PipelineResult from count regressor (positive samples only)
-    X_full=X_df,                    # all N samples; pass DataFrame when clf and reg have different feature sets
-    y_full=y_all,                   # raw counts for all N samples
-    positive_indices=positive_idx,  # indices into X_full/y_full where count > 0
+    clf_result=clf_result,
+    reg_result=reg_result,
+    X_full=X_df,
+    y_full=y_all,
+    positive_indices=positive_idx,
 )
 ```
 
 Point predictions and conformal intervals:
 
 ```python
-preds = delta.predict(X_new)                          # P × count, original scale
-lower, upper = delta.predict_interval(X_new, alpha=0.10)  # lower clipped at 0
+preds = delta.predict(X_new)
+lower, upper = delta.predict_interval(X_new, alpha=0.10)
+
+# Local (spatio-temporal) intervals
+lower, upper = delta.predict_interval(X_new, alpha=0.10, coords=coords, times=dates)
 ```
 
-**Coverage:** the conformal calibration is built on combined out-of-fold delta residuals (`|y_true − P_oof × count_oof|`), giving a coverage guarantee on the full product rather than each component separately.
-
-**Save / load** — saves to a directory (clf.pkl, reg.pkl, conformal.pkl), not a single file:
+**Save / load** — saves to a directory (`clf.pkl`, `reg.pkl`, `conformal.pkl`, `local_conformal.pkl`, `variogram.pkl`):
 
 ```python
 delta.save("models/sparrow_delta-model")
 delta = DeltaFinalModel.load("models/sparrow_delta-model")
 ```
 
+---
+
+## Variogram diagnostic
+
+When `store.coords` is provided, `build_final_model()` also fits an exponential variogram to the OOF residuals and stores it as `FinalModel.variogram`. This is a diagnostic — it has no effect on predictions.
+
+```python
+final = result.build_final_model()
+vr = final.variogram    # VariogramResult or None
+
+if vr:
+    print(f"Practical range: {vr.practical_range:.1f}")  # distance where correlation ≈ 5%
+    print(f"Nugget: {vr.nugget:.3f}, Sill: {vr.sill:.3f}")
+
+from h2ml.utils.variogram import plot_variogram
+plot_variogram(store.coords, oof_residuals)
+```
+
+A short practical range relative to your spatial block size confirms the spatial CV is well-separated. A long range suggests residual spatial autocorrelation that the model hasn't captured.
+
+---
+
 ## How it works
 
 The calibrator does not touch the model itself. It sits on top of any model and wraps its point predictions in a statistically honest band.
-The model could be a random forest, a neural network, a delta model — the calibrator doesn't care. It only cares about the distribution of past errors.
 
 **Nonconformity scores** are computed per sample from the OOF folds:
 
@@ -113,52 +257,50 @@ The model could be a random forest, a neural network, a delta model — the cali
 - Binary classification: `1 − p(true class)`
 - Multiclass: `1 − p(true class)` (looked up via `estimator.classes_`)
 
-The scores are sorted ascending and stored — one score per training sample, not per fold. **n** is the total number of held-out samples across all folds (e.g. 5-fold CV on 1000 samples gives n = 1000).
+The scores are sorted ascending. **n** is the total number of held-out samples across all folds (e.g. 5-fold CV on 1000 samples gives n = 1000).
 
 ```python
 scores = [0.1, 0.3, 0.4, 0.5, 0.5, 0.7, 0.9, 1.2, 1.8, 3.1, ...]
            ↑ model was almost right    ↑ typical error     ↑ model was badly wrong
 ```
 
-At inference time, find the threshold `q` — the score that was exceeded only `alpha × 100%` of the time in the calibration data:
+The threshold `q` at level α:
 
 ```python
 q = ⌈(1−alpha)(n+1)/n⌉ quantile of scores
 ```
 
-Then apply it:
+Applied as:
 
-- **Regression:** `interval = [ŷ − q,  ŷ + q]` — constant width
+- **Regression:** `interval = [ŷ − q,  ŷ + q]` — symmetric around the point estimate
 - **Classification:** prediction set = all classes with nonconformity score ≤ `q`
 
-The logic: if the model's errors in the past rarely exceeded `q`, then adding `q` as a buffer around a new prediction will catch the true value most of the time.
+With local calibration, `q` is looked up per sample from the compound (block × time_bin) cell or its spatial/global fallback.
+
+---
 
 ## Limitations
 
-- **Constant-width intervals (regression):** the same `q` is applied to every sample. Regions of the input space with higher inherent variance get the same interval as low-variance regions. For heteroscedastic data this means intervals are too wide in easy regions and too narrow in hard ones.
-- **Marginal coverage only:** the guarantee holds on average over the training distribution. Out-of-distribution inputs (e.g., spatial extrapolation beyond the training extent) may not achieve nominal coverage.
-- **Transformed targets:** `FinalModel.predict_interval()` returns bounds in the transformed space. Apply the inverse transform to the bounds manually if needed — see [Y-Transforms](transforms.md). `predict_for_year` handles this automatically, applying the inverse transform in the transform space before inverting to produce correct asymmetric bounds. `DeltaFinalModel` always outputs in the original count scale.
+- **Symmetric intervals (regression):** `ŷ ± q` — same offset above and below, which can produce negative lower bounds for count data. Local calibration changes *which* `q` is used per sample but keeps the symmetric form. Conformalized Quantile Regression (CQR) is the principled fix for asymmetric intervals and is forward-compatible with `LocalConformalCalibration` — only the score-generation step would change.
+- **Marginal coverage only:** the guarantee holds on average over the training distribution. Out-of-distribution inputs (spatial extrapolation, future years with no training data in nearby blocks) may not achieve nominal coverage.
+- **Temporal block sparsity:** with SPCVSplitter producing many AHC blocks and monthly bins, compound cells can be very small. Use `time_bin_resolution="season"` and check the diagnostic output to ensure cells have enough samples.
+- **Transformed targets:** `FinalModel.predict_interval()` returns bounds in the transformed space. `predict_for_year` handles inversion automatically. `DeltaFinalModel` always outputs in the original count scale.
+
+---
 
 ## Interpretation
 
 Think of it like a fishing net.
 
-You're trying to catch the true value (the real count of animals at that pixel-day) inside a net (the interval [pi_lower, pi_upper]). Alpha
-controls how tight you make the net.
+You're trying to catch the true value inside a net `[pi_lower, pi_upper]`. Alpha controls how tight the net is.
 
-- alpha = 0.10 → the net is sized so it catches the true value 9 times out of 10. One time in ten, the value slips through.
-- alpha = 0.05 → catches it 19 times out of 20. Rarely misses, but the net has to be wider.
-- alpha = 0.20 → catches it 4 times out of 5. Misses more often, but the net is narrower and more informative.
+- alpha = 0.10 → catches the true value 9 times out of 10
+- alpha = 0.05 → catches it 19 times out of 20 (wider net)
+- alpha = 0.20 → catches it 4 times out of 5 (narrower net, more misses)
 
-So alpha is the miss rate you're willing to accept. The lower the alpha, the wider the interval, the fewer misses.
-
-The guarantee is marginal: if you make predictions across thousands of pixel-days, roughly (1 - alpha) × 100% of the true values will fall inside their interval. It doesn't mean any single interval is guaranteed — it's a statement about the long-run hit rate across all predictions.
-
-In practice:
+The guarantee is marginal: across thousands of predictions, roughly (1 − alpha) × 100% of the true values will fall inside their interval.
 
 ```python
-alpha = 0.10   # "I want my intervals to cover the truth 90% of the time"
-alpha = 0.20   # "Narrower intervals are more useful to me, I accept more misses"
+alpha = 0.10   # "I want intervals to cover the truth 90% of the time"
+alpha = 0.20   # "Narrower intervals are more useful; I accept more misses"
 ```
-
-There's no universally "correct" alpha — it depends on the cost of being wrong. For species distribution maps used in conservation decisions, 0.10 (90% coverage) is a common starting point.

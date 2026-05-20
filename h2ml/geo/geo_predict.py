@@ -24,12 +24,18 @@ def _predict_single(
     model: FinalModel,
     col_name: str,
     alpha: Optional[float] = None,
+    local: bool = True,
 ) -> tuple[pl.Series, ...]:
     """
     Generate predictions (and optional conformal intervals) for one target.
 
     Rows with any null feature value are excluded from inference and appear as
     null in the returned Series, preserving alignment with the original grid.
+
+    When alpha is set and local=True, lon/lat/time columns are extracted from
+    df_original and passed to LocalConformalCalibration.threshold() so that
+    interval widths vary by location and season. Pass local=False to use the
+    global conformal threshold regardless of available geo columns.
 
     Args:
         df_original: Full feature DataFrame with a row 'index' column.
@@ -38,19 +44,23 @@ def _predict_single(
         alpha:       Miscoverage level for conformal intervals. When None or the
                      model has no calibration, only the point prediction is returned.
                      Multiclass classifiers are unaffected.
+        local:       If True (default), use LocalConformalCalibration when available
+                     to produce spatially/temporally varying interval widths.
+                     If False, always use the global conformal threshold.
 
     Returns:
         (pred_series,) when alpha is None, uncalibrated, or multiclass classifier.
         (pred_series, lower_series, upper_series) for calibrated regression or
-        calibrated binary classifiers with alpha set. For binary classifiers:
-        pi_lower = clip(p − q, 0, 1), pi_upper = clip(p + q, 0, 1), where q is
-        the conformal threshold in probability units (nonconformity scores are
-        1 − p(true class), so q and p share the same scale).
+        calibrated binary classifiers with alpha set.
     """
-    df_clean = df_original.select(model.feature_names + ["index"]).drop_nulls()
-    X = df_clean.drop("index").to_numpy()
+    geo_cols = [c for c in ["lon", "lat", "time"] if c in df_original.columns]
+    df_clean = df_original.select(model.feature_names + ["index"] + geo_cols).drop_nulls()
+    X = df_clean.select(model.feature_names).to_numpy()
     idx = df_clean["index"]
     n = len(df_original)
+
+    coords = df_clean.select(["lon", "lat"]).to_numpy() if "lon" in geo_cols and "lat" in geo_cols else None
+    times = df_clean["time"].cast(pl.Utf8).to_numpy() if "time" in geo_cols else None
 
     if model.task_type == TaskType.CLASSIFICATION:
         preds = model.predict_proba(X).astype(np.float32)
@@ -59,7 +69,10 @@ def _predict_single(
             # Binary only: mirror the regression formula into probability space.
             # q is in probability units (nonconformity = 1 - p(true_class) ∈ [0,1]),
             # so p ± q is a meaningful calibration band. Clipped to [0, 1].
-            q = float(model.conformal.threshold(alpha))
+            if local and model.local_conformal is not None and (coords is not None or times is not None):
+                q = model.local_conformal.threshold(alpha, coords=coords, times=times)
+            else:
+                q = float(model.conformal.threshold(alpha))
             lower_series = pl.Series(f"{col_name}_pi_lower", [None] * n, dtype=pl.Float32).scatter(
                 idx, np.clip(preds - q, 0.0, 1.0).astype(np.float32)
             )
@@ -77,7 +90,10 @@ def _predict_single(
     pred_series = pl.Series(col_name, [None] * n, dtype=pl.Float32).scatter(idx, preds)
 
     if alpha is not None and model.conformal is not None:
-        q = model.conformal.threshold(alpha)
+        if local and model.local_conformal is not None and (coords is not None or times is not None):
+            q = model.local_conformal.threshold(alpha, coords=coords, times=times)
+        else:
+            q = model.conformal.threshold(alpha)
         lower = np.maximum(0.0, inverse_fn(raw - q) if inverse_fn else raw - q).astype(np.float32)
         upper = (inverse_fn(raw + q) if inverse_fn else raw + q).astype(np.float32)
         lower_series = pl.Series(f"{col_name}_pi_lower", [None] * n, dtype=pl.Float32).scatter(idx, lower)
@@ -92,13 +108,15 @@ def _predict_delta_single(
     model: "DeltaFinalModel",
     col_name: str,
     alpha: Optional[float] = None,
+    local: bool = True,
 ) -> tuple[pl.Series, ...]:
     """
     Generate delta predictions (and optional conformal intervals) for one target.
 
     Rows where any feature needed by either sub-model is null are excluded.
     The regressor's y-transform is inverted before multiplying so the delta is
-    in the original count scale.
+    in the original count scale. Interval semantics mirror _predict_single —
+    local=True uses LocalConformalCalibration when available.
 
     Args:
         df_original: Full feature DataFrame with a row 'index' column.
@@ -106,6 +124,8 @@ def _predict_delta_single(
         col_name:    Name for the prediction Series.
         alpha:       Miscoverage level. When None or model has no calibration,
                      only the point prediction is returned.
+        local:       If True (default), use LocalConformalCalibration when available.
+                     If False, always use the global conformal threshold.
 
     Returns:
         (pred_series,) or (pred_series, lower_series, upper_series).
@@ -114,9 +134,13 @@ def _predict_delta_single(
     reg_features = model.reg.feature_names
     all_features = list(dict.fromkeys(clf_features + reg_features))
 
-    df_clean = df_original.select(all_features + ["index"]).drop_nulls()
+    geo_cols = [c for c in ["lon", "lat", "time"] if c in df_original.columns]
+    df_clean = df_original.select(all_features + ["index"] + geo_cols).drop_nulls()
     idx = df_clean["index"]
     n = len(df_original)
+
+    coords = df_clean.select(["lon", "lat"]).to_numpy() if "lon" in geo_cols and "lat" in geo_cols else None
+    times = df_clean["time"].cast(pl.Utf8).to_numpy() if "time" in geo_cols else None
 
     X_clf = df_clean.select(clf_features).to_numpy()
     X_reg = df_clean.select(reg_features).to_numpy()
@@ -132,7 +156,10 @@ def _predict_delta_single(
     pred_series = pl.Series(col_name, [None] * n, dtype=pl.Float32).scatter(idx, delta)
 
     if alpha is not None and model.conformal is not None:
-        q = float(model.conformal.threshold(alpha))
+        if model.local_conformal is not None and (coords is not None or times is not None):
+            q = model.local_conformal.threshold(alpha, coords=coords, times=times)
+        else:
+            q = float(model.conformal.threshold(alpha))
         lower = np.maximum(0.0, delta - q).astype(np.float32)
         upper = (delta + q).astype(np.float32)
         lower_series = pl.Series(f"{col_name}_pi_lower", [None] * n, dtype=pl.Float32).scatter(idx, lower)
@@ -150,6 +177,7 @@ def predict_for_year(
     schema: str,
     geo_extent: tuple[float, float, float, float],
     alpha: Optional[float] = None,
+    local: bool = True,
 ) -> pl.DataFrame:
     """
     Load pre-trained FinalModels and generate predictions for a full calendar year.
@@ -171,12 +199,14 @@ def predict_for_year(
         alpha:             Miscoverage level for conformal intervals (e.g. 0.10 → 90%).
                            When set, calibrated models produce additional
                            '{target}_{schema}_pi_lower' and '_pi_upper' columns.
-                           Regression: per-sample outcome bounds in the original scale.
-                           Binary classifiers: per-sample calibration bands in
-                           probability space — clip(p ± q, 0, 1) where q =
-                           conformal.threshold(alpha). Not a formal coverage guarantee;
-                           see conformal.md for interpretation.
-                           Multiclass classifiers and uncalibrated models are unaffected.
+                           Regression: bounds in the original scale (after y-transform
+                           inversion). Binary classifiers: probability-space bands
+                           clip(p ± q, 0, 1). Multiclass and uncalibrated models
+                           are unaffected.
+        local:             If True (default), use LocalConformalCalibration when the
+                           model has one, producing interval widths that vary by
+                           location and season. Pass False to use the global threshold
+                           regardless of the scan's lon/lat/time columns.
 
     Returns:
         DataFrame with columns ['index', 'time', 'lon', 'lat'] plus one Float32
@@ -213,7 +243,7 @@ def predict_for_year(
         model_path = model_dir / f"{sp}_{schema}_final-model.pkl"
         try:
             model = FinalModel.load(model_path)
-            series = _predict_single(df_original, model, col_name=f"{sp}_{schema}", alpha=alpha)
+            series = _predict_single(df_original, model, col_name=f"{sp}_{schema}", alpha=alpha, local=local)
             pred_columns.extend(series)
             logger.info(f"Predicted: {sp}")
             succeeded += 1
@@ -238,6 +268,7 @@ def predict_for_year_delta(
     schema: str,
     geo_extent: tuple[float, float, float, float],
     alpha: float = 0.10,
+    local: bool = True,
 ) -> pl.DataFrame:
     """
     Load DeltaFinalModels and generate delta predictions + conformal intervals for a calendar year.
@@ -261,6 +292,9 @@ def predict_for_year_delta(
         schema:            Schema identifier used to locate model directories.
         geo_extent:        Spatial bounding box as (xmin, ymin, xmax, ymax).
         alpha:             Miscoverage level for conformal intervals (default 0.10 → 90%).
+        local:             If True (default), use LocalConformalCalibration when the
+                           model has one, producing interval widths that vary by
+                           location and season. Pass False to use the global threshold.
 
     Returns:
         DataFrame with columns ['index', 'time', 'lon', 'lat'] plus prediction and
@@ -302,7 +336,7 @@ def predict_for_year_delta(
         try:
             model = DeltaFinalModel.load(model_path)
             col_name = f"{sp}_{schema}"
-            series = _predict_delta_single(df_original, model, col_name=col_name, alpha=alpha)
+            series = _predict_delta_single(df_original, model, col_name=col_name, alpha=alpha, local=local)
             pred_columns.extend(series)
             interval_note = " (with intervals)" if len(series) == 3 else " (point only — no calibration)"
             logger.info(f"Predicted: {sp}{interval_note}")
@@ -358,7 +392,8 @@ def predict_map(
     full_series = full_series.scatter(df_pred["index"], preds)
 
     df_results = df_orig.select(["index", "time", "lon", "lat"]).with_columns(full_series)
-    df_plot = aggregate_by_space_time(df_results, vars_name=target_col, agg_by=agg_by).collect()
+    df_agg = aggregate_by_space_time(df_results, vars_name=target_col, agg_by=agg_by)
+    df_plot = df_agg.collect() if hasattr(df_agg, "collect") else df_agg
 
     plot_maps(
         df_plot,

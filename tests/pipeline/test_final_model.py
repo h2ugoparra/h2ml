@@ -19,8 +19,11 @@ from h2ml.pipeline.final_model import (
     ConformalCalibration,
     DeltaFinalModel,
     FinalModel,
+    LocalConformalCalibration,
     _build_conformal_calibration,
     _build_delta_conformal,
+    _encode_times,
+    _time_bin,
     build_delta_final_model,
 )
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig, PipelineResult
@@ -754,3 +757,353 @@ class TestBuildDeltaFinalModel:
         lower, upper = delta.predict_interval(X_full)
         assert np.all(upper >= lower)
         assert np.all(lower >= 0)
+
+
+# ---------------------------------------------------------------------------
+# LocalConformalCalibration
+# ---------------------------------------------------------------------------
+
+
+def _make_local_conformal(metric: str = "euclidean", min_block_n: int = 3) -> LocalConformalCalibration:
+    """
+    Two-block fixture: block 0 (low error, coords near origin) and
+    block 1 (high error, coords near [10, 10]).
+    """
+    rng = np.random.default_rng(0)
+    n_per_block = 20
+    # block 0: low residuals
+    scores_0 = rng.uniform(0.0, 0.2, n_per_block)
+    coords_0 = rng.uniform(0.0, 1.0, (n_per_block, 2))
+    # block 1: high residuals
+    scores_1 = rng.uniform(0.8, 1.5, n_per_block)
+    coords_1 = rng.uniform(9.0, 10.0, (n_per_block, 2))
+
+    all_scores = np.concatenate([scores_0, scores_1])
+    all_coords = np.vstack([coords_0, coords_1])
+    all_block_idx = np.array([0] * n_per_block + [1] * n_per_block)
+
+    from sklearn.preprocessing import StandardScaler
+    scaler = StandardScaler().fit(all_coords)
+    oof_context_scaled = scaler.transform(all_coords)
+
+    return LocalConformalCalibration(
+        scores_by_block=[np.sort(scores_0), np.sort(scores_1)],
+        oof_context_scaled=oof_context_scaled,
+        oof_block_indices=all_block_idx,
+        context_mean=scaler.mean_,
+        context_std=scaler.scale_,
+        fallback_scores=np.sort(all_scores),
+        metric=metric,
+        min_block_n=min_block_n,
+    )
+
+
+class TestLocalConformalCalibration:
+    def test_threshold_returns_array(self):
+        lc = _make_local_conformal()
+        coords = np.array([[0.5, 0.5], [0.2, 0.3], [9.5, 9.5]])
+        q = lc.threshold(0.10, coords=coords)
+        assert q.shape == (3,)
+        assert np.all(q > 0)
+
+    def test_block_locality_spatial(self):
+        lc = _make_local_conformal()
+        near_block0 = np.array([[0.5, 0.5]])
+        near_block1 = np.array([[9.5, 9.5]])
+        q0 = lc.threshold(0.10, coords=near_block0)[0]
+        q1 = lc.threshold(0.10, coords=near_block1)[0]
+        assert q1 > q0, "High-error block should produce larger threshold"
+
+    def test_block_locality_temporal(self):
+        """Points in different seasons should get different thresholds when
+        blocks differ by seasonal residual distribution."""
+        rng = np.random.default_rng(1)
+        n = 20
+        # block 0: winter dates (Jan), low error
+        scores_0 = rng.uniform(0.0, 0.2, n)
+        times_0 = np.array(["2021-01-15"] * n)
+        # block 1: summer dates (Jul), high error
+        scores_1 = rng.uniform(0.8, 1.5, n)
+        times_1 = np.array(["2021-07-15"] * n)
+
+        all_scores = np.concatenate([scores_0, scores_1])
+        all_times = np.concatenate([times_0, times_1])
+        all_block_idx = np.array([0] * n + [1] * n)
+
+        encoded = _encode_times(all_times)
+        from sklearn.preprocessing import StandardScaler
+        scaler = StandardScaler().fit(encoded)
+        oof_context_scaled = scaler.transform(encoded)
+
+        lc = LocalConformalCalibration(
+            scores_by_block=[np.sort(scores_0), np.sort(scores_1)],
+            oof_context_scaled=oof_context_scaled,
+            oof_block_indices=all_block_idx,
+            context_mean=scaler.mean_,
+            context_std=scaler.scale_,
+            fallback_scores=np.sort(all_scores),
+            metric="euclidean",
+            min_block_n=3,
+            has_coords=False,
+            has_times=True,
+        )
+
+        q_winter = lc.threshold(0.10, times=np.array(["2021-01-20"]))[0]
+        q_summer = lc.threshold(0.10, times=np.array(["2021-07-20"]))[0]
+        assert q_summer > q_winter
+
+    def test_fallback_on_small_block(self):
+        lc = _make_local_conformal(min_block_n=50)  # both blocks < 50 samples
+        coords = np.array([[0.5, 0.5]])
+        q = lc.threshold(0.10, coords=coords)[0]
+        # Should equal global fallback threshold
+        n = len(lc.fallback_scores)
+        level = min(np.ceil(0.9 * (n + 1)) / n, 1.0)
+        expected = float(np.quantile(lc.fallback_scores, level))
+        assert abs(q - expected) < 1e-10
+
+    def test_combined_spatio_temporal(self):
+        lc = _make_local_conformal()
+        coords = np.array([[0.5, 0.5], [9.5, 9.5]])
+        times = np.array(["2021-03-15", "2021-08-20"])
+        # Build a combined local conformal that uses both
+        rng = np.random.default_rng(2)
+        n = 20
+        scores_0 = rng.uniform(0.0, 0.2, n)
+        scores_1 = rng.uniform(0.8, 1.5, n)
+        coords_0 = rng.uniform(0.0, 1.0, (n, 2))
+        coords_1 = rng.uniform(9.0, 10.0, (n, 2))
+        times_0 = np.array(["2021-01-15"] * n)
+        times_1 = np.array(["2021-07-15"] * n)
+
+        all_coords = np.vstack([coords_0, coords_1])
+        all_times = np.concatenate([times_0, times_1])
+        all_block_idx = np.array([0] * n + [1] * n)
+
+        from h2ml.pipeline.final_model import _build_context
+        from sklearn.preprocessing import StandardScaler
+        ctx = _build_context(all_coords, all_times)
+        scaler = StandardScaler().fit(ctx)
+        oof_ctx = scaler.transform(ctx)
+
+        lc_st = LocalConformalCalibration(
+            scores_by_block=[np.sort(scores_0), np.sort(scores_1)],
+            oof_context_scaled=oof_ctx,
+            oof_block_indices=all_block_idx,
+            context_mean=scaler.mean_,
+            context_std=scaler.scale_,
+            fallback_scores=np.sort(np.concatenate([scores_0, scores_1])),
+            metric="euclidean",
+            min_block_n=3,
+            has_coords=True,
+            has_times=True,
+        )
+
+        q = lc_st.threshold(0.10, coords=coords, times=times)
+        assert q.shape == (2,)
+        assert q[1] > q[0]
+
+    def test_predict_interval_uses_local_conformal(self):
+        """predict_interval with coords returns varying widths; without coords is scalar."""
+        from sklearn.ensemble import RandomForestRegressor
+        rng = np.random.default_rng(3)
+        X = rng.standard_normal((50, 4))
+        y = rng.standard_normal(50)
+        est = RandomForestRegressor(n_estimators=5, random_state=0).fit(X, y)
+        global_cal = ConformalCalibration(
+            scores=np.sort(np.abs(rng.standard_normal(50))),
+            n=50,
+            task_type=TaskType.REGRESSION,
+        )
+        lc = _make_local_conformal()
+
+        model = FinalModel(
+            estimator=est,
+            feature_names=[f"f{i}" for i in range(4)],
+            task_type=TaskType.REGRESSION,
+            conformal=global_cal,
+            local_conformal=lc,
+        )
+
+        X_test = rng.standard_normal((10, 4))
+        coords = np.column_stack([
+            rng.uniform(0, 1, 5).tolist() + rng.uniform(9, 10, 5).tolist(),
+            rng.uniform(0, 1, 5).tolist() + rng.uniform(9, 10, 5).tolist(),
+        ])
+
+        lower, upper = model.predict_interval(X_test, alpha=0.10, coords=coords)
+        widths = upper - lower
+        assert lower.shape == upper.shape == (10,)
+        assert np.all(upper >= lower)
+        assert widths.std() > 0, "Widths should vary with local calibration"
+
+        # Without coords → scalar q, constant width
+        lower_g, upper_g = model.predict_interval(X_test, alpha=0.10)
+        widths_g = upper_g - lower_g
+        assert np.allclose(widths_g, widths_g[0])
+
+    def test_local_conformal_none_without_spatial_cv(self):
+        """FinalModel built without spatial CV should have local_conformal=None."""
+        from sklearn.ensemble import RandomForestRegressor
+        rng = np.random.default_rng(4)
+        X = rng.standard_normal((50, 3))
+        y = rng.standard_normal(50)
+        est = RandomForestRegressor(n_estimators=5, random_state=0).fit(X, y)
+        model = FinalModel(
+            estimator=est,
+            feature_names=["a", "b", "c"],
+            task_type=TaskType.REGRESSION,
+        )
+        assert model.local_conformal is None
+
+
+class TestTimeBinHelper:
+    def test_month_range(self):
+        dates = np.array([f"2021-{m:02d}-15" for m in range(1, 13)])
+        bins = _time_bin(dates, "month")
+        assert list(bins) == list(range(1, 13))
+
+    def test_month_december(self):
+        bins = _time_bin(np.array(["2021-12-01"]), "month")
+        assert int(bins[0]) == 12
+
+    def test_season_djf(self):
+        for month in ["01", "02", "12"]:
+            bins = _time_bin(np.array([f"2021-{month}-15"]), "season")
+            assert int(bins[0]) == 0, f"Month {month} should be DJF (0)"
+
+    def test_season_mam(self):
+        for month in ["03", "04", "05"]:
+            bins = _time_bin(np.array([f"2021-{month}-15"]), "season")
+            assert int(bins[0]) == 1, f"Month {month} should be MAM (1)"
+
+    def test_season_jja(self):
+        for month in ["06", "07", "08"]:
+            bins = _time_bin(np.array([f"2021-{month}-15"]), "season")
+            assert int(bins[0]) == 2, f"Month {month} should be JJA (2)"
+
+    def test_season_son(self):
+        for month in ["09", "10", "11"]:
+            bins = _time_bin(np.array([f"2021-{month}-15"]), "season")
+            assert int(bins[0]) == 3, f"Month {month} should be SON (3)"
+
+
+def _make_compound_local_conformal(min_block_n: int = 3) -> LocalConformalCalibration:
+    """
+    Two spatial blocks × two seasons (winter/summer).
+    Block 0 winter: low error. Block 0 summer: medium error.
+    Block 1 winter: medium error. Block 1 summer: high error.
+    """
+    rng = np.random.default_rng(10)
+    n = 25
+
+    scores_b0_win = rng.uniform(0.0, 0.1, n)
+    scores_b0_sum = rng.uniform(0.3, 0.5, n)
+    scores_b1_win = rng.uniform(0.3, 0.5, n)
+    scores_b1_sum = rng.uniform(0.8, 1.2, n)
+
+    coords_b0 = rng.uniform(0.0, 1.0, (n * 2, 2))
+    coords_b1 = rng.uniform(9.0, 10.0, (n * 2, 2))
+    times_win = np.array(["2021-01-15"] * n + ["2021-01-15"] * n)
+    times_sum = np.array(["2021-07-15"] * n + ["2021-07-15"] * n)
+
+    all_coords = np.vstack([coords_b0, coords_b1])  # (4n, 2)
+    all_scores = np.concatenate([scores_b0_win, scores_b0_sum, scores_b1_win, scores_b1_sum])
+    all_block_idx = np.array([0] * (2 * n) + [1] * (2 * n))
+    all_times = np.concatenate([times_win[:n], times_sum[:n], times_win[n:], times_sum[n:]])
+
+    from sklearn.preprocessing import StandardScaler
+    from h2ml.pipeline.final_model import _build_context, _time_bin as tb
+    ctx = _build_context(all_coords, all_times)
+    scaler = StandardScaler().fit(ctx)
+    oof_ctx = scaler.transform(ctx)
+
+    bins = tb(all_times, "season")
+    raw_compound: dict = {}
+    for bi, tbin, score in zip(all_block_idx, bins, all_scores):
+        raw_compound.setdefault((int(bi), int(tbin)), []).append(float(score))
+    compound = {k: np.sort(np.array(v)) for k, v in raw_compound.items()}
+
+    scores_by_block = [
+        np.sort(np.concatenate([scores_b0_win, scores_b0_sum])),
+        np.sort(np.concatenate([scores_b1_win, scores_b1_sum])),
+    ]
+
+    return LocalConformalCalibration(
+        scores_by_block=scores_by_block,
+        oof_context_scaled=oof_ctx,
+        oof_block_indices=all_block_idx,
+        context_mean=scaler.mean_,
+        context_std=scaler.scale_,
+        fallback_scores=np.sort(all_scores),
+        metric="euclidean",
+        min_block_n=min_block_n,
+        has_coords=True,
+        has_times=True,
+        compound_scores=compound,
+        time_bin_resolution="season",
+    )
+
+
+class TestTemporalBlockPartitioning:
+    def test_same_location_different_season(self):
+        lc = _make_compound_local_conformal()
+        coords = np.array([[9.5, 9.5]])  # near block 1 (high error)
+        q_win = lc.threshold(0.10, coords=coords, times=np.array(["2021-01-15"]))[0]
+        q_sum = lc.threshold(0.10, coords=coords, times=np.array(["2021-07-15"]))[0]
+        assert q_sum > q_win, "Summer should have higher threshold in high-error block"
+
+    def test_fallback_to_spatial_when_compound_small(self):
+        lc = _make_compound_local_conformal(min_block_n=30)  # spatial blocks have 50 samples
+        lc = LocalConformalCalibration(**{**lc.__dict__, "min_compound_n": 30})  # compound cells (25) < 30
+        coords = np.array([[0.5, 0.5]])  # block 0
+        times = np.array(["2021-01-15"])
+        q = lc.threshold(0.10, coords=coords, times=times)[0]
+        # Should use spatial block scores (pooled across seasons), not compound
+        spatial_scores = lc.scores_by_block[0]
+        expected = float(np.quantile(spatial_scores, min(
+            np.ceil(0.9 * (len(spatial_scores) + 1)) / len(spatial_scores), 1.0
+        )))
+        assert abs(q - expected) < 1e-9
+
+    def test_fallback_to_global_when_spatial_small(self):
+        lc = _make_compound_local_conformal(min_block_n=200)
+        lc = LocalConformalCalibration(**{**lc.__dict__, "min_compound_n": 200})  # all cells < 200
+        coords = np.array([[0.5, 0.5]])
+        times = np.array(["2021-01-15"])
+        q = lc.threshold(0.10, coords=coords, times=times)[0]
+        fb = lc.fallback_scores
+        expected = float(np.quantile(fb, min(
+            np.ceil(0.9 * (len(fb) + 1)) / len(fb), 1.0
+        )))
+        assert abs(q - expected) < 1e-9
+
+    def test_no_times_at_inference_uses_spatial_only(self):
+        lc = _make_compound_local_conformal()
+        coords = np.array([[0.5, 0.5]])
+        # has_times=True but no times passed → time_bin=None → spatial fallback
+        q = lc.threshold(0.10, coords=coords)[0]
+        spatial_scores = lc.scores_by_block[0]
+        expected = float(np.quantile(spatial_scores, min(
+            np.ceil(0.9 * (len(spatial_scores) + 1)) / len(spatial_scores), 1.0
+        )))
+        assert abs(q - expected) < 1e-9
+
+
+class TestEncodeTimesHelper:
+    def test_shape_and_range(self):
+        times = np.array(["2021-01-01", "2021-07-01", "2022-12-31"])
+        enc = _encode_times(times)
+        assert enc.shape == (3, 3)
+        # sin/cos columns in [-1, 1]
+        assert np.all(np.abs(enc[:, :2]) <= 1.0 + 1e-9)
+        # year column
+        assert list(enc[:, 2]) == [2021.0, 2021.0, 2022.0]
+
+    def test_circular_adjacency(self):
+        jan1 = _encode_times(np.array(["2021-01-01"]))
+        dec31 = _encode_times(np.array(["2021-12-31"]))
+        jul1 = _encode_times(np.array(["2021-07-01"]))
+        d_jan_dec = np.linalg.norm(jan1[:, :2] - dec31[:, :2])
+        d_jan_jul = np.linalg.norm(jan1[:, :2] - jul1[:, :2])
+        assert d_jan_dec < d_jan_jul, "Jan and Dec should be closer than Jan and Jul"

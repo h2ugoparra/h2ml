@@ -32,6 +32,7 @@ Full parameter reference:
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers that support it |
 | `random_state` | `42` | Global seed for folds, models, and Optuna |
 | `verbose` | `False` | Log step-by-step progress |
+| `time_bin_resolution` | `"month"` | Time bin granularity for compound (spatial block × time) conformal cells: `"month"` (bins 1–12) or `"season"` (0=DJF, 1=MAM, 2=JJA, 3=SON). Only used when `store.times` is provided. |
 
 Spatial CV parameters are documented in [Spatial CV](spatial_cv.md).
 
@@ -56,6 +57,8 @@ result.best_feature_stage     # "default" | "reduced" (never "optimized")
 result.best_params            # dict of HPO params (or registry defaults if step 4 skipped)
 result.y_transform            # winning y-transform (regression only, or None)
 result.cv_type                # "spatial" | "random"
+result.spatial_cv_metric      # "euclidean" | "haversine" — forwarded from config
+result.time_bin_resolution    # "month" | "season" — forwarded from config
 result.cv_warnings            # list[str] — models with failed CV folds
 result.metric                 # short metric name, e.g. "AUC"
 ```

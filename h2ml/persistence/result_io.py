@@ -62,6 +62,8 @@ _SAVED_FIELDS = frozenset(
         "best_params",
         "y_transform",
         "cv_type",
+        "spatial_cv_metric",
+        "time_bin_resolution",
         "cv_warnings",
         "metric",
         # parquet
@@ -112,6 +114,8 @@ def save_result(result, path: str | Path) -> None:
             "best_params": result.best_params,
             "y_transform": result.y_transform,
             "cv_type": result.cv_type,
+            "spatial_cv_metric": result.spatial_cv_metric,
+            "time_bin_resolution": result.time_bin_resolution,
             "cv_warnings": result.cv_warnings,
             "metric": result.metric,
         },
@@ -205,6 +209,8 @@ def load_result(path: str | Path):
         best_params=meta.get("best_params"),
         y_transform=meta.get("y_transform"),
         cv_type=meta.get("cv_type", "random"),
+        spatial_cv_metric=meta.get("spatial_cv_metric", "euclidean"),
+        time_bin_resolution=meta.get("time_bin_resolution", "month"),
         cv_warnings=meta.get("cv_warnings", []),
         metric=meta.get("metric"),
         step3_reduced_stores=None,
@@ -225,6 +231,8 @@ def _save_feature_store(store: PipelineData, path: Path) -> None:
         np.save(path / "y_true.npy", store.y_true)
     if store.coords is not None:
         np.save(path / "coords.npy", store.coords)
+    if store.times is not None:
+        np.save(path / "times.npy", np.asarray(store.times, dtype="datetime64[D]"))
     _save_json(
         {"feature_names": store.feature_names, "y_transform": store.y_transform},
         path / "meta.json",
@@ -237,11 +245,13 @@ def _load_feature_store(path: Path) -> Optional[PipelineData]:
     meta = _load_json(path / "meta.json") or {}
     y_true_path = path / "y_true.npy"
     coords_path = path / "coords.npy"
+    times_path = path / "times.npy"
     return PipelineData(
         X=np.load(path / "X.npy"),
         y=np.load(path / "y.npy"),
         y_true=np.load(y_true_path) if y_true_path.exists() else None,
         coords=np.load(coords_path) if coords_path.exists() else None,
+        times=np.load(times_path) if times_path.exists() else None,
         feature_names=meta.get("feature_names", []),
         y_transform=meta.get("y_transform"),
     )

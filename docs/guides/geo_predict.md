@@ -51,6 +51,22 @@ df = predict_for_year(
 # columns: sparrow_v1, sparrow_v1_pi_lower, sparrow_v1_pi_upper
 ```
 
+### Spatio-temporal varying intervals
+
+When the model has a `LocalConformalCalibration` (built when `store.coords` and/or `store.times` were provided during training), `predict_for_year` automatically extracts `lon`, `lat`, and `time` from the scan and uses them to produce interval widths that vary by location and season. No extra arguments are needed.
+
+To compare global (constant-width) vs local intervals, or to force global intervals when a `LocalConformalCalibration` is present, use `local=False`:
+
+```python
+# Spatio-temporally varying widths (default when local_conformal present)
+df_local = predict_for_year(..., alpha=0.10)
+
+# Global constant-width intervals
+df_global = predict_for_year(..., alpha=0.10, local=False)
+```
+
+See [Conformal Prediction — Spatio-temporal local calibration](conformal.md#spatio-temporal-local-calibration) for details on how the local calibration is built and tuned.
+
 The meaning of the bound columns differs by task type:
 
 **Regression** — per-sample outcome bounds in the original (inverse-transformed) count scale. The bounds are computed in the transform space before inverting, which gives correct asymmetric intervals:
@@ -65,7 +81,7 @@ pi_lower = max(0, inverse_fn(raw − q))
 pi_upper = inverse_fn(raw + q)
 ```
 
-where `raw` is the prediction in transform space. Because `inverse_fn` is non-linear, the lower and upper offsets from `ŷ` will differ. These carry a formal conformal coverage guarantee: the true value falls inside `[pi_lower, pi_upper]` with probability ≥ 1 − alpha.
+where `q` is a per-sample threshold when `local=True`, or the global quantile when `local=False`.
 
 **Binary classification** — per-sample calibration bands in probability space:
 
@@ -73,8 +89,6 @@ where `raw` is the prediction in transform space. Because `inverse_fn` is non-li
 pi_lower = clip(p − q, 0, 1)
 pi_upper = clip(p + q, 0, 1)
 ```
-
-Where `p` is the predicted positive-class probability and `q` is the conformal threshold. Because nonconformity scores for binary classification are `1 − p(true class)` — which live on [0, 1] — `q` and `p` share the same units and the formula is directly analogous to regression. The bands vary spatially: pixels with `p` near 0 or 1 (confident) produce narrow intervals; pixels near 0.5 (uncertain) produce wide intervals spanning the decision boundary.
 
 !!! note
     Unlike regression, these bounds are not a formal coverage guarantee on the class label — they are a calibration band expressing how much the predicted probability could plausibly shift given past model errors.
@@ -96,6 +110,7 @@ df = predict_for_year_delta(
     schema="v1",
     geo_extent=(-10.0, 35.0, 30.0, 70.0),
     alpha=0.10,
+    local=True,   # default — use LocalConformalCalibration when available
 )
 # columns per target: {target}_{schema}, {target}_{schema}_pi_lower, {target}_{schema}_pi_upper
 ```

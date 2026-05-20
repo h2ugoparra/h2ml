@@ -145,6 +145,7 @@ class PipelineConfig:
     spatial_cv_method: str = "block"
     ahc_threshold: Optional[float] = None
     spatial_cv_metric: SpatialMetric = "euclidean"
+    time_bin_resolution: str = "month"
     pca_components: float = 0.95
     exact_max_samples: int = 5_000
     knn_neighbors: int = 15
@@ -229,6 +230,11 @@ class PipelineResult:
     y_transform: Optional[str] = None
     # CV strategy used — "spatial" when store.coords was set, "random" otherwise
     cv_type: str = "random"
+    # Distance metric forwarded from PipelineConfig — used by build_final_model
+    # to construct LocalConformalCalibration with the correct spatial metric
+    spatial_cv_metric: str = "euclidean"
+    # Temporal bin resolution forwarded from PipelineConfig
+    time_bin_resolution: str = "month"
     # Models that had at least one failed CV fold — populated by step 1 and step 3
     cv_warnings: list[str] = field(default_factory=list)
     # Short metric name used for model selection, e.g. "AUC" or "R2" (from PipelineConfig)
@@ -443,6 +449,8 @@ class H2MLPipeline:
         result = PipelineResult(
             features=store,
             cv_type="spatial" if store.coords is not None else "random",
+            spatial_cv_metric=self.config.spatial_cv_metric,
+            time_bin_resolution=self.config.time_bin_resolution,
         )
         transform_stores = self._build_transform_stores(store, transforms)
         result = self._run_step1(result, transform_stores)
@@ -471,6 +479,8 @@ class H2MLPipeline:
             PipelineResult(
                 features=store,
                 cv_type="spatial" if store.coords is not None else "random",
+            spatial_cv_metric=self.config.spatial_cv_metric,
+            time_bin_resolution=self.config.time_bin_resolution,
             ),
             transform_stores,
         )
@@ -489,6 +499,8 @@ class H2MLPipeline:
         result = PipelineResult(
             features=store,
             cv_type="spatial" if store.coords is not None else "random",
+            spatial_cv_metric=self.config.spatial_cv_metric,
+            time_bin_resolution=self.config.time_bin_resolution,
         )
         result = self._run_step1(result, transform_stores)
         result = self._run_step2(result, transform_stores)
@@ -510,6 +522,8 @@ class H2MLPipeline:
         result = PipelineResult(
             features=store,
             cv_type="spatial" if store.coords is not None else "random",
+            spatial_cv_metric=self.config.spatial_cv_metric,
+            time_bin_resolution=self.config.time_bin_resolution,
         )
         result = self._run_step1(result, transform_stores)
         result = self._run_step2(result, transform_stores)

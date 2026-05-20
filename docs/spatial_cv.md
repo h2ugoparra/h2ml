@@ -11,7 +11,8 @@ store = PipelineData(
     X=X_arr,
     feature_names=cols,
     y=y_arr,
-    coords=np.column_stack([lats, lons]),  # (n_samples, 2)
+    coords=np.column_stack([lats, lons]),  # (n_samples, 2) — activates spatial CV
+    times=date_array,                      # (n_samples,) YYYY-MM-DD — activates temporal conformal cells
 )
 result = pipeline.run(store)
 print(result.cv_type)   # "spatial"
@@ -69,6 +70,7 @@ config = PipelineConfig(
 | `exact_max_samples` | `5000` | Below this, exact scipy AHC; above, approximate sklearn AHC |
 | `knn_neighbors` | `15` | k for the k-NN graph in approximate AHC |
 | `pca_components` | `0.95` | Variance retained by PCA on block covariates in SPCV stage 2 |
+| `time_bin_resolution` | `"month"` | Temporal granularity for compound conformal cells: `"month"` (1–12) or `"season"` (DJF/MAM/JJA/SON). Only active when `store.times` is provided. |
 
 ---
 
@@ -85,6 +87,17 @@ Use **spcv** when:
 - Spatial autocorrelation is the primary concern
 - You have covariate and target structure you want folds to respect
 - Dataset is small enough for AHC (or approximate AHC handles the scale)
+
+---
+
+## Spatial blocks and local conformal calibration
+
+The same `block_id_` assignments built for CV are reused by `build_final_model()` to partition OOF residuals into a `LocalConformalCalibration`. Each block (and optionally each block × time bin) gets its own nonconformity score distribution, so prediction intervals widen in regions where the model is historically less accurate.
+
+- **Block splitter** creates a predictable `n_splits × n_blocks_per_fold` blocks with roughly uniform sample counts — compound cells are well-populated for typical dataset sizes.
+- **SPCV splitter** creates more, smaller AHC clusters. With many blocks, compound cells can be sparse — prefer `time_bin_resolution="season"` (4 bins) over `"month"` (12 bins), or increase `ahc_threshold` to reduce the block count.
+
+See [Conformal Prediction](guides/conformal.md#spatio-temporal-local-calibration) for diagnostics and tuning.
 
 ---
 

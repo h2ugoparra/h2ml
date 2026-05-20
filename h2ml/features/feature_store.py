@@ -24,6 +24,12 @@ class PipelineData:
         X:             Feature matrix as numpy array (n_samples, n_features).
         feature_names: Ordered list of feature names matching X columns.
         y:             Target array (n_samples,).
+        y_true:        Original-scale y when a y-transform was applied (optional).
+        y_transform:   Name of the y-transform applied, e.g. "log" or "sqrt" (optional).
+        coords:        Spatial coordinates (n_samples, 2) — lat/lon or projected x/y (optional).
+        times:         Sample dates as YYYY-MM-DD strings or numpy datetime64[D] (n_samples,).
+                       Used to build temporally-aware conformal calibration in
+                       LocalConformalCalibration. Optional — pipeline runs without it.
 
     Example:
         >>> store = PipelineData(X=X_arr, feature_names=df.columns.tolist(), y=y_arr)
@@ -37,6 +43,7 @@ class PipelineData:
     y_true: Optional[np.ndarray] = None  # original-scale y for back-transformed metrics
     y_transform: Optional[str] = None  # transform name, used to look up inverse fn
     coords: Optional[np.ndarray] = None  # spatial coordinates (n_samples, 2) — lat/lon or x/y
+    times: Optional[np.ndarray] = None  # sample dates (n_samples,) — datetime64[D] or strings
 
     def __post_init__(self):
         n = self.X.shape[0]
@@ -53,6 +60,11 @@ class PipelineData:
                 raise ValueError(f"coords must be shape (n_samples, 2), got {self.coords.shape}.")
             if self.coords.shape[0] != n:
                 raise ValueError(f"coords has {self.coords.shape[0]} rows but X has {n} rows.")
+        if self.times is not None:
+            if self.times.ndim != 1:
+                raise ValueError(f"times must be 1-D, got shape {self.times.shape}.")
+            if self.times.shape[0] != n:
+                raise ValueError(f"times has {self.times.shape[0]} elements but X has {n} rows.")
 
     # ------------------------------------------------------------------
     # Conversions
@@ -70,8 +82,18 @@ class PipelineData:
         y_true: Optional[np.ndarray] = None,
         y_transform: Optional[str] = None,
         coords: Optional[np.ndarray] = None,
+        times: Optional[np.ndarray] = None,
     ) -> "PipelineData":
-        """Build a PipelineData directly from a DataFrame."""
+        """Build a PipelineData directly from a DataFrame.
+
+        Args:
+            df:          Feature DataFrame; columns become feature_names.
+            y:           Target array (n_samples,).
+            y_true:      Original-scale y before any transform (optional).
+            y_transform: Name of the y-transform applied (optional).
+            coords:      Spatial coordinates (n_samples, 2) — lat/lon or x/y (optional).
+            times:       Sample dates as YYYY-MM-DD strings or datetime64[D] (optional).
+        """
         return cls(
             X=df.to_numpy(),
             feature_names=df.columns.tolist(),
@@ -79,6 +101,7 @@ class PipelineData:
             y_true=y_true,
             y_transform=y_transform,
             coords=coords,
+            times=times,
         )
 
     # ------------------------------------------------------------------
@@ -86,9 +109,9 @@ class PipelineData:
     # ------------------------------------------------------------------
 
     def select(self, features: list[str]) -> "PipelineData":
-        """
-        Return a new PipelineData with only the selected features.
-        Order follows the input features list.
+        """Return a new PipelineData with only the selected features.
+
+        Order follows the input list. coords and times are propagated unchanged.
         """
         name_to_idx = {name: i for i, name in enumerate(self.feature_names)}
         missing = set(features) - name_to_idx.keys()
@@ -103,6 +126,7 @@ class PipelineData:
             y_true=self.y_true,
             y_transform=self.y_transform,
             coords=self.coords,
+            times=self.times,
         )
 
     # ------------------------------------------------------------------
@@ -122,5 +146,7 @@ class PipelineData:
             f"PipelineData("
             f"n_samples={self.n_samples}, "
             f"n_features={self.n_features}, "
-            f"features={self.feature_names[:3]}{'...' if self.n_features > 3 else ''})"
+            f"features={self.feature_names[:3]}{'...' if self.n_features > 3 else ''}, "
+            f"has_coords={self.coords is not None}, "
+            f"has_times={self.times is not None})"
         )

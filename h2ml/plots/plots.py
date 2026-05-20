@@ -430,15 +430,27 @@ def shap_dependence(
         shap_vals = shap_values[:, idx]
 
         ax.scatter(x_vals, shap_vals, alpha=0.3, c="#aed6dc", s=20)
-        sns.regplot(
-            x=x_vals,
-            y=shap_vals,
-            lowess=True,
-            scatter=False,
-            color="#f47a60",
-            line_kws={"linewidth": 2},
-            ax=ax,
-        )
+        try:
+            sns.regplot(
+                x=x_vals,
+                y=shap_vals,
+                lowess=True,
+                scatter=False,
+                color="#f47a60",
+                line_kws={"linewidth": 2},
+                ax=ax,
+            )
+        except RuntimeError:
+            # statsmodels not installed — fall back to a degree-2 polynomial smooth
+            sns.regplot(
+                x=x_vals,
+                y=shap_vals,
+                order=2,
+                scatter=False,
+                color="#f47a60",
+                line_kws={"linewidth": 2},
+                ax=ax,
+            )
         ax.set_xlabel(feat)
         ax.set_ylabel(f"SHAP ({feat})")
 
