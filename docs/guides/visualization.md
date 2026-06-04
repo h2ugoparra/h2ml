@@ -36,7 +36,7 @@ shap_importance(result.selector, save_path="plots/shap_bar.png")
 shap_summary_plot(result, save_path="plots/shap_beeswarm.png")
 
 # Scatter + degree-2 regression with CI band for the top-N most important features
-shap_dependence(result, top_n=6, save_path="plots/shap_dependence.png")
+shap_dependence(result, n_features=6, save_path="plots/shap_dependence.png")
 ```
 
 ## Spatial fold assignment
