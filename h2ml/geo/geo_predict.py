@@ -14,7 +14,7 @@ import numpy as np
 import polars as pl
 from loguru import logger
 
-from h2ml.pipeline.base import TaskType
+from h2ml.core.base import TaskType
 from h2ml.pipeline.final_model import DeltaFinalModel, FinalModel
 from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS
 

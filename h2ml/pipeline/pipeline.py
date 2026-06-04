@@ -18,11 +18,11 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from sklearn.preprocessing import StandardScaler
+from h2ml.core.base import TaskType
+from h2ml.core.feature_store import PipelineData
 from h2ml.core.spatial_config import SpatialCVConfig
-from h2ml.pipeline.base import TaskType
+from h2ml.core.step import ModelWrapper
 from h2ml.pipeline.cv import CrossValidator, CVResult
-from h2ml.pipeline.step import ModelWrapper
-from h2ml.features.feature_store import PipelineData
 from h2ml.features.selector import FeatureSelector
 from h2ml.evaluation.metrics import (
     RunMetadata,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Optional
 import numpy as np
-from h2ml.features.feature_store import PipelineData
+from h2ml.core.feature_store import PipelineData
 from h2ml.preprocessing.transforms import Y_TRANSFORMS
 
 

@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-from h2ml.pipeline.base import TaskType
+from h2ml.core.base import TaskType
 from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS
 
 

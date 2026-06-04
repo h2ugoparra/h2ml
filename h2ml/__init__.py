@@ -4,7 +4,7 @@ from h2ml.pipeline.pipeline import (
     PipelineData,
     PipelineResult,
 )
-from h2ml.pipeline.base import TaskType
+from h2ml.core.base import TaskType
 
 __all__ = [
     "H2MLPipeline",

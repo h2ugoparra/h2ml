@@ -35,7 +35,7 @@ import pandas as pd
 import shutil
 from loguru import logger
 
-from h2ml.features.feature_store import PipelineData
+from h2ml.core.feature_store import PipelineData
 
 
 # ---------------------------------------------------------------------------

@@ -182,7 +182,7 @@ def cv_diagnostics(
     Raises:
         ValueError: If a list is passed and none of the CVResults have folds.
     """
-    from h2ml.pipeline.base import TaskType
+    from h2ml.core.base import TaskType
 
     if isinstance(cv_result, list):
         results = [r for r in cv_result if r.folds]
@@ -484,7 +484,7 @@ def _compute_final_shap(result) -> tuple:
         return result._final_shap_cache
 
     from h2ml.features.shap_importance import get_shap_values
-    from h2ml.features.feature_store import PipelineData
+    from h2ml.core.feature_store import PipelineData
     from h2ml.pipeline.final_model import build_final_model
 
     final = build_final_model(result)
