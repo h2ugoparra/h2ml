@@ -10,7 +10,7 @@ pipeline_scores     — model_scores across all three pipeline stages from a Pip
 cv_diagnostics      — classification or regression diagnostic panel
 shap_importance     — horizontal bar chart of SHAP feature importance
 shap_summary_plot   — SHAP beeswarm for the final best model (recomputes SHAP)
-shap_dependence     — scatter + degree-2 regression (with CI band) for top-N features
+shap_dependence     — scatter + LOWESS (with bootstrap CI band) for top-N features
 """
 
 from __future__ import annotations
@@ -398,6 +398,68 @@ def shap_importance(
     _save_or_show(save_path)
 
 
+def _lowess_with_ci(
+    ax,
+    x: np.ndarray,
+    y: np.ndarray,
+    color: str,
+    frac: float = 2.0 / 3.0,
+    n_boot: int = 1000,
+    ci: float = 95.0,
+    n_grid: int = 100,
+    random_state: int = 0,
+) -> None:
+    """
+    Draw a LOWESS smoother with a bootstrap confidence band on *ax* (no seaborn).
+
+    The line is a LOWESS fit of y on x. The band is the central *ci*% interval of the
+    LOWESS curve re-fitted on *n_boot* bootstrap resamples of (x, y), evaluated on a
+    shared x-grid; it reflects uncertainty in the location of the smoother, not the
+    spread of the SHAP values (shown by the scatter). LOWESS adapts to arbitrary
+    non-linear, non-monotonic shapes, which a global polynomial fit cannot.
+
+    No-ops when there are fewer than three finite points or fewer than two distinct
+    x-values; draws the line without a band if every resample degenerates.
+    """
+    from statsmodels.nonparametric.smoothers_lowess import lowess
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    finite = np.isfinite(x) & np.isfinite(y)
+    x, y = x[finite], y[finite]
+    if x.size < 3 or np.unique(x).size < 2:
+        return
+
+    grid = np.linspace(x.min(), x.max(), n_grid)
+    # delta linearly interpolates LOWESS between points within 1% of the x-range,
+    # keeping the per-fit cost low enough for n_boot resamples on large samples.
+    delta = 0.01 * (x.max() - x.min())
+
+    def _fit(xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+        sm = lowess(ys, xs, frac=frac, delta=delta, return_sorted=True)
+        return np.interp(grid, sm[:, 0], sm[:, 1])
+
+    point = _fit(x, y)
+
+    rng = np.random.default_rng(random_state)
+    n = x.size
+    boots = np.empty((n_boot, n_grid))
+    valid = 0
+    for _ in range(n_boot):
+        sample = rng.integers(0, n, n)
+        if np.unique(x[sample]).size < 2:
+            continue
+        boots[valid] = _fit(x[sample], y[sample])
+        valid += 1
+
+    ax.plot(grid, point, color=color, linewidth=2)
+    if valid >= 2:
+        tail = (100.0 - ci) / 2.0
+        lower = np.nanpercentile(boots[:valid], tail, axis=0)
+        upper = np.nanpercentile(boots[:valid], 100.0 - tail, axis=0)
+        ax.fill_between(grid, lower, upper, color=color, alpha=0.2)
+
+
 def shap_dependence(
     result,
     n_features: int = 6,
@@ -405,10 +467,12 @@ def shap_dependence(
     save_path: Optional[Path] = None,
 ) -> None:
     """
-    Scatter + degree-2 regression (with a 95% CI band) for the top-N features.
+    Scatter + LOWESS smoother (with a 95% bootstrap CI band) for the top-N features.
 
     Each panel shows the SHAP values for one feature against its value, overlaid with
-    a seaborn second-order regression fit and its default 95% bootstrap confidence band.
+    a LOWESS smoother and a 95% bootstrap confidence band around it. LOWESS is locally
+    weighted, so it tracks complex non-linear and non-monotonic relationships that a
+    global polynomial fit would miss.
 
     Refits the overall best model and recomputes SHAP values.
 
@@ -439,16 +503,7 @@ def shap_dependence(
         shap_vals = shap_values[:, idx]
 
         ax.scatter(x_vals, shap_vals, alpha=0.3, c="#aed6dc", s=20)
-        # Degree-2 seaborn fit with its default 95% bootstrap CI band.
-        sns.regplot(
-            x=x_vals,
-            y=shap_vals,
-            order=2,
-            scatter=False,
-            color="#f47a60",
-            line_kws={"linewidth": 2},
-            ax=ax,
-        )
+        _lowess_with_ci(ax, x_vals, shap_vals, color="#f47a60")
         ax.set_xlabel(feat)
         ax.set_ylabel(f"SHAP ({feat})")
 

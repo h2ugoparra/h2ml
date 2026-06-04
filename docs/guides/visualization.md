@@ -35,7 +35,7 @@ shap_importance(result.selector, save_path="plots/shap_bar.png")
 # Beeswarm — direction and magnitude per sample for the final best model
 shap_summary_plot(result, save_path="plots/shap_beeswarm.png")
 
-# Scatter + degree-2 regression with CI band for the top-N most important features
+# Scatter + LOWESS with bootstrap CI band for the top-N most important features
 shap_dependence(result, n_features=6, save_path="plots/shap_dependence.png")
 ```
 
