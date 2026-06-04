@@ -265,14 +265,14 @@ def _load_feature_store(path: Path) -> Optional[PipelineData]:
 class _NumpyEncoder(json.JSONEncoder):
     """JSON encoder that handles numpy scalars and arrays from Optuna params."""
 
-    def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return super().default(obj)
+    def default(self, o):
+        if isinstance(o, np.integer):
+            return int(o)
+        if isinstance(o, np.floating):
+            return float(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        return super().default(o)
 
 
 def _save_json(data: dict, path: Path) -> None:

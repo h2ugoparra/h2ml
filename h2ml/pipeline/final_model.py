@@ -721,6 +721,7 @@ def _build_local_conformal(
     use_haversine = metric == "haversine" and times is None and coords is not None
 
     if use_haversine:
+        assert oof_coords is not None  # use_haversine implies coords is not None
         oof_context_scaled = np.deg2rad(oof_coords)
         context_mean = np.zeros(2)
         context_std = np.ones(2)

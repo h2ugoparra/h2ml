@@ -862,6 +862,7 @@ class H2MLPipeline:
         result.cv_warnings.extend(self._collect_cv_warnings(cv_results))
 
         # Compare step1 (default) and step3 (reduced) agg dfs directly — pick the best row
+        assert result.step1_agg_df is not None and result.step3_agg_df is not None
         all_stages_agg = pd.concat([result.step1_agg_df, result.step3_agg_df], ignore_index=True)
         best = select_best(
             all_stages_agg,

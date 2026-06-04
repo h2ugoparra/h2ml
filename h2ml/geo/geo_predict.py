@@ -404,7 +404,7 @@ def predict_map(
 
     df_results = df_orig.select(["index", "time", "lon", "lat"]).with_columns(full_series)
     df_agg = aggregate_by_space_time(df_results, vars_name=target_col, agg_by=agg_by)
-    df_plot = df_agg.collect() if hasattr(df_agg, "collect") else df_agg
+    df_plot = df_agg.collect() if isinstance(df_agg, pl.LazyFrame) else df_agg
 
     plot_maps(
         df_plot,

@@ -1,0 +1,15 @@
+{
+  "include": ["h2ml"],
+  "exclude": [
+    "**/__pycache__",
+    ".venv",
+    "tests",
+    "docs",
+    "site",
+    "notebooks"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic"
+}
