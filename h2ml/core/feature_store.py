@@ -1,5 +1,5 @@
 """
-h2ml/features/feature_store.py
+h2ml/core/feature_store.py
 
 PipelineData — travels alongside numpy arrays to preserve feature names
 throughout the pipeline. Converts to DataFrame locally when needed (SHAP,

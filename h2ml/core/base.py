@@ -1,5 +1,5 @@
 """
-h2ml/pipeline/base.py
+h2ml/core/base.py
 
 Abstract base classes that define the contract every pipeline step must fulfill.
 All classifiers, regressors, and preprocessors inherit from these.

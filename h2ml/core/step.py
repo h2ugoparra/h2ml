@@ -1,5 +1,5 @@
 """
-h2ml/pipeline/step.py
+h2ml/core/step.py
 
 ModelWrapper — a wrapper that promotes any sklearn-compatible model into a
 BaseStep-compliant object, so existing sklearn estimators can be dropped into
