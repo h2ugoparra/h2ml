@@ -10,7 +10,7 @@ pipeline_scores     — model_scores across all three pipeline stages from a Pip
 cv_diagnostics      — classification or regression diagnostic panel
 shap_importance     — horizontal bar chart of SHAP feature importance
 shap_summary_plot   — SHAP beeswarm for the final best model (recomputes SHAP)
-shap_dependence     — scatter + lowess for top-N features
+shap_dependence     — scatter + degree-2 regression (with CI band) for top-N features
 """
 
 from __future__ import annotations
@@ -405,7 +405,10 @@ def shap_dependence(
     save_path: Optional[Path] = None,
 ) -> None:
     """
-    Scatter + lowess plots for the top-N most important features.
+    Scatter + degree-2 regression (with a 95% CI band) for the top-N features.
+
+    Each panel shows the SHAP values for one feature against its value, overlaid with
+    a seaborn second-order regression fit and its default 95% bootstrap confidence band.
 
     Refits the overall best model and recomputes SHAP values.
 
@@ -436,27 +439,16 @@ def shap_dependence(
         shap_vals = shap_values[:, idx]
 
         ax.scatter(x_vals, shap_vals, alpha=0.3, c="#aed6dc", s=20)
-        try:
-            sns.regplot(
-                x=x_vals,
-                y=shap_vals,
-                lowess=True,
-                scatter=False,
-                color="#f47a60",
-                line_kws={"linewidth": 2},
-                ax=ax,
-            )
-        except RuntimeError:
-            # statsmodels not installed — fall back to a degree-2 polynomial smooth
-            sns.regplot(
-                x=x_vals,
-                y=shap_vals,
-                order=2,
-                scatter=False,
-                color="#f47a60",
-                line_kws={"linewidth": 2},
-                ax=ax,
-            )
+        # Degree-2 seaborn fit with its default 95% bootstrap CI band.
+        sns.regplot(
+            x=x_vals,
+            y=shap_vals,
+            order=2,
+            scatter=False,
+            color="#f47a60",
+            line_kws={"linewidth": 2},
+            ax=ax,
+        )
         ax.set_xlabel(feat)
         ax.set_ylabel(f"SHAP ({feat})")
 
