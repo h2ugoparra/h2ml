@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
-from h2ml.pipeline.pipeline import _MINIMIZE
+from h2ml.evaluation.metrics import _MINIMIZE
 
 if TYPE_CHECKING:
     from h2ml.pipeline.pipeline import PipelineResult
@@ -262,7 +262,7 @@ def _get_oof_brier(result: "PipelineResult") -> Optional[float]:
     OOF data is unavailable.
     """
     from sklearn.metrics import brier_score_loss
-    from h2ml.pipeline.base import TaskType
+    from h2ml.core.base import TaskType
 
     cv = result.best_cv_result
     if cv is None or cv.task_type != TaskType.CLASSIFICATION:

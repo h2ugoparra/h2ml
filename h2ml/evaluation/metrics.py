@@ -27,8 +27,38 @@ from sklearn.metrics import (
     r2_score,
 )
 
-from h2ml.pipeline.base import TaskType
-from h2ml.pipeline.cv import CVResult, FoldResult
+from h2ml.core.base import TaskType
+from h2ml.core.cv_result import CVResult, FoldResult
+
+# ---------------------------------------------------------------------------
+# Metric metadata — shared by PipelineConfig (selection/HPO) and compare_results
+# ---------------------------------------------------------------------------
+
+# Short metric name → full aggregated-DataFrame column name
+_METRIC_COL: dict[str, str] = {
+    # Classification
+    "AUC": "AUC_Test_Mean",
+    "AUC_PR": "AUC_PR_Test_Mean",
+    "LogLoss": "LogLoss_Test_Mean",
+    "F1": "F1_Test_Mean",
+    "Brier": "Brier_Test_Mean",
+    # Regression
+    "R2": "R2_Test_Mean",
+    "MAE": "MAE_Test_Mean",
+    "RMSE": "RMSE_Test_Mean",
+}
+
+# Whether each metric should be minimised (True) or maximised (False)
+_MINIMIZE: dict[str, bool] = {
+    "AUC": False,
+    "AUC_PR": False,
+    "F1": False,
+    "Brier": True,
+    "LogLoss": True,
+    "R2": False,
+    "MAE": True,
+    "RMSE": True,
+}
 
 # ---------------------------------------------------------------------------
 # Metadata container — replaces PipelineSpecs fields in results

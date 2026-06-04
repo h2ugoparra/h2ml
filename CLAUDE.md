@@ -39,7 +39,19 @@ FinalModel (pipeline/final_model.py)         → predict/predict_proba + optiona
 DeltaFinalModel (pipeline/final_model.py)    → P(present) × E(count|present); built via build_delta_final_model()
 ModelRegistry (utils/registry.py)            → single source of truth; build_models(task)
 Optimizer (optimization/optimizer.py)        → run_study(); optimize_all() for batch use
+
+core/ (foundational, dependency-free leaf layer; nothing in core imports other h2ml packages)
+  base.py         → TaskType, BaseStep/PredictorMixin, BaseClassifier/Regressor/Preprocessor
+  feature_store.py→ PipelineData
+  cv_result.py    → FoldResult, CVResult
+  step.py         → ModelWrapper, make_classifier/regressor/preprocessor
+  param_spaces/   → Optuna search spaces (classifiers.py, regressors.py)
 ```
+
+Import layering: `core` is the bottom layer; `features`/`evaluation`/`utils` depend only on
+`core`; `pipeline` is the top orchestrator depending on everything. Old paths
+(`pipeline.base`, `pipeline.step`, `pipeline.cv`, `features.feature_store`) re-export from
+`core` for backward compatibility, so existing imports still work.
 
 Partial runs:
 

@@ -18,10 +18,7 @@ by both the pipeline (build_steps) and the optimizer (get_entry via opt_params.p
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Optional, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from h2ml.pipeline.step import ModelWrapper
+from typing import Callable, Optional
 
 from sklearn.ensemble import (
     RandomForestClassifier,
@@ -42,8 +39,9 @@ from sklearn.linear_model import LogisticRegression, PoissonRegressor
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.naive_bayes import GaussianNB
 
-from h2ml.optimization.params import classifiers as cp
-from h2ml.optimization.params import regressors as rp
+from h2ml.core.step import ModelWrapper
+from h2ml.core.param_spaces import classifiers as cp
+from h2ml.core.param_spaces import regressors as rp
 
 
 # ---------------------------------------------------------------------------
@@ -83,10 +81,8 @@ class ModelEntry:
                 "but param_fn=None. Provide a param_fn or set opt_enabled=False."
             )
 
-    def build_model(self) -> "ModelWrapper":
+    def build_model(self) -> ModelWrapper:
         """Instantiate a ModelWrapper with default kwargs and scaling flag."""
-        from h2ml.pipeline.step import ModelWrapper
-
         return ModelWrapper(
             estimator=self.model_cls(**self.default_kwargs),
             requires_scaling=self.requires_scaling,

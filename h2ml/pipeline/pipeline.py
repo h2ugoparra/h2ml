@@ -28,36 +28,14 @@ from h2ml.evaluation.metrics import (
     aggregate_metrics,
     compute_metrics_all,
     select_best,
+    # Metric metadata (short name → agg column, minimise direction) — used by
+    # PipelineConfig.metric_col / minimize_metric.
+    _METRIC_COL,
+    _MINIMIZE,
 )
 from h2ml.optimization.optimizer import run_study
 from h2ml.utils.registry import build_models
 from h2ml.preprocessing.transform_stores import build_transform_stores
-
-# Mapping from short metric name → full agg DataFrame column name
-_METRIC_COL: dict[str, str] = {
-    # Classification
-    "AUC": "AUC_Test_Mean",
-    "AUC_PR": "AUC_PR_Test_Mean",
-    "LogLoss": "LogLoss_Test_Mean",
-    "F1": "F1_Test_Mean",
-    "Brier": "Brier_Test_Mean",
-    # Regression
-    "R2": "R2_Test_Mean",
-    "MAE": "MAE_Test_Mean",
-    "RMSE": "RMSE_Test_Mean",
-}
-
-# Whether each metric should be minimised (True) or maximised (False)
-_MINIMIZE: dict[str, bool] = {
-    "AUC": False,
-    "AUC_PR": False,
-    "F1": False,
-    "Brier": True,
-    "LogLoss": True,
-    "R2": False,
-    "MAE": True,
-    "RMSE": True,
-}
 
 
 @dataclass
