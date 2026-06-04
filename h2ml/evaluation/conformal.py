@@ -10,8 +10,8 @@ LocalConformalCalibration  — block-local thresholds in combined space-time, wi
 
 These types are built from out-of-fold residuals by the factory helpers in
 pipeline/final_model.py and consumed by FinalModel / DeltaFinalModel at inference. They
-depend only on numpy, scikit-learn, and core types (no other h2ml package), so they sit
-in the evaluation layer alongside metrics.
+depend only on numpy, pandas, scikit-learn, and core types (no other h2ml package), so they
+sit in the evaluation layer alongside metrics.
 """
 
 from __future__ import annotations
@@ -20,8 +20,19 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 
 from h2ml.core.base import TaskType
+
+
+_SEASON_NAMES = {0: "DJF", 1: "MAM", 2: "JJA", 3: "SON"}
+
+
+def _bin_label(time_bin: int, resolution: Optional[str]) -> str:
+    """Human-readable label for an integer time bin (season name or month number)."""
+    if resolution == "season":
+        return _SEASON_NAMES.get(time_bin, str(time_bin))
+    return str(time_bin)  # month resolution → "1".."12"
 
 
 @dataclass
@@ -254,6 +265,77 @@ class LocalConformalCalibration:
                 for i, bi in enumerate(block_indices)
             ]
         )
+
+    def summary(self, alpha: float = 0.10, max_blocks: Optional[int] = None) -> pd.DataFrame:
+        """Per-block (and per-time-bin) calibration thresholds at the given alpha.
+
+        Returns one 'spatial' row per block (all time bins pooled) plus, when compound
+        cells exist, one 'compound' row per populated (block, time_bin) cell. The bin
+        labels follow self.time_bin_resolution (season → DJF/MAM/JJA/SON, month → 1–12),
+        so no resolution argument is needed.
+
+        Columns:
+            block:    Spatial block index (into scores_by_block).
+            level:    "spatial" or "compound".
+            time_bin: Integer time bin for compound rows; <NA> for spatial rows.
+            bin_name: "all" for spatial rows; season/month label for compound rows.
+            n:        Number of calibration samples in the cell.
+            q:        Conformal quantile at alpha (the threshold this cell would apply).
+            used:     Which fallback level a query resolving here actually hits —
+                      "compound" (n ≥ min_compound_n), "block" (block n ≥ min_block_n),
+                      or "global" (falls through to fallback_scores).
+
+        Args:
+            alpha:      Miscoverage level (0.10 → 90% coverage).
+            max_blocks: Cap the number of blocks reported (None = all).
+        """
+        n_blocks = len(self.scores_by_block)
+        if max_blocks is not None:
+            n_blocks = min(n_blocks, max_blocks)
+
+        rows = []
+        for block_idx in range(n_blocks):
+            block_scores = self.scores_by_block[block_idx]
+            block_n = len(block_scores)
+            block_ok = block_n >= self.min_block_n
+            rows.append(
+                {
+                    "block": block_idx,
+                    "level": "spatial",
+                    "time_bin": pd.NA,
+                    "bin_name": "all",
+                    "n": block_n,
+                    "q": _conformal_quantile(block_scores, alpha),
+                    "used": "block" if block_ok else "global",
+                }
+            )
+
+            if self.compound_scores is None:
+                continue
+            cells = sorted(tb for (b, tb) in self.compound_scores if b == block_idx)
+            for tb in cells:
+                cs = self.compound_scores[(block_idx, tb)]
+                if len(cs) >= self.min_compound_n:
+                    used = "compound"
+                elif block_ok:
+                    used = "block"
+                else:
+                    used = "global"
+                rows.append(
+                    {
+                        "block": block_idx,
+                        "level": "compound",
+                        "time_bin": tb,
+                        "bin_name": _bin_label(tb, self.time_bin_resolution),
+                        "n": len(cs),
+                        "q": _conformal_quantile(cs, alpha),
+                        "used": used,
+                    }
+                )
+
+        df = pd.DataFrame(rows, columns=["block", "level", "time_bin", "bin_name", "n", "q", "used"])
+        df["time_bin"] = df["time_bin"].astype("Int64")
+        return df
 
     def _nearest_block(self, context_scaled: np.ndarray, oof_ctx: np.ndarray, use_haversine: bool) -> np.ndarray:
         """Return block index of the nearest OOF training sample per query point."""

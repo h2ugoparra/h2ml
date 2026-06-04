@@ -15,6 +15,7 @@ SPCVSplitter — two-stage method:
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Iterator, Literal, Optional
 
 import numpy as np
@@ -101,6 +102,15 @@ class SpatialBlockSplitter:
     def get_n_splits(self, X=None, y=None, groups=None) -> int:
         """Number of folds (sklearn splitter interface; X/y/groups ignored)."""
         return self.n_splits
+
+    def plot(self, lon_col: int = 1, lat_col: int = 0, save_path: Optional[Path] = None) -> None:
+        """Two-panel scatter of block and fold assignments.
+
+        Thin wrapper over h2ml.plots.plot_spatial_blocks(self); see that function for details.
+        """
+        from h2ml.plots.plots import plot_spatial_blocks
+
+        plot_spatial_blocks(self, lon_col=lon_col, lat_col=lat_col, save_path=save_path)
 
     def split(
         self,
@@ -305,6 +315,15 @@ class SPCVSplitter:
     def get_n_splits(self, X=None, y=None, groups=None) -> int:
         """Number of folds (sklearn splitter interface; X/y/groups ignored)."""
         return self.n_splits
+
+    def plot(self, lon_col: int = 1, lat_col: int = 0, save_path: Optional[Path] = None) -> None:
+        """Two-panel scatter of block and fold assignments.
+
+        Thin wrapper over h2ml.plots.plot_spatial_blocks(self); see that function for details.
+        """
+        from h2ml.plots.plots import plot_spatial_blocks
+
+        plot_spatial_blocks(self, lon_col=lon_col, lat_col=lat_col, save_path=save_path)
 
     def split(
         self,

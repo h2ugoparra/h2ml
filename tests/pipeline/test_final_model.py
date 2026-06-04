@@ -18,6 +18,7 @@ from h2ml.pipeline.cv import CVResult, FoldResult
 from h2ml.evaluation.conformal import (
     ConformalCalibration,
     LocalConformalCalibration,
+    _conformal_quantile,
     _encode_times,
     _time_bin,
 )
@@ -1096,6 +1097,55 @@ class TestTemporalBlockPartitioning:
             np.quantile(spatial_scores, min(np.ceil(0.9 * (len(spatial_scores) + 1)) / len(spatial_scores), 1.0))
         )
         assert abs(q - expected) < 1e-9
+
+
+class TestLocalConformalSummary:
+    def test_columns_and_spatial_rows(self):
+        lc = _make_compound_local_conformal()
+        df = lc.summary()
+        assert list(df.columns) == ["block", "level", "time_bin", "bin_name", "n", "q", "used"]
+        spatial = df[df["level"] == "spatial"]
+        assert len(spatial) == len(lc.scores_by_block)
+        # spatial rows carry no time bin
+        assert spatial["time_bin"].isna().all()
+        assert (spatial["bin_name"] == "all").all()
+
+    def test_compound_rows_present_and_labelled(self):
+        lc = _make_compound_local_conformal()
+        df = lc.summary()
+        compound = df[df["level"] == "compound"]
+        # 2 blocks × 2 populated seasons (DJF, JJA)
+        assert len(compound) == len(lc.compound_scores)
+        assert set(compound["bin_name"]) == {"DJF", "JJA"}
+
+    def test_no_compound_when_scores_absent(self):
+        lc = _make_compound_local_conformal()
+        lc = LocalConformalCalibration(**{**lc.__dict__, "compound_scores": None})
+        df = lc.summary()
+        assert (df["level"] == "spatial").all()
+
+    def test_q_matches_conformal_quantile(self):
+        lc = _make_compound_local_conformal()
+        df = lc.summary(alpha=0.10)
+        row = df[df["level"] == "spatial"].iloc[0]
+        expected = _conformal_quantile(lc.scores_by_block[int(row["block"])], 0.10)
+        assert abs(row["q"] - expected) < 1e-12
+
+    def test_used_reflects_fallback_levels(self):
+        # Cells (25) ≥ min_compound_n(5); blocks (50) ≥ min_block_n(3) → all "compound"/"block"
+        lc = _make_compound_local_conformal()
+        df = lc.summary()
+        assert set(df[df["level"] == "compound"]["used"]) == {"compound"}
+        assert set(df[df["level"] == "spatial"]["used"]) == {"block"}
+
+        # Raise thresholds above every cell/block size → everything falls to global
+        lc_global = LocalConformalCalibration(**{**lc.__dict__, "min_block_n": 200, "min_compound_n": 200})
+        assert set(lc_global.summary()["used"]) == {"global"}
+
+    def test_max_blocks_truncates(self):
+        lc = _make_compound_local_conformal()
+        df = lc.summary(max_blocks=1)
+        assert set(df["block"]) == {0}
 
 
 class TestEncodeTimesHelper:
