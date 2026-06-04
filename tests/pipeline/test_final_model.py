@@ -785,6 +785,7 @@ def _make_local_conformal(metric: str = "euclidean", min_block_n: int = 3) -> Lo
     all_block_idx = np.array([0] * n_per_block + [1] * n_per_block)
 
     from sklearn.preprocessing import StandardScaler
+
     scaler = StandardScaler().fit(all_coords)
     oof_context_scaled = scaler.transform(all_coords)
 
@@ -834,6 +835,7 @@ class TestLocalConformalCalibration:
 
         encoded = _encode_times(all_times)
         from sklearn.preprocessing import StandardScaler
+
         scaler = StandardScaler().fit(encoded)
         oof_context_scaled = scaler.transform(encoded)
 
@@ -884,6 +886,7 @@ class TestLocalConformalCalibration:
 
         from h2ml.evaluation.conformal import _build_context
         from sklearn.preprocessing import StandardScaler
+
         ctx = _build_context(all_coords, all_times)
         scaler = StandardScaler().fit(ctx)
         oof_ctx = scaler.transform(ctx)
@@ -908,6 +911,7 @@ class TestLocalConformalCalibration:
     def test_predict_interval_uses_local_conformal(self):
         """predict_interval with coords returns varying widths; without coords is scalar."""
         from sklearn.ensemble import RandomForestRegressor
+
         rng = np.random.default_rng(3)
         X = rng.standard_normal((50, 4))
         y = rng.standard_normal(50)
@@ -928,10 +932,12 @@ class TestLocalConformalCalibration:
         )
 
         X_test = rng.standard_normal((10, 4))
-        coords = np.column_stack([
-            rng.uniform(0, 1, 5).tolist() + rng.uniform(9, 10, 5).tolist(),
-            rng.uniform(0, 1, 5).tolist() + rng.uniform(9, 10, 5).tolist(),
-        ])
+        coords = np.column_stack(
+            [
+                rng.uniform(0, 1, 5).tolist() + rng.uniform(9, 10, 5).tolist(),
+                rng.uniform(0, 1, 5).tolist() + rng.uniform(9, 10, 5).tolist(),
+            ]
+        )
 
         lower, upper = model.predict_interval(X_test, alpha=0.10, coords=coords)
         widths = upper - lower
@@ -947,6 +953,7 @@ class TestLocalConformalCalibration:
     def test_local_conformal_none_without_spatial_cv(self):
         """FinalModel built without spatial CV should have local_conformal=None."""
         from sklearn.ensemble import RandomForestRegressor
+
         rng = np.random.default_rng(4)
         X = rng.standard_normal((50, 3))
         y = rng.standard_normal(50)
@@ -1016,6 +1023,7 @@ def _make_compound_local_conformal(min_block_n: int = 3) -> LocalConformalCalibr
 
     from sklearn.preprocessing import StandardScaler
     from h2ml.evaluation.conformal import _build_context, _time_bin as tb
+
     ctx = _build_context(all_coords, all_times)
     scaler = StandardScaler().fit(ctx)
     oof_ctx = scaler.transform(ctx)
@@ -1063,9 +1071,9 @@ class TestTemporalBlockPartitioning:
         q = lc.threshold(0.10, coords=coords, times=times)[0]
         # Should use spatial block scores (pooled across seasons), not compound
         spatial_scores = lc.scores_by_block[0]
-        expected = float(np.quantile(spatial_scores, min(
-            np.ceil(0.9 * (len(spatial_scores) + 1)) / len(spatial_scores), 1.0
-        )))
+        expected = float(
+            np.quantile(spatial_scores, min(np.ceil(0.9 * (len(spatial_scores) + 1)) / len(spatial_scores), 1.0))
+        )
         assert abs(q - expected) < 1e-9
 
     def test_fallback_to_global_when_spatial_small(self):
@@ -1075,9 +1083,7 @@ class TestTemporalBlockPartitioning:
         times = np.array(["2021-01-15"])
         q = lc.threshold(0.10, coords=coords, times=times)[0]
         fb = lc.fallback_scores
-        expected = float(np.quantile(fb, min(
-            np.ceil(0.9 * (len(fb) + 1)) / len(fb), 1.0
-        )))
+        expected = float(np.quantile(fb, min(np.ceil(0.9 * (len(fb) + 1)) / len(fb), 1.0)))
         assert abs(q - expected) < 1e-9
 
     def test_no_times_at_inference_uses_spatial_only(self):
@@ -1086,9 +1092,9 @@ class TestTemporalBlockPartitioning:
         # has_times=True but no times passed → time_bin=None → spatial fallback
         q = lc.threshold(0.10, coords=coords)[0]
         spatial_scores = lc.scores_by_block[0]
-        expected = float(np.quantile(spatial_scores, min(
-            np.ceil(0.9 * (len(spatial_scores) + 1)) / len(spatial_scores), 1.0
-        )))
+        expected = float(
+            np.quantile(spatial_scores, min(np.ceil(0.9 * (len(spatial_scores) + 1)) / len(spatial_scores), 1.0))
+        )
         assert abs(q - expected) < 1e-9
 
 

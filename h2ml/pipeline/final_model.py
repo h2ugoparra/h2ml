@@ -354,9 +354,7 @@ def _classification_scores(f: Any, classes: Optional[Any]) -> Optional[np.ndarra
     try:
         col_idx = np.array([label_to_idx[label] for label in f.y_test])
     except KeyError as e:
-        logger.warning(
-            f"Conformal calibration skipped: y_test contains label {e} not found in estimator.classes_."
-        )
+        logger.warning(f"Conformal calibration skipped: y_test contains label {e} not found in estimator.classes_.")
         return None
     return 1.0 - f.y_prob_test[np.arange(len(col_idx)), col_idx]
 
