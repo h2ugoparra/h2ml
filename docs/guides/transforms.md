@@ -9,7 +9,7 @@ result = pipeline.run(store, transforms=["log", "sqrt", "count", "winlog"])
 print(result.y_transform)   # e.g. "log"
 ```
 
-Only supported for regression (`TaskType.REGRESSION`).
+Only supported for regression (`task_type="regression"`).
 
 ## Available transforms
 

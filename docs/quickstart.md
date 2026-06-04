@@ -4,7 +4,7 @@
 
 ```python
 import numpy as np
-from h2ml import H2MLPipeline, PipelineConfig, PipelineData, TaskType
+from h2ml import H2MLPipeline, PipelineConfig, PipelineData
 
 store = PipelineData(
     X=X_arr,                     # np.ndarray (n_samples, n_features)
@@ -20,7 +20,7 @@ store = PipelineData.from_frame(
 )
 
 pipeline = H2MLPipeline(config=PipelineConfig(
-    task_type=TaskType.CLASSIFICATION,
+    task_type="classification",   # or "regression"; the TaskType enum is also accepted
     metric="AUC",
     n_splits=5,
     n_trials=50,
@@ -38,7 +38,7 @@ Steps 1 and 3 evaluate all models × all transforms jointly. The winning (model,
 
 ```python
 pipeline = H2MLPipeline(config=PipelineConfig(
-    task_type=TaskType.REGRESSION,
+    task_type="regression",
     metric="R2",
     verbose=True,
 ))
@@ -56,7 +56,7 @@ Pass an `(n_samples, 2)` coordinate array to activate spatial CV throughout the 
 store = PipelineData(X=X_arr, feature_names=cols, y=y_arr, coords=coords_arr)
 
 pipeline = H2MLPipeline(config=PipelineConfig(
-    task_type=TaskType.CLASSIFICATION,
+    task_type="classification",
     spatial_cv_method="block",   # or "spcv"
     spatial_cv_metric="haversine",
 ))

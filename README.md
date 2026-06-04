@@ -38,7 +38,7 @@ A runnable example using public sklearn datasets is in [`examples/quickstart.ipy
 
 ```python
 import numpy as np
-from h2ml import H2MLPipeline, PipelineConfig, PipelineData, TaskType
+from h2ml import H2MLPipeline, PipelineConfig, PipelineData
 
 # Build the data container
 store = PipelineData(
@@ -49,7 +49,7 @@ store = PipelineData(
 
 # Configure and run
 pipeline = H2MLPipeline(config=PipelineConfig(
-    task_type=TaskType.CLASSIFICATION,
+    task_type="classification",   # or "regression"; the TaskType enum is also accepted
     metric="AUC",
     n_splits=5,
     n_trials=50,
@@ -66,7 +66,7 @@ print(result.best_model_name, result.best_stage)
 
 ```python
 config = PipelineConfig(
-    task_type=TaskType.REGRESSION,
+    task_type="regression",
     metric="R2",
     verbose=True,
 )
@@ -118,7 +118,7 @@ Step 4 is skipped when the winning model has `opt_enabled=False` in the registry
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `task_type` | `TaskType.CLASSIFICATION` | `CLASSIFICATION` or `REGRESSION` |
+| `task_type` | `"classification"` | `"classification"` or `"regression"` (case-insensitive); a `TaskType` member is also accepted |
 | `metric` | `"AUC"` | Short metric name for model selection and HPO. Minimisation direction is derived automatically. Classification: `"AUC"`, `"AUC_PR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. |
 | `n_splits` | `5` | Folds for steps 1 and 3 |
 | `opt_n_splits` | `3` | Folds used inside Optuna (fewer = faster) |
@@ -136,8 +136,8 @@ Set `store.coords` to an `(n_samples, 2)` array of spatial coordinates to activa
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `spatial_cv_method` | `"block"` | `"block"` (quantile-grid) or `"spcv"` (AHC + cluster ensemble) |
-| `spatial_cv_metric` | `"euclidean"` | `"euclidean"` or `"haversine"` (expects lat/lon in degrees) |
+| `spatial_cv_method` | `"spcv"` | `"block"` (quantile-grid) or `"spcv"` (AHC + cluster ensemble) |
+| `spatial_cv_metric` | `"haversine"` | `"euclidean"` or `"haversine"` (expects lat/lon in degrees) |
 | `n_blocks_per_fold` | `5` | Blocks per test fold for the block splitter |
 | `ahc_threshold` | `None` | AHC distance threshold for `spcv`; auto-set to 10th percentile of pairwise distances when `None` |
 | `exact_max_samples` | `5000` | n ≤ this → exact scipy AHC; n > → approximate sklearn AHC with k-NN graph |

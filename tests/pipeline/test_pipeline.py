@@ -180,6 +180,24 @@ class TestPipelineConfig:
     def test_default_task_type(self):
         assert PipelineConfig().task_type == TaskType.CLASSIFICATION
 
+    def test_task_type_accepts_string(self):
+        assert PipelineConfig(task_type="classification").task_type is TaskType.CLASSIFICATION
+        assert PipelineConfig(task_type="regression").task_type is TaskType.REGRESSION
+
+    def test_task_type_string_is_case_insensitive(self):
+        assert PipelineConfig(task_type="Regression").task_type is TaskType.REGRESSION
+
+    def test_task_type_enum_still_accepted(self):
+        assert PipelineConfig(task_type=TaskType.REGRESSION).task_type is TaskType.REGRESSION
+
+    def test_invalid_task_type_string_raises(self):
+        with pytest.raises(ValueError, match="task_type"):
+            PipelineConfig(task_type="classify")
+
+    def test_task_type_rejects_transform(self):
+        with pytest.raises(ValueError, match="task_type"):
+            PipelineConfig(task_type=TaskType.TRANSFORM)
+
     def test_default_metric(self):
         assert PipelineConfig().metric == "AUC"
 
@@ -1079,7 +1097,10 @@ class TestSpatialCVPipeline:
         from h2ml.features.spatial_cv import SpatialBlockSplitter
 
         store = _make_spatial_store()
-        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(n_blocks_per_fold=2))
+        pipeline = H2MLPipeline(
+            models=_lr_only(),
+            config=_clf_config(spatial_cv_method="block", n_blocks_per_fold=2),
+        )
         result = pipeline.run_step1_only(store)
         assert isinstance(result.splitter, SpatialBlockSplitter)
 

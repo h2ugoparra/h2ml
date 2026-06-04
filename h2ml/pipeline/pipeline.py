@@ -66,7 +66,9 @@ class PipelineConfig:
     Configuration for H2MLPipeline.
 
     Attributes:
-        task_type:           CLASSIFICATION or REGRESSION.
+        task_type:           Task to run. Accepts the string "classification" or
+                             "regression" (case-insensitive) or a TaskType member;
+                             normalised to TaskType in __post_init__.
         metric:              Short metric name used for model selection (steps 1–3) and
                              HPO (step 4). Minimisation direction and sort order are
                              derived automatically — no need to set a separate flag.
@@ -105,10 +107,10 @@ class PipelineConfig:
                              None). "block" — quantile-grid blocking; fast, no
                              clustering. "spcv" — Agglomerative Hierarchical Clustering +
                              cluster ensemble; more spatially coherent folds, slower.
-                             Default: "block".
+                             Default: "spcv".
         spatial_cv_metric:   Distance metric used by both splitters. "euclidean" —
                              projected coordinates (metres). "haversine" — geographic
-                             lat/lon in decimal degrees. Default: "euclidean".
+                             lat/lon in decimal degrees. Default: "haversine".
         n_blocks_per_fold:   Number of spatial blocks assigned to the test set per fold
                              in the block splitter. Default: 5.
         time_bin_resolution: Temporal granularity for binning dates in spatial CV and
@@ -132,7 +134,7 @@ class PipelineConfig:
                              Default: False.
     """
 
-    task_type: TaskType = TaskType.CLASSIFICATION
+    task_type: TaskType | str = TaskType.CLASSIFICATION
     metric: str = "AUC"
     n_splits: int = 5
     opt_n_splits: int = 3
@@ -143,9 +145,9 @@ class PipelineConfig:
     min_features: int = 1
     n_hpo_repeats: int = 1
     n_blocks_per_fold: int = 5
-    spatial_cv_method: str = "block"
+    spatial_cv_method: str = "spcv"
     ahc_threshold: Optional[float] = None
-    spatial_cv_metric: SpatialMetric = "euclidean"
+    spatial_cv_metric: SpatialMetric = "haversine"
     time_bin_resolution: str = "month"
     pca_components: float = 0.95
     exact_max_samples: int = 5_000
@@ -153,6 +155,16 @@ class PipelineConfig:
     handle_imbalance: bool = False
 
     def __post_init__(self):
+        # Accept the string "classification" / "regression" so callers need not import TaskType.
+        if not isinstance(self.task_type, TaskType):
+            try:
+                self.task_type = TaskType(str(self.task_type).lower())
+            except ValueError:
+                raise ValueError(
+                    f'task_type must be "classification" or "regression" (or a TaskType), got {self.task_type!r}'
+                ) from None
+        if self.task_type not in (TaskType.CLASSIFICATION, TaskType.REGRESSION):
+            raise ValueError(f'task_type must be "classification" or "regression", got "{self.task_type.value}"')
         if self.metric not in _METRIC_COL:
             raise ValueError(f"metric must be one of {list(_METRIC_COL)}, got {self.metric!r}")
         if self.n_splits < 2:

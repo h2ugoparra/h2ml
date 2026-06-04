@@ -63,8 +63,8 @@ config = PipelineConfig(
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `spatial_cv_method` | `"block"` | `"block"` or `"spcv"` |
-| `spatial_cv_metric` | `"euclidean"` | `"euclidean"` (projected) or `"haversine"` (lat/lon degrees) |
+| `spatial_cv_method` | `"spcv"` | `"block"` or `"spcv"` |
+| `spatial_cv_metric` | `"haversine"` | `"euclidean"` (projected) or `"haversine"` (lat/lon degrees) |
 | `n_blocks_per_fold` | `5` | Blocks per test fold for the block splitter |
 | `ahc_threshold` | `None` | AHC distance cut. Auto-set to 10th percentile when `None`. |
 | `exact_max_samples` | `5000` | Below this, exact scipy AHC; above, approximate sklearn AHC |

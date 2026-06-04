@@ -21,7 +21,7 @@ Full parameter reference:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `task_type` | `CLASSIFICATION` | `TaskType.CLASSIFICATION` or `TaskType.REGRESSION` |
+| `task_type` | `"classification"` | `"classification"` or `"regression"` (case-insensitive); a `TaskType` member is also accepted |
 | `metric` | `"AUC"` | Optimisation target. Classification: `"AUC"`, `"AUC_PR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. Minimisation direction is derived automatically. |
 | `n_splits` | `5` | CV folds for steps 1 and 3 |
 | `opt_n_splits` | `3` | CV folds inside each Optuna trial (fewer = faster) |
