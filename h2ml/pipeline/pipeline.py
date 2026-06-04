@@ -488,12 +488,7 @@ class H2MLPipeline:
             PipelineResult with all four steps completed.
         """
         self._validate_store(store)
-        result = PipelineResult(
-            features=store,
-            cv_type="spatial" if store.coords is not None else "random",
-            spatial_cv_metric=self.config.spatial_cv_metric,
-            time_bin_resolution=self.config.time_bin_resolution,
-        )
+        result = self._new_result(store)
         transform_stores = self._build_transform_stores(store, transforms)
         result = self._run_step1(result, transform_stores)
         result = self._run_step2(result, transform_stores)
@@ -521,12 +516,7 @@ class H2MLPipeline:
         self._validate_store(store)
         transform_stores = self._build_transform_stores(store, transforms)
         return self._run_step1(
-            PipelineResult(
-                features=store,
-                cv_type="spatial" if store.coords is not None else "random",
-                spatial_cv_metric=self.config.spatial_cv_metric,
-                time_bin_resolution=self.config.time_bin_resolution,
-            ),
+            self._new_result(store),
             transform_stores,
         )
 
@@ -544,12 +534,7 @@ class H2MLPipeline:
         """
         self._validate_store(store)
         transform_stores = self._build_transform_stores(store, transforms)
-        result = PipelineResult(
-            features=store,
-            cv_type="spatial" if store.coords is not None else "random",
-            spatial_cv_metric=self.config.spatial_cv_metric,
-            time_bin_resolution=self.config.time_bin_resolution,
-        )
+        result = self._new_result(store)
         result = self._run_step1(result, transform_stores)
         result = self._run_step2(result, transform_stores)
         return result
@@ -570,12 +555,7 @@ class H2MLPipeline:
         """
         self._validate_store(store)
         transform_stores = self._build_transform_stores(store, transforms)
-        result = PipelineResult(
-            features=store,
-            cv_type="spatial" if store.coords is not None else "random",
-            spatial_cv_metric=self.config.spatial_cv_metric,
-            time_bin_resolution=self.config.time_bin_resolution,
-        )
+        result = self._new_result(store)
         result = self._run_step1(result, transform_stores)
         result = self._run_step2(result, transform_stores)
         result = self._run_step3(result, transform_stores)
@@ -1028,6 +1008,15 @@ class H2MLPipeline:
                 return result.step3_reduced_stores[key]
             return result.selector.transform(full_store)
         return full_store
+
+    def _new_result(self, store: PipelineData) -> PipelineResult:
+        """Build a fresh PipelineResult seeded with store and CV metadata from config."""
+        return PipelineResult(
+            features=store,
+            cv_type="spatial" if store.coords is not None else "random",
+            spatial_cv_metric=self.config.spatial_cv_metric,
+            time_bin_resolution=self.config.time_bin_resolution,
+        )
 
     def _validate_store(self, store: PipelineData) -> None:
         """
