@@ -564,8 +564,6 @@ def _build_conformal_calibration(result, classes=None) -> Optional[ConformalCali
     Returns None when no CV result is available or when the class mapping
     cannot be resolved for multiclass folds.
     """
-    from loguru import logger
-
     cv = result.best_cv_result
     if cv is None or not cv.folds:
         return None
@@ -577,28 +575,10 @@ def _build_conformal_calibration(result, classes=None) -> Optional[ConformalCali
     else:
         sample_scores = []
         for f in cv.folds:
-            if f.y_prob_test.ndim == 1:
-                # Binary: p is positive-class probability
-                # nonconformity = 1 - p(true_class)
-                sample_scores.append(np.where(f.y_test == 1, 1.0 - f.y_prob_test, f.y_prob_test))
-            else:
-                # Multiclass: map each true label to its column index via classes_
-                if classes is None:
-                    logger.warning(
-                        "Conformal calibration skipped: multiclass folds require "
-                        "estimator.classes_ to map labels to probability columns."
-                    )
-                    return None
-                label_to_idx = {c: i for i, c in enumerate(classes)}
-                try:
-                    col_idx = np.array([label_to_idx[label] for label in f.y_test])
-                except KeyError as e:
-                    logger.warning(
-                        f"Conformal calibration skipped: y_test contains label {e} not found in estimator.classes_."
-                    )
-                    return None
-                p_true = f.y_prob_test[np.arange(len(col_idx)), col_idx]
-                sample_scores.append(1.0 - p_true)
+            fold_scores = _classification_scores(f, classes)
+            if fold_scores is None:
+                return None
+            sample_scores.append(fold_scores)
         scores = np.concatenate(sample_scores)
 
     return ConformalCalibration(
@@ -624,7 +604,7 @@ def _classification_scores(f: Any, classes: Optional[Any]) -> Optional[np.ndarra
 
     if classes is None:
         logger.warning(
-            "Local conformal calibration skipped: multiclass folds require "
+            "Conformal calibration skipped: multiclass folds require "
             "estimator.classes_ to map labels to probability columns."
         )
         return None
@@ -633,7 +613,7 @@ def _classification_scores(f: Any, classes: Optional[Any]) -> Optional[np.ndarra
         col_idx = np.array([label_to_idx[label] for label in f.y_test])
     except KeyError as e:
         logger.warning(
-            f"Local conformal calibration skipped: y_test contains label {e} not found in estimator.classes_."
+            f"Conformal calibration skipped: y_test contains label {e} not found in estimator.classes_."
         )
         return None
     return 1.0 - f.y_prob_test[np.arange(len(col_idx)), col_idx]
