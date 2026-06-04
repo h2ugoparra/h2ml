@@ -6,7 +6,7 @@ A 4-step AutoML pipeline wrapping sklearn-compatible estimators.
 
 ## Tech Stack
 
-Python 3.11+. Key libraries: `scikit-learn`, `optuna` (HPO), `shap` (feature selection), `joblib` (parallel CV), `lightgbm`/`xgboost`/`catboost` (`[boosting]` extra), `h2mare` (core dep; `[geo]` extra adds `cartopy` + `polars` for `predict_map`). Dev: `uv`, `ruff`, `pytest`, `tox`, `mkdocs`.
+Python 3.11+. Key libraries: `scikit-learn`, `optuna` (HPO), `shap` (feature selection), `joblib` (parallel CV), `lightgbm`/`xgboost`/`catboost` (`[boosting]` extra), `h2mare` (core dep; `polars` is also core; `[geo]` extra adds `cartopy` for `predict_map`). Dev: `uv`, `ruff`, `pytest`, `tox`, `mkdocs`.
 
 ## Commands
 
@@ -35,6 +35,7 @@ FeatureSelector (features/selector.py)       → shap_importance.py + correlatio
 SpatialBlockSplitter / SPCVSplitter          → activated when store.coords is set; built once in step 1
   (features/spatial_cv.py)
 FinalModel (pipeline/final_model.py)         → predict/predict_proba + optional ConformalCalibration
+                                               or LocalConformalCalibration (space-time block-local)
 DeltaFinalModel (pipeline/final_model.py)    → P(present) × E(count|present); built via build_delta_final_model()
 ModelRegistry (utils/registry.py)            → single source of truth; build_models(task)
 Optimizer (optimization/optimizer.py)        → run_study(); optimize_all() for batch use
@@ -55,6 +56,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 | Parameter | Default | Effect |
 |-----------|---------|--------|
 | `metric` | `"AUC"` | Model selection and HPO metric. Classification: `"AUC"`, `"AUC_PR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. |
+| `n_splits` | `5` | CV folds for model screening (steps 1 and 3) |
 | `corr_threshold` | `0.7` | Drop feature if it exceeds this in any of Pearson, Spearman, or Kendall with a retained feature |
 | `min_features` | `1` | Minimum features retained after correlation filter |
 | `n_trials` | `50` | Optuna trials in step 4 |
@@ -63,6 +65,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers with `supports_class_weight=True` |
 | `spatial_cv_method` | `"block"` | Spatial CV strategy: `"block"` or `"spcv"` (ignored when `store.coords` is `None`) |
 | `spatial_cv_metric` | `"euclidean"` | Distance metric: `"euclidean"` or `"haversine"` |
+| `time_bin_resolution` | `"month"` | Temporal bin granularity for spatial CV and local conformal calibration: `"month"` or `"season"` |
 | `n_blocks_per_fold` | `5` | Blocks per test fold for the block splitter |
 | `ahc_threshold` | `None` | AHC distance threshold for SPCVSplitter (auto-derived when `None`) |
 | `pca_components` | `0.95` | Variance retained by PCA on block covariates |
@@ -96,4 +99,4 @@ compare_results(results, labels, metric, n_folds)  # sort direction auto-derived
 
 ## h2mare dependency
 
-`h2mare` (PyPI, core dependency) — geospatial storage (`ParquetIndexer`), aggregation, map plotting. Import paths in `h2ml/geo/geo_predict.py` use `h2mare.*`. The `[geo]` extra adds `cartopy` and `polars`, required only for `predict_map`.
+`h2mare` (PyPI, core dependency) — geospatial storage (`ParquetIndexer`), aggregation, map plotting. Import paths in `h2ml/geo/geo_predict.py` use `h2mare.*`. The `[geo]` extra adds `cartopy`, required only for `predict_map` (`polars` is a core dependency).
