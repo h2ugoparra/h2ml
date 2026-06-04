@@ -110,7 +110,7 @@ class PipelineConfig:
                              Default: "spcv".
         spatial_cv_metric:   Distance metric used by both splitters. "euclidean" —
                              projected coordinates (metres). "haversine" — geographic
-                             lat/lon in decimal degrees. Default: "haversine".
+                             lat/lon in decimal degrees. Default: "euclidean".
         n_blocks_per_fold:   Number of spatial blocks assigned to the test set per fold
                              in the block splitter. Default: 5.
         time_bin_resolution: Temporal granularity for binning dates in spatial CV and
@@ -147,7 +147,7 @@ class PipelineConfig:
     n_blocks_per_fold: int = 5
     spatial_cv_method: str = "spcv"
     ahc_threshold: Optional[float] = None
-    spatial_cv_metric: SpatialMetric = "haversine"
+    spatial_cv_metric: SpatialMetric = "euclidean"
     time_bin_resolution: str = "month"
     pca_components: float = 0.95
     exact_max_samples: int = 5_000

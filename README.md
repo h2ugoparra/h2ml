@@ -137,7 +137,7 @@ Set `store.coords` to an `(n_samples, 2)` array of spatial coordinates to activa
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `spatial_cv_method` | `"spcv"` | `"block"` (quantile-grid) or `"spcv"` (AHC + cluster ensemble) |
-| `spatial_cv_metric` | `"haversine"` | `"euclidean"` or `"haversine"` (expects lat/lon in degrees) |
+| `spatial_cv_metric` | `"euclidean"` | `"euclidean"` or `"haversine"` (expects lat/lon in degrees) |
 | `n_blocks_per_fold` | `5` | Blocks per test fold for the block splitter |
 | `ahc_threshold` | `None` | AHC distance threshold for `spcv`; auto-set to 10th percentile of pairwise distances when `None` |
 | `exact_max_samples` | `5000` | n ≤ this → exact scipy AHC; n > → approximate sklearn AHC with k-NN graph |
