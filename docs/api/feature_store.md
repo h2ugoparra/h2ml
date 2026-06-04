@@ -1,3 +1,3 @@
 # PipelineData
 
-::: h2ml.features.feature_store.PipelineData
+::: h2ml.core.feature_store.PipelineData
