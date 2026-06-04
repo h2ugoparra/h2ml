@@ -103,7 +103,7 @@ Extra context dimensions not present at calibration time are silently ignored â€
 
 ```python
 lc = final.local_conformal
-from h2ml.pipeline.final_model import _conformal_quantile
+from h2ml.evaluation.conformal import _conformal_quantile
 
 print("n_spatial_blocks:", len(lc.scores_by_block))
 if lc.compound_scores:

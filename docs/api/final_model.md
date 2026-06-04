@@ -6,11 +6,11 @@
 
 ## ConformalCalibration
 
-::: h2ml.pipeline.final_model.ConformalCalibration
+::: h2ml.evaluation.conformal.ConformalCalibration
 
 ## LocalConformalCalibration
 
-::: h2ml.pipeline.final_model.LocalConformalCalibration
+::: h2ml.evaluation.conformal.LocalConformalCalibration
 
 ## DeltaFinalModel
 

@@ -15,15 +15,17 @@ from sklearn.preprocessing import StandardScaler
 
 from h2ml.pipeline.base import TaskType
 from h2ml.pipeline.cv import CVResult, FoldResult
-from h2ml.pipeline.final_model import (
+from h2ml.evaluation.conformal import (
     ConformalCalibration,
-    DeltaFinalModel,
-    FinalModel,
     LocalConformalCalibration,
-    _build_conformal_calibration,
-    _build_delta_conformal,
     _encode_times,
     _time_bin,
+)
+from h2ml.pipeline.final_model import (
+    DeltaFinalModel,
+    FinalModel,
+    _build_conformal_calibration,
+    _build_delta_conformal,
     build_delta_final_model,
 )
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig, PipelineResult
@@ -880,7 +882,7 @@ class TestLocalConformalCalibration:
         all_times = np.concatenate([times_0, times_1])
         all_block_idx = np.array([0] * n + [1] * n)
 
-        from h2ml.pipeline.final_model import _build_context
+        from h2ml.evaluation.conformal import _build_context
         from sklearn.preprocessing import StandardScaler
         ctx = _build_context(all_coords, all_times)
         scaler = StandardScaler().fit(ctx)
@@ -1013,7 +1015,7 @@ def _make_compound_local_conformal(min_block_n: int = 3) -> LocalConformalCalibr
     all_times = np.concatenate([times_win[:n], times_sum[:n], times_win[n:], times_sum[n:]])
 
     from sklearn.preprocessing import StandardScaler
-    from h2ml.pipeline.final_model import _build_context, _time_bin as tb
+    from h2ml.evaluation.conformal import _build_context, _time_bin as tb
     ctx = _build_context(all_coords, all_times)
     scaler = StandardScaler().fit(ctx)
     oof_ctx = scaler.transform(ctx)
