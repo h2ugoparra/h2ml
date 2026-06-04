@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from sklearn.preprocessing import StandardScaler
+from h2ml.core.spatial_config import SpatialCVConfig
 from h2ml.pipeline.base import TaskType
 from h2ml.pipeline.cv import CrossValidator, CVResult
 from h2ml.pipeline.step import ModelWrapper
@@ -178,6 +179,19 @@ class PipelineConfig:
     def metric_col(self) -> str:
         """Full agg DataFrame column name, e.g. 'AUC' → 'AUC_Test_Mean'."""
         return _METRIC_COL[self.metric]
+
+    @property
+    def spatial_cv(self) -> SpatialCVConfig:
+        """Bundle the spatial-CV parameters passed to the splitter and optimizer."""
+        return SpatialCVConfig(
+            n_blocks_per_fold=self.n_blocks_per_fold,
+            spatial_cv_method=self.spatial_cv_method,
+            ahc_threshold=self.ahc_threshold,
+            spatial_cv_metric=self.spatial_cv_metric,
+            pca_components=self.pca_components,
+            exact_max_samples=self.exact_max_samples,
+            knn_neighbors=self.knn_neighbors,
+        )
 
 
 @dataclass
@@ -674,13 +688,7 @@ class H2MLPipeline:
             X=first_store.X,
             y=first_store.y,
             coords=first_store.coords,
-            n_blocks_per_fold=self.config.n_blocks_per_fold,
-            spatial_cv_method=self.config.spatial_cv_method,
-            ahc_threshold=self.config.ahc_threshold,
-            spatial_cv_metric=self.config.spatial_cv_metric,
-            pca_components=self.config.pca_components,
-            exact_max_samples=self.config.exact_max_samples,
-            knn_neighbors=self.config.knn_neighbors,
+            spatial=self.config.spatial_cv,
         )
 
         # Pre-compute StandardScaler fold arrays once — X is identical across all
@@ -718,13 +726,7 @@ class H2MLPipeline:
                 y_true=store.y_true,
                 inverse_fn=inv,
                 coords=store.coords,
-                n_blocks_per_fold=self.config.n_blocks_per_fold,
-                spatial_cv_method=self.config.spatial_cv_method,
-                ahc_threshold=self.config.ahc_threshold,
-                spatial_cv_metric=self.config.spatial_cv_metric,
-                pca_components=self.config.pca_components,
-                exact_max_samples=self.config.exact_max_samples,
-                knn_neighbors=self.config.knn_neighbors,
+                spatial=self.config.spatial_cv,
                 _splitter=splitter,
                 _scaled_folds=sf,
             )
@@ -836,13 +838,7 @@ class H2MLPipeline:
             y_true=reduced_store.y_true,
             inverse_fn=inverse_fn,
             coords=reduced_store.coords,
-            n_blocks_per_fold=self.config.n_blocks_per_fold,
-            spatial_cv_method=self.config.spatial_cv_method,
-            ahc_threshold=self.config.ahc_threshold,
-            spatial_cv_metric=self.config.spatial_cv_metric,
-            pca_components=self.config.pca_components,
-            exact_max_samples=self.config.exact_max_samples,
-            knn_neighbors=self.config.knn_neighbors,
+            spatial=self.config.spatial_cv,
             _splitter=result.splitter,
         )
         result.step3_reduced_stores = {transform_name: reduced_store}
@@ -920,13 +916,7 @@ class H2MLPipeline:
             n_splits=self.config.opt_n_splits,
             random_state=self.config.random_state,
             coords=store_for_opt.coords,
-            n_blocks_per_fold=self.config.n_blocks_per_fold,
-            spatial_cv_method=self.config.spatial_cv_method,
-            ahc_threshold=self.config.ahc_threshold,
-            spatial_cv_metric=self.config.spatial_cv_metric,
-            pca_components=self.config.pca_components,
-            exact_max_samples=self.config.exact_max_samples,
-            knn_neighbors=self.config.knn_neighbors,
+            spatial=self.config.spatial_cv,
             n_hpo_repeats=self.config.n_hpo_repeats,
             fixed_params=fixed_params,
             y_true=y_true,
@@ -951,13 +941,7 @@ class H2MLPipeline:
             y_true=y_true,
             inverse_fn=inverse_fn,
             coords=store_for_opt.coords,
-            n_blocks_per_fold=self.config.n_blocks_per_fold,
-            spatial_cv_method=self.config.spatial_cv_method,
-            ahc_threshold=self.config.ahc_threshold,
-            spatial_cv_metric=self.config.spatial_cv_metric,
-            pca_components=self.config.pca_components,
-            exact_max_samples=self.config.exact_max_samples,
-            knn_neighbors=self.config.knn_neighbors,
+            spatial=self.config.spatial_cv,
             _splitter=result.splitter,
         )
         result.step4_cv_result = cv_result

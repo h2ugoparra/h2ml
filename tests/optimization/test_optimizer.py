@@ -24,6 +24,7 @@ from h2ml.optimization.optimizer import (
     run_study,
 )
 from h2ml.optimization.opt_params import ModelEntry
+from h2ml.core.spatial_config import SpatialCVConfig
 
 
 # ---------------------------------------------------------------------------
@@ -827,7 +828,7 @@ class TestSpatialCV:
             random_state=42,
             score_fn=_score_auc,
             coords=spatial_coords,
-            n_blocks_per_fold=2,
+            spatial=SpatialCVConfig(n_blocks_per_fold=2),
         )
         assert callable(obj)
 
@@ -844,7 +845,7 @@ class TestSpatialCV:
                 random_state=42,
                 score_fn=_score_auc,
                 coords=spatial_coords,
-                n_blocks_per_fold=2,
+                spatial=SpatialCVConfig(n_blocks_per_fold=2),
             ),
             n_trials=1,
         )
@@ -875,7 +876,7 @@ class TestSpatialCV:
                 random_state=42,
                 score_fn=_score_auc,
                 coords=spatial_coords,
-                n_blocks_per_fold=2,
+                spatial=SpatialCVConfig(n_blocks_per_fold=2),
             )
             MockSplitter.assert_called_once_with(
                 coords=spatial_coords,
@@ -928,7 +929,7 @@ class TestSpatialCV:
             n_trials=2,
             n_splits=2,
             coords=spatial_coords,
-            n_blocks_per_fold=2,
+            spatial=SpatialCVConfig(n_blocks_per_fold=2),
         )
         assert isinstance(study, optuna.Study)
         assert isinstance(study.best_value, float)
@@ -943,6 +944,6 @@ class TestSpatialCV:
             n_trials=2,
             n_splits=2,
             coords=spatial_coords,
-            n_blocks_per_fold=2,
+            spatial=SpatialCVConfig(n_blocks_per_fold=2),
         )
         assert isinstance(study, optuna.Study)

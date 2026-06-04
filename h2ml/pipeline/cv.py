@@ -11,10 +11,7 @@ from loguru import logger
 
 import time
 from joblib import Parallel, delayed
-from typing import TYPE_CHECKING, Optional, Any, Callable, Sequence, cast
-
-if TYPE_CHECKING:
-    from h2ml.features.spatial_cv import SpatialMetric
+from typing import Optional, Any, Callable, Sequence, cast
 
 import numpy as np
 from sklearn.model_selection import KFold, StratifiedKFold
@@ -22,6 +19,7 @@ from sklearn.preprocessing import StandardScaler
 
 from h2ml.core.base import TaskType, PredictorStep
 from h2ml.core.cv_result import CVResult, FoldResult  # re-exported for back-compat
+from h2ml.core.spatial_config import SpatialCVConfig
 
 
 # ---------------------------------------------------------------------------
@@ -66,13 +64,7 @@ class CrossValidator:
         y_true: Optional[np.ndarray] = None,
         inverse_fn: Optional[Callable] = None,
         coords: Optional[np.ndarray] = None,
-        n_blocks_per_fold: int = 5,
-        spatial_cv_method: str = "block",
-        ahc_threshold: Optional[float] = None,
-        spatial_cv_metric: SpatialMetric = "euclidean",
-        pca_components: float = 0.95,
-        exact_max_samples: int = 5_000,
-        knn_neighbors: int = 15,
+        spatial: Optional[SpatialCVConfig] = None,
         _splitter=None,
         _scaled_folds: Optional[list] = None,
     ) -> CVResult:
@@ -89,6 +81,9 @@ class CrossValidator:
                          metrics are computed on the original scale (back-transformed).
             inverse_fn:  Callable that back-transforms predictions to the original scale.
                          Applied after predict(), before metric computation.
+            spatial:     Spatial-CV parameters used to build the splitter when coords
+                         are given and no pre-built _splitter is supplied. Defaults to
+                         SpatialCVConfig() (block splitter, euclidean).
             _splitter:   Pre-built splitter to reuse across models (internal, set by run_all).
 
         Returns:
@@ -102,13 +97,7 @@ class CrossValidator:
                 X=X,
                 y=y,
                 coords=coords,
-                n_blocks_per_fold=n_blocks_per_fold,
-                spatial_cv_method=spatial_cv_method,
-                ahc_threshold=ahc_threshold,
-                spatial_cv_metric=spatial_cv_metric,
-                pca_components=pca_components,
-                exact_max_samples=exact_max_samples,
-                knn_neighbors=knn_neighbors,
+                spatial=spatial,
             )
         cv_result = CVResult(model_name=step.name, task_type=step.task_type)
 
@@ -174,13 +163,7 @@ class CrossValidator:
         y_true: Optional[np.ndarray] = None,
         inverse_fn: Optional[Callable] = None,
         coords: Optional[np.ndarray] = None,
-        n_blocks_per_fold: int = 5,
-        spatial_cv_method: str = "block",
-        ahc_threshold: Optional[float] = None,
-        spatial_cv_metric: SpatialMetric = "euclidean",
-        pca_components: float = 0.95,
-        exact_max_samples: int = 5_000,
-        knn_neighbors: int = 15,
+        spatial: Optional[SpatialCVConfig] = None,
         _splitter: Any = None,
     ) -> list[CVResult]:
         """
@@ -208,13 +191,7 @@ class CrossValidator:
                 X=X,
                 y=y,
                 coords=coords,
-                n_blocks_per_fold=n_blocks_per_fold,
-                spatial_cv_method=spatial_cv_method,
-                ahc_threshold=ahc_threshold,
-                spatial_cv_metric=spatial_cv_metric,
-                pca_components=pca_components,
-                exact_max_samples=exact_max_samples,
-                knn_neighbors=knn_neighbors,
+                spatial=spatial,
             )
         else:
             prebuilt_splitter = None
@@ -232,13 +209,7 @@ class CrossValidator:
                 y_true=y_true,
                 inverse_fn=inverse_fn,
                 coords=coords,
-                n_blocks_per_fold=n_blocks_per_fold,
-                spatial_cv_method=spatial_cv_method,
-                ahc_threshold=ahc_threshold,
-                spatial_cv_metric=spatial_cv_metric,
-                pca_components=pca_components,
-                exact_max_samples=exact_max_samples,
-                knn_neighbors=knn_neighbors,
+                spatial=spatial,
                 _splitter=prebuilt_splitter,
             )
 
@@ -257,38 +228,28 @@ class CrossValidator:
         self,
         task_type: TaskType,
         coords: Optional[np.ndarray] = None,
-        n_blocks_per_fold: int = 5,
         X: Optional[np.ndarray] = None,
         y: Optional[np.ndarray] = None,
-        spatial_cv_method: str = "block",
-        ahc_threshold: Optional[float] = None,
-        spatial_cv_metric: SpatialMetric = "euclidean",
-        pca_components: float = 0.95,
-        exact_max_samples: int = 5_000,
-        knn_neighbors: int = 15,
+        spatial: Optional[SpatialCVConfig] = None,
     ):
         """
         Spatial splitter when coords provided, otherwise stratified/standard KFold.
 
         Args:
-            task_type:         Selects StratifiedKFold (classification) vs KFold
-                               (regression) in the non-spatial case.
-            coords:            (n_samples, 2) coordinates. When None, a random
-                               (non-spatial) splitter is returned.
-            n_blocks_per_fold: Blocks per test fold for SpatialBlockSplitter.
-            X, y:              Required by SPCVSplitter (passed through for AHC).
-            spatial_cv_method: "block" → SpatialBlockSplitter, "spcv" → SPCVSplitter.
-            ahc_threshold:     AHC distance threshold for SPCVSplitter (auto when None).
-            spatial_cv_metric: "euclidean" or "haversine".
-            pca_components:    Variance retained by PCA on block covariates (SPCV).
-            exact_max_samples: Sample threshold for exact vs approximate AHC (SPCV).
-            knn_neighbors:     k for the k-NN connectivity graph in approximate AHC.
+            task_type: Selects StratifiedKFold (classification) vs KFold (regression)
+                       in the non-spatial case.
+            coords:    (n_samples, 2) coordinates. When None, a random (non-spatial)
+                       splitter is returned.
+            X, y:      Required by SPCVSplitter (passed through for AHC).
+            spatial:   Spatial-CV parameters (method, metric, AHC/PCA knobs). Defaults
+                       to SpatialCVConfig() when None.
 
         Returns:
             A scikit-learn-compatible splitter exposing split() and get_n_splits().
         """
+        spatial = spatial or SpatialCVConfig()
         if coords is not None:
-            if spatial_cv_method == "spcv":
+            if spatial.spatial_cv_method == "spcv":
                 from h2ml.features.spatial_cv import SPCVSplitter
 
                 assert X is not None and y is not None
@@ -297,21 +258,21 @@ class CrossValidator:
                     X=X,
                     y=y,
                     n_splits=self.n_splits,
-                    threshold=ahc_threshold,
+                    threshold=spatial.ahc_threshold,
                     random_state=self.random_state,
-                    metric=spatial_cv_metric,
-                    pca_components=pca_components,
-                    exact_max_samples=exact_max_samples,
-                    knn_neighbors=knn_neighbors,
+                    metric=spatial.spatial_cv_metric,
+                    pca_components=spatial.pca_components,
+                    exact_max_samples=spatial.exact_max_samples,
+                    knn_neighbors=spatial.knn_neighbors,
                 )
             from h2ml.features.spatial_cv import SpatialBlockSplitter
 
             return SpatialBlockSplitter(
                 coords=coords,
                 n_splits=self.n_splits,
-                n_blocks_per_fold=n_blocks_per_fold,
+                n_blocks_per_fold=spatial.n_blocks_per_fold,
                 random_state=self.random_state,
-                metric=spatial_cv_metric,
+                metric=spatial.spatial_cv_metric,
             )
         kwargs: dict[str, Any] = dict(n_splits=self.n_splits, shuffle=self.shuffle, random_state=self.random_state)
         if task_type == TaskType.CLASSIFICATION:

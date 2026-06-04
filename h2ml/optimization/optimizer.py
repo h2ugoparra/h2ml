@@ -22,10 +22,7 @@ Interface contract (expected by pipeline/pipeline.py):
 from __future__ import annotations
 
 from loguru import logger
-from typing import TYPE_CHECKING, Any, Callable, Optional
-
-if TYPE_CHECKING:
-    from h2ml.features.spatial_cv import SpatialMetric
+from typing import Any, Callable, Optional
 
 import numpy as np
 import optuna
@@ -42,6 +39,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import StratifiedKFold, KFold
 from sklearn.preprocessing import LabelBinarizer, StandardScaler
 
+from h2ml.core.spatial_config import SpatialCVConfig
 from h2ml.optimization.opt_params import ModelEntry, get_entry
 
 
@@ -209,13 +207,7 @@ def _build_objective(
     random_state: int,
     score_fn: Callable,
     coords: Optional[np.ndarray] = None,
-    n_blocks_per_fold: int = 5,
-    spatial_cv_method: str = "block",
-    ahc_threshold: Optional[float] = None,
-    spatial_cv_metric: SpatialMetric = "euclidean",
-    pca_components: float = 0.95,
-    exact_max_samples: int = 5_000,
-    knn_neighbors: int = 15,
+    spatial: Optional[SpatialCVConfig] = None,
     fixed_params: Optional[dict] = None,
     y_true: Optional[np.ndarray] = None,
     inverse_fn: Optional[Callable] = None,
@@ -243,10 +235,11 @@ def _build_objective(
         model entry has no param_fn, and optuna.TrialPruned when the pruner stops
         an unpromising trial.
     """
+    spatial = spatial or SpatialCVConfig()
     if _splitter is not None:
         splitter = _splitter
     elif coords is not None:
-        if spatial_cv_method == "spcv":
+        if spatial.spatial_cv_method == "spcv":
             from h2ml.features.spatial_cv import SPCVSplitter
 
             splitter = SPCVSplitter(
@@ -254,12 +247,12 @@ def _build_objective(
                 X=X,
                 y=y,
                 n_splits=n_splits,
-                threshold=ahc_threshold,
+                threshold=spatial.ahc_threshold,
                 random_state=random_state,
-                metric=spatial_cv_metric,
-                pca_components=pca_components,
-                exact_max_samples=exact_max_samples,
-                knn_neighbors=knn_neighbors,
+                metric=spatial.spatial_cv_metric,
+                pca_components=spatial.pca_components,
+                exact_max_samples=spatial.exact_max_samples,
+                knn_neighbors=spatial.knn_neighbors,
             )
         else:
             from h2ml.features.spatial_cv import SpatialBlockSplitter
@@ -267,9 +260,9 @@ def _build_objective(
             splitter = SpatialBlockSplitter(
                 coords=coords,
                 n_splits=n_splits,
-                n_blocks_per_fold=n_blocks_per_fold,
+                n_blocks_per_fold=spatial.n_blocks_per_fold,
                 random_state=random_state,
-                metric=spatial_cv_metric,
+                metric=spatial.spatial_cv_metric,
             )
     else:
         splitter = _SPLITTER[task](n_splits=n_splits, shuffle=True, random_state=random_state)
@@ -375,13 +368,7 @@ def run_study(
     study_name: Optional[str] = None,
     verbose: bool = True,
     coords: Optional[np.ndarray] = None,
-    n_blocks_per_fold: int = 5,
-    spatial_cv_method: str = "block",
-    ahc_threshold: Optional[float] = None,
-    spatial_cv_metric: SpatialMetric = "euclidean",
-    pca_components: float = 0.95,
-    exact_max_samples: int = 5_000,
-    knn_neighbors: int = 15,
+    spatial: Optional[SpatialCVConfig] = None,
     n_hpo_repeats: int = 1,
     fixed_params: Optional[dict] = None,
     y_true: Optional[np.ndarray] = None,
@@ -472,13 +459,7 @@ def run_study(
             random_state=seed,
             score_fn=score_fn,
             coords=coords,
-            n_blocks_per_fold=n_blocks_per_fold,
-            spatial_cv_method=spatial_cv_method,
-            ahc_threshold=ahc_threshold,
-            spatial_cv_metric=spatial_cv_metric,
-            pca_components=pca_components,
-            exact_max_samples=exact_max_samples,
-            knn_neighbors=knn_neighbors,
+            spatial=spatial,
             fixed_params=fixed_params,
             y_true=y_true,
             inverse_fn=inverse_fn,

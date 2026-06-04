@@ -29,6 +29,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.svm import SVC
 
+from h2ml.core.spatial_config import SpatialCVConfig
 from h2ml.pipeline.base import TaskType
 from h2ml.pipeline.cv import CrossValidator, CVResult, FoldResult
 from h2ml.pipeline.step import make_classifier, make_regressor
@@ -677,7 +678,7 @@ class TestSpatialBlockCV:
             mock_instance = MockSplitter.return_value
             mock_instance.split.return_value = iter([])
             try:
-                cv.run(step, X, y, coords=spatial_coords, n_blocks_per_fold=3)
+                cv.run(step, X, y, coords=spatial_coords, spatial=SpatialCVConfig(n_blocks_per_fold=3))
             except Exception:
                 pass
             MockSplitter.assert_called_once_with(
