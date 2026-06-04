@@ -49,11 +49,10 @@ class ConformalCalibration:
     Scores are pre-sorted ascending. The threshold at level 1-alpha is the
     ceil((1-alpha)(n+1))/n quantile, which guarantees marginal coverage ≥ 1-alpha.
 
-    Attributes
-    ----------
-    scores:    Sorted nonconformity scores from calibration folds.
-    n:         Number of calibration samples (len(scores)).
-    task_type: TaskType of the calibrated model.
+    Attributes:
+        scores:    Sorted nonconformity scores from calibration folds.
+        n:         Number of calibration samples (len(scores)).
+        task_type: TaskType of the calibrated model.
     """
 
     scores: np.ndarray
@@ -115,7 +114,20 @@ def _build_context(
     coords: Optional[np.ndarray],
     times: Optional[np.ndarray],
 ) -> np.ndarray:
-    """Stack available spatial and temporal context into one matrix."""
+    """
+    Stack available spatial and temporal context into one matrix.
+
+    Args:
+        coords: (n_samples, 2) spatial coordinates, or None.
+        times:  (n_samples,) datetime-like temporal context, or None.
+
+    Returns:
+        (n_samples, D) float matrix concatenating the provided parts. Coords
+        contribute 2 columns; times are encoded via _encode_times.
+
+    Raises:
+        ValueError: If both coords and times are None.
+    """
     parts = []
     if coords is not None:
         parts.append(np.asarray(coords, dtype=float))
@@ -144,31 +156,30 @@ class LocalConformalCalibration:
     Nearest-OOF-sample lookup (not centroid) is used so that non-convex or elongated
     AHC clusters (SPCVSplitter) are handled correctly.
 
-    Attributes
-    ----------
-    scores_by_block:     Sorted nonconformity scores per spatial block.
-                         Index i matches oof_block_indices == i.
-    oof_context_scaled:  (n_oof, D) OOF context already normalised by context_mean/std.
-                         Used as the k-NN index at inference.
-    oof_block_indices:   (n_oof,) int index into scores_by_block per OOF sample.
-    context_mean:        (D,) scaler mean — applied to normalise query context.
-    context_std:         (D,) scaler std.
-    fallback_scores:     Global sorted scores — level-3 fallback.
-    metric:              "euclidean" or "haversine". Haversine only applies when
-                         has_coords=True, has_times=False, and D==2.
-    min_block_n:         Minimum OOF samples a spatial block needs to use its own
-                         scores (level 2). Smaller blocks fall to global (level 3).
-    has_coords:          Whether spatial coordinates were included at calibration time.
-                         Coords passed at inference are silently ignored if False.
-    has_times:           Whether temporal context was included at calibration time.
-                         Times passed at inference are silently ignored if False.
-    compound_scores:     {(block_idx, time_bin): sorted np.ndarray} — level-1 lookup.
-                         None when times were absent at calibration.
-    time_bin_resolution: "month" (bins 1–12) or "season" (0=DJF…3=SON).
-                         None when times were absent at calibration.
-    min_compound_n:      Minimum OOF samples a compound cell needs to be used (level 1).
-                         Lower than min_block_n because compound cells are smaller by
-                         construction (n_blocks × n_bins cells share the same total count).
+    Attributes:
+        scores_by_block:     Sorted nonconformity scores per spatial block.
+                             Index i matches oof_block_indices == i.
+        oof_context_scaled:  (n_oof, D) OOF context already normalised by context_mean/std.
+                             Used as the k-NN index at inference.
+        oof_block_indices:   (n_oof,) int index into scores_by_block per OOF sample.
+        context_mean:        (D,) scaler mean — applied to normalise query context.
+        context_std:         (D,) scaler std.
+        fallback_scores:     Global sorted scores — level-3 fallback.
+        metric:              "euclidean" or "haversine". Haversine only applies when
+                             has_coords=True, has_times=False, and D==2.
+        min_block_n:         Minimum OOF samples a spatial block needs to use its own
+                             scores (level 2). Smaller blocks fall to global (level 3).
+        has_coords:          Whether spatial coordinates were included at calibration time.
+                             Coords passed at inference are silently ignored if False.
+        has_times:           Whether temporal context was included at calibration time.
+                             Times passed at inference are silently ignored if False.
+        compound_scores:     {(block_idx, time_bin): sorted np.ndarray} — level-1 lookup.
+                             None when times were absent at calibration.
+        time_bin_resolution: "month" (bins 1–12) or "season" (0=DJF…3=SON).
+                             None when times were absent at calibration.
+        min_compound_n:      Minimum OOF samples a compound cell needs to be used (level 1).
+                             Lower than min_block_n because compound cells are smaller by
+                             construction (n_blocks × n_bins cells share the same total count).
     """
 
     scores_by_block: list[np.ndarray]
@@ -179,8 +190,8 @@ class LocalConformalCalibration:
     fallback_scores: np.ndarray
     metric: str
     min_block_n: int = 20
-    has_coords: bool = True   # whether coords were included at calibration time
-    has_times: bool = False   # whether times were included at calibration time
+    has_coords: bool = True  # whether coords were included at calibration time
+    has_times: bool = False  # whether times were included at calibration time
     compound_scores: Optional[dict] = field(default=None)
     # {(block_idx, time_bin): sorted np.ndarray} — None when times absent at calibration
     time_bin_resolution: Optional[str] = field(default=None)
@@ -232,12 +243,7 @@ class LocalConformalCalibration:
         else:
             col_slice = slice(None)
 
-        use_haversine = (
-            self.metric == "haversine"
-            and not self.has_times
-            and _times is None
-            and context.shape[1] == 2
-        )
+        use_haversine = self.metric == "haversine" and not self.has_times and _times is None and context.shape[1] == 2
         if use_haversine:
             context_scaled = np.deg2rad(context)
             oof_ctx = self.oof_context_scaled
@@ -253,19 +259,21 @@ class LocalConformalCalibration:
         if self.has_times and times is not None and self.time_bin_resolution:
             time_bins = _time_bin(times, self.time_bin_resolution)
 
-        return np.array([
-            self._block_threshold(
-                bi, alpha,
-                time_bin=None if time_bins is None else int(time_bins[i]),
-            )
-            for i, bi in enumerate(block_indices)
-        ])
+        return np.array(
+            [
+                self._block_threshold(
+                    bi,
+                    alpha,
+                    time_bin=None if time_bins is None else int(time_bins[i]),
+                )
+                for i, bi in enumerate(block_indices)
+            ]
+        )
 
-    def _nearest_block(
-        self, context_scaled: np.ndarray, oof_ctx: np.ndarray, use_haversine: bool
-    ) -> np.ndarray:
+    def _nearest_block(self, context_scaled: np.ndarray, oof_ctx: np.ndarray, use_haversine: bool) -> np.ndarray:
         """Return block index of the nearest OOF training sample per query point."""
         from sklearn.neighbors import NearestNeighbors
+
         if use_haversine:
             nn = NearestNeighbors(n_neighbors=1, metric="haversine", algorithm="ball_tree")
         else:
@@ -299,22 +307,33 @@ class FinalModel:
     """
     Fitted model ready for inference on new data.
 
-    Attributes
-    ----------
-    estimator:        Sklearn-compatible estimator fitted on the full training set.
-    feature_names:    Ordered list of features the model was trained on.
-    task_type:        TaskType.CLASSIFICATION or TaskType.REGRESSION.
-    requires_scaling: Whether StandardScaler was applied before fitting.
-    scaler:           Fitted StandardScaler (None when requires_scaling is False).
-    best_model_name:  Name of the model as registered in the h2ml registry.
-    best_params:      Hyperparameters used for the final fit (None = defaults).
+    Attributes:
+        estimator:        Sklearn-compatible estimator fitted on the full training set.
+        feature_names:    Ordered list of features the model was trained on.
+        task_type:        TaskType.CLASSIFICATION or TaskType.REGRESSION.
+        requires_scaling: Whether StandardScaler was applied before fitting.
+        scaler:           Fitted StandardScaler (None when requires_scaling is False).
+        best_model_name:  Name of the model as registered in the h2ml registry.
+        best_params:      Hyperparameters used for the final fit (None = defaults).
+        conformal:        Global conformal calibrator built from out-of-fold residuals;
+                          powers predict_interval / predict_set. None when no calibration
+                          was available (e.g. partial pipeline run).
+        y_transform:      Name of the y-transform applied during training (e.g. "log"),
+                          or None. Predictions/intervals are in the transformed space;
+                          the caller inverts them. See preprocessing/transforms.py.
+        local_conformal:  Space-time block-local conformal calibrator. Used instead of
+                          `conformal` when coords/times are passed to predict_interval/
+                          predict_set, giving per-sample thresholds. None unless the run
+                          had coordinates and a spatial splitter.
+        variogram:        Fitted VariogramResult describing the spatial autocorrelation
+                          range of the model's residuals (diagnostic only; not used in
+                          prediction). None when coords were absent or fitting failed.
 
-    Example
-    -------
-    >>> final = result.build_final_model()
-    >>> final.predict(X_new_df)
-    >>> final.save("models/final_model.pkl")
-    >>> final = FinalModel.load("models/final_model.pkl")
+    Example:
+        >>> final = result.build_final_model()
+        >>> final.predict(X_new_df)
+        >>> final.save("models/final_model.pkl")
+        >>> final = FinalModel.load("models/final_model.pkl")
     """
 
     estimator: Any
@@ -350,9 +369,16 @@ class FinalModel:
         """
         Predict class probabilities (classification only).
 
+        Args:
+            X: DataFrame (columns aligned by name) or ndarray (columns must
+                match feature_names order).
+
         Returns:
             Binary:     1-D array of positive-class probabilities.
             Multiclass: 2-D array of shape (n_samples, n_classes).
+
+        Raises:
+            ValueError: If the model was trained for a regression task.
         """
         if self.task_type != TaskType.CLASSIFICATION:
             raise ValueError("predict_proba is only available for classification tasks.")
@@ -392,6 +418,11 @@ class FinalModel:
 
         Returns:
             (lower, upper) as a pair of 1-D arrays.
+
+        Raises:
+            ValueError: If the model is not a regression model, or if no
+                conformal calibration is attached (rebuild via
+                result.build_final_model() after a full pipeline run).
         """
         if self.task_type != TaskType.REGRESSION:
             raise ValueError("predict_interval is only available for regression tasks.")
@@ -438,6 +469,11 @@ class FinalModel:
 
         Returns:
             List of arrays of class labels, one per sample.
+
+        Raises:
+            ValueError: If the model is not a classification model, or if no
+                conformal calibration is attached (rebuild via
+                result.build_final_model() after a full pipeline run).
         """
         if self.task_type != TaskType.CLASSIFICATION:
             raise ValueError("predict_set is only available for classification tasks.")
@@ -597,8 +633,7 @@ def _classification_scores(f: Any, classes: Optional[Any]) -> Optional[np.ndarra
         col_idx = np.array([label_to_idx[label] for label in f.y_test])
     except KeyError as e:
         logger.warning(
-            f"Local conformal calibration skipped: y_test contains label {e} "
-            "not found in estimator.classes_."
+            f"Local conformal calibration skipped: y_test contains label {e} not found in estimator.classes_."
         )
         return None
     return 1.0 - f.y_prob_test[np.arange(len(col_idx)), col_idx]
@@ -700,9 +735,7 @@ def _build_local_conformal(
 
     n_blocks = len(unique_blocks)
     if n_blocks < 2:
-        logger.warning(
-            "Local conformal calibration skipped: fewer than 2 spatial blocks found in OOF data."
-        )
+        logger.warning("Local conformal calibration skipped: fewer than 2 spatial blocks found in OOF data.")
         return None
 
     # Build compound (spatial block, time bin) score distributions when times are available
@@ -747,6 +780,10 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
 
     Returns:
         FinalModel instance.
+
+    Raises:
+        ValueError: If best_model_name is no longer present in the registry
+            (e.g. the model was removed after the pipeline ran).
     """
     from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
 
@@ -848,6 +885,20 @@ def _build_delta_conformal(
     were trained on different feature sets — reg_final.predict selects its own columns.
 
     Nonconformity score: |y_full - (P_oof × count_hat)|
+
+    Args:
+        clf_result:       Fitted classifier PipelineResult (supplies P_oof).
+        reg_result:       Fitted regressor PipelineResult (supplies positive-sample
+                          count OOF predictions, already inverse-transformed).
+        reg_final:        Final regressor used to score zero-count samples.
+        X_full:           Features for all N samples; pass a DataFrame when clf and
+                          reg use different feature sets.
+        y_full:           (N,) observed counts in the original scale.
+        positive_indices: Indices of presence (count > 0) samples within X_full.
+
+    Returns:
+        ConformalCalibration over the combined delta output, or None when the
+        required OOF predictions are unavailable (a warning is logged).
     """
     from loguru import logger
 
@@ -929,18 +980,33 @@ class DeltaFinalModel:
     always in the original count scale. This differs from FinalModel, where the caller
     handles inversion — the multiplication P × count requires the original scale.
 
-    Example
-    -------
-    >>> positive_idx = np.where(y_all > 0)[0]
-    >>> delta = build_delta_final_model(clf_result, reg_result, X_all, y_all, positive_idx)
-    >>> delta.save("models/sparrow_delta-model")
-    >>> delta = DeltaFinalModel.load("models/sparrow_delta-model")
-    >>> lower, upper = delta.predict_interval(X_new, alpha=0.10)
+    Attributes:
+        clf:             Presence/absence classifier — supplies P(present).
+        reg:             Count/abundance regressor — supplies E(count | present).
+        conformal:       Conformal calibrator over the combined delta output (not the
+                         components); powers predict_interval. None when no calibration
+                         was built.
+        local_conformal: Space-time block-local calibrator used when coords/times are
+                         passed to predict_interval, giving per-sample thresholds. None
+                         for non-spatial runs.
+        variogram:       Fitted VariogramResult for the delta residuals (diagnostic
+                         only; imported lazily). None when unavailable.
+
+    Example:
+        >>> positive_idx = np.where(y_all > 0)[0]
+        >>> delta = build_delta_final_model(clf_result, reg_result, X_all, y_all, positive_idx)
+        >>> delta.save("models/sparrow_delta-model")
+        >>> delta = DeltaFinalModel.load("models/sparrow_delta-model")
+        >>> lower, upper = delta.predict_interval(X_new, alpha=0.10)
     """
 
-    clf: FinalModel
-    reg: FinalModel
+    clf: FinalModel  # presence/absence classifier — supplies P(present)
+    reg: FinalModel  # count/abundance regressor — supplies E(count | present)
+    # Conformal calibrator over the combined delta output (not the components);
+    # powers predict_interval. None when no calibration was built.
     conformal: Optional[ConformalCalibration] = field(default=None)
+    # Space-time block-local calibrator used when coords/times are passed to
+    # predict_interval, giving per-sample thresholds. None for non-spatial runs.
     local_conformal: Optional[LocalConformalCalibration] = field(default=None)
     variogram: Optional[Any] = field(default=None)  # VariogramResult — imported lazily
 
@@ -952,6 +1018,13 @@ class DeltaFinalModel:
         original count scale. Pass a DataFrame to let each sub-model select its own
         features by name; pass an ndarray only when both models share the same
         feature set and column order.
+
+        Args:
+            X: Input features (DataFrame preferred; ndarray only when clf and reg
+                share the same feature set and column order).
+
+        Returns:
+            1-D array of expected counts in the original scale.
         """
         p = self.clf.predict_proba(X)
         count = self.reg.predict(X)
@@ -985,6 +1058,10 @@ class DeltaFinalModel:
 
         Returns:
             (lower, upper) pair of 1-D arrays.
+
+        Raises:
+            ValueError: If no conformal calibration is attached (rebuild via
+                build_delta_final_model() with positive_indices provided).
         """
         if self.conformal is None:
             raise ValueError(

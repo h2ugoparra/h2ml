@@ -2,6 +2,7 @@
 
 
 def adaboost_c_params(trial):
+    """AdaBoost Optuna trials"""
     return {
         "n_estimators": trial.suggest_int("n_estimators", 50, 500, step=50),
         "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.3, log=True),
@@ -10,6 +11,7 @@ def adaboost_c_params(trial):
 
 
 def lightgbm_c_params(trial):
+    """LightGBM Optuna trials"""
     return {
         "num_leaves": trial.suggest_int("num_leaves", 10, 150),
         "max_depth": trial.suggest_int("max_depth", 3, 30),
@@ -25,6 +27,7 @@ def lightgbm_c_params(trial):
 
 
 def xgboost_c_params(trial):
+    """XGBoost Optuna trials"""
     return {
         "n_estimators": trial.suggest_int("n_estimators", 50, 500, step=50),
         "max_depth": trial.suggest_int("max_depth", 3, 30),
@@ -39,6 +42,7 @@ def xgboost_c_params(trial):
 
 
 def histgradientboosting_c_params(trial):
+    """HistGradientBoosting Optuna trials"""
     return {
         "max_iter": trial.suggest_int("max_iter", 50, 500, step=50),
         "max_depth": trial.suggest_int("max_depth", 3, 30),
@@ -51,6 +55,7 @@ def histgradientboosting_c_params(trial):
 
 
 def bagging_c_params(trial):
+    """Bagging Optuna trials"""
     return {
         "n_estimators": trial.suggest_int("n_estimators", 10, 200, step=10),
         "max_samples": trial.suggest_float("max_samples", 0.5, 1.0),
@@ -62,6 +67,7 @@ def bagging_c_params(trial):
 
 
 def svc_c_params(trial):
+    """SVC Optuna trials"""
     return {
         "C": trial.suggest_float("C", 0.1, 100, log=True),
         "kernel": trial.suggest_categorical("kernel", ["linear", "poly", "rbf", "sigmoid"]),
@@ -73,6 +79,7 @@ def svc_c_params(trial):
 
 
 def randomforest_c_params(trial):
+    """Random Forest Optuna trials"""
     return {
         "n_estimators": trial.suggest_int("n_estimators", 50, 500, step=50),
         "criterion": trial.suggest_categorical("criterion", ["gini", "entropy"]),
@@ -88,6 +95,7 @@ def randomforest_c_params(trial):
 
 
 def decisiontree_c_params(trial):
+    """Decision Tree Optuna trials"""
     return {
         "criterion": trial.suggest_categorical("criterion", ["gini", "entropy"]),
         "max_depth": trial.suggest_int("max_depth", 3, 30),
@@ -100,6 +108,7 @@ def decisiontree_c_params(trial):
 
 
 def gradientboosting_c_params(trial):
+    """Gradient Boosting Optuna trials"""
     return {
         "learning_rate": trial.suggest_float("learning_rate", 0.001, 0.1, log=True),
         "n_estimators": trial.suggest_int("n_estimators", 50, 500),
@@ -111,6 +120,7 @@ def gradientboosting_c_params(trial):
 
 
 def catboost_c_params(trial):
+    """CatBoost Optuna trials"""
     return {
         "iterations": trial.suggest_int("iterations", 100, 500, step=50),
         "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.3, log=True),
@@ -128,6 +138,7 @@ def catboost_c_params(trial):
 
 
 def extratrees_c_params(trial):
+    """Extra Trees Optuna trials"""
     return {
         "n_estimators": trial.suggest_int("n_estimators", 50, 500, step=50),
         "max_depth": trial.suggest_int("max_depth", 3, 20),

@@ -51,7 +51,22 @@ def _exponential_model(h: np.ndarray, nugget: float, sill: float, a: float) -> n
 
 @dataclass
 class VariogramResult:
-    """Fitted variogram parameters and derived autocorrelation range."""
+    """
+    Fitted variogram parameters and derived autocorrelation range.
+
+    Attributes:
+        nugget:          Semivariance at lag h=0 — measurement noise / micro-scale
+                         variation not resolved by the sampling.
+        sill:            Semivariance added by spatial structure; the total sill
+                         (the plateau the variogram reaches) is nugget + sill.
+        scale:           Exponential e-folding distance (model parameter `a`) — the
+                         lag at which ~63% of the structured variance is reached.
+        practical_range: 3 × scale — the lag where correlation has decayed to ≈ 5%;
+                         the effective autocorrelation range.
+        lag_distances:   Bin centres (lag distances) used for fitting.
+        semivariances:   Empirical semivariance γ per bin.
+        n_pairs:         Number of point pairs contributing to each bin.
+    """
 
     nugget: float  # variance at h=0 (measurement noise / micro-scale variation)
     sill: float  # variance added by spatial structure (total sill = nugget + sill)

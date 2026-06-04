@@ -20,7 +20,7 @@ class PipelineData:
     """
     Container that pairs a numpy array with its feature names.
 
-    Args:
+    Attributes:
         X:             Feature matrix as numpy array (n_samples, n_features).
         feature_names: Ordered list of feature names matching X columns.
         y:             Target array (n_samples,).
@@ -135,10 +135,12 @@ class PipelineData:
 
     @property
     def n_samples(self) -> int:
+        """Number of rows (observations) in X."""
         return self.X.shape[0]
 
     @property
     def n_features(self) -> int:
+        """Number of feature columns in X."""
         return self.X.shape[1]
 
     def __repr__(self) -> str:

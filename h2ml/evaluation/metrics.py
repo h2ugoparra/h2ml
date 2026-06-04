@@ -41,15 +41,16 @@ class RunMetadata:
     Domain-specific context attached to results after CV.
     Keeps metadata out of the CV engine.
 
-    Args:
-        schema: top-level folder / experiment name
-        target:  target column name.
-        stage:
-            - "default":   step 1 (all features, default params)
-            - "reduced":   step 3 (reduced features, default params)
-            - "optimized": step 4 (reduced or full features, optimized params)
-        batch:    Optional batch/run identifier.
-        schema:   Optional feature schema label.
+    Attributes:
+        schema:      Top-level folder / feature schema / experiment name.
+        target:      Target column name.
+        stage:       Pipeline stage that produced the row, set automatically:
+                       - "default":   step 1 (all features, default params)
+                       - "reduced":   step 3 (reduced features, default params)
+                       - "optimized": step 4 (reduced or full features, optimized params)
+        batch:       Optional batch/run identifier (run ID, date, or any grouping label).
+        y_transform: Winning y-transform name, set by the transform sweep. None otherwise.
+        notes:       Free text — useful for an experiments log.
     """
 
     # Experiment ID
@@ -65,6 +66,7 @@ class RunMetadata:
     notes: Optional[str] = None  # free text — useful for experiments log
 
     def to_dict(self) -> dict:
+        """Non-None fields as a dict with capitalised keys, for DataFrame columns."""
         return {k.capitalize(): v for k, v in self.__dict__.items() if v is not None}
 
 
@@ -227,6 +229,9 @@ def compute_metrics(
 
     Returns:
         DataFrame with one row per fold.
+
+    Raises:
+        ValueError: If cv_result.task_type is neither classification nor regression.
     """
     metric_fn = _METRIC_FN.get(cv_result.task_type)
     if metric_fn is None:
@@ -258,6 +263,9 @@ def compute_metrics_all(
 
     Returns:
         DataFrame with one row per fold per model.
+
+    Raises:
+        RuntimeError: If every model has empty folds (all CV runs failed).
     """
     frames = [compute_metrics(r, metadata) for r in cv_results if r.folds]
     if not frames:
@@ -336,6 +344,11 @@ def select_best(
 
     Returns:
         Dict with keys model_name, metric, value, row.
+
+    Raises:
+        ValueError: If metric is not a column of agg_df.
+        RuntimeError: If all values in the metric column are NaN (every model
+            failed all CV folds).
     """
     if metric not in agg_df.columns:
         raise ValueError(f"Metric '{metric}' not found. Available: {list(agg_df.columns)}")

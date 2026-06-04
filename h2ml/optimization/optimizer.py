@@ -237,6 +237,11 @@ def _build_objective(
     _splitter: pre-built spatial splitter (already cloned with correct n_splits and
                random_state for this repeat). When provided, splitter construction
                is skipped entirely — avoiding redundant AHC in SPCVSplitter.
+
+    Returns:
+        objective(trial) -> float closure. The closure raises ValueError if the
+        model entry has no param_fn, and optuna.TrialPruned when the pruner stops
+        an unpromising trial.
     """
     if _splitter is not None:
         splitter = _splitter
@@ -297,6 +302,20 @@ def _build_objective(
     )
 
     def objective(trial: optuna.Trial) -> float:
+        """
+        Score one Optuna trial: sample params, run CV, return the mean fold score.
+
+        Args:
+            trial: Optuna trial supplying sampled hyperparameters.
+
+        Returns:
+            Mean cross-validation score across folds (higher is better; score_fn
+            negates error metrics so Optuna always maximises).
+
+        Raises:
+            ValueError: If the model entry has no param_fn (no search space defined).
+            optuna.TrialPruned: If the pruner decides to stop this trial early.
+        """
         if entry.param_fn is None:
             raise ValueError(
                 f"Model '{entry.model_cls.__class__.__name__}' has no param_fn defined. "

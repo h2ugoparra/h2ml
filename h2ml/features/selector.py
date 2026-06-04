@@ -59,6 +59,9 @@ class FeatureSelector(BasePreprocessor):
                         training folds are summarised with shap.kmeans to this size.
                         Default 100 — increase for more accurate SHAP at cost of speed.
         verbose:        Log selected/removed feature counts.
+        _splitter:      Internal — a pre-built spatial splitter reused for the OOF
+                        SHAP pass so it matches the pipeline's CV folds. Leave None
+                        for non-spatial use; the pipeline injects it when relevant.
 
     Example:
         >>> selector = FeatureSelector(best_step, TaskType.CLASSIFICATION, corr_threshold=0.7)
@@ -114,6 +117,9 @@ class FeatureSelector(BasePreprocessor):
         Args:
             store: PipelineData containing the training data.
             y:     Unused — kept for API compatibility with BasePreprocessor.
+
+        Returns:
+            self, with shap_values_, feature_importance_ and selected_features_ set.
         """
         if self.use_oof:
             self.shap_values_, self.feature_importance_ = get_oof_shap_values(
@@ -193,7 +199,16 @@ class FeatureSelector(BasePreprocessor):
         store: PipelineData,
         y: Optional[np.ndarray] = None,
     ) -> PipelineData:
-        """Fit and transform in one call."""
+        """
+        Fit and transform in one call.
+
+        Args:
+            store: PipelineData to fit the selector on and then reduce.
+            y:     Unused — kept for API compatibility with BasePreprocessor.
+
+        Returns:
+            Reduced PipelineData containing only the selected features.
+        """
         return self.fit(store, y).transform(store)
 
     # ------------------------------------------------------------------
@@ -202,6 +217,7 @@ class FeatureSelector(BasePreprocessor):
 
     @property
     def n_selected(self) -> int:
+        """Number of features retained after the correlation filter."""
         return len(self.selected_features_)
 
     @property

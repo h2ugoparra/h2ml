@@ -22,10 +22,12 @@ import numpy as np
 
 
 def log_transform(y: np.ndarray) -> np.ndarray:
+    """Apply log1p to y. Inverted by expm1 in INVERSE_TRANSFORMS."""
     return np.log1p(y)
 
 
 def sqrt_transform(y: np.ndarray) -> np.ndarray:
+    """Apply the square root to y. Inverted by squaring in INVERSE_TRANSFORMS."""
     return np.sqrt(y)
 
 

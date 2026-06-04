@@ -56,6 +56,9 @@ class SpatialBlockSplitter:
                            n_splits × n_blocks_per_fold. More blocks give
                            finer spatial granularity at the cost of smaller
                            individual test sets.
+        random_state:     Seed for the block→fold shuffle (reproducible folds).
+        metric:           "euclidean" (projected coords) or "haversine"
+                          (lat/lon in decimal degrees).
 
     Example:
         >>> coords = np.column_stack([lats, lons])
@@ -96,10 +99,29 @@ class SpatialBlockSplitter:
     # ------------------------------------------------------------------
 
     def get_n_splits(self, X=None, y=None, groups=None) -> int:
+        """Number of folds (sklearn splitter interface; X/y/groups ignored)."""
         return self.n_splits
 
-    def split(self, X, y=None, groups=None) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-        """Yield (train_idx, test_idx) for each of n_splits folds."""
+    def split(
+        self,
+        X: np.ndarray,
+        y: Optional[np.ndarray] = None,
+        groups: Optional[np.ndarray] = None,
+    ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+        """
+        Yield (train_idx, test_idx) for each of n_splits folds.
+
+        Args:
+            X:      Array-like whose row count must match the calibration coords.
+            y:      Ignored (sklearn signature compatibility).
+            groups: Ignored (sklearn signature compatibility).
+
+        Yields:
+            (train_idx, test_idx) integer index arrays per fold.
+
+        Raises:
+            ValueError: If len(X) does not match the number of stored coords.
+        """
         n_samples = len(X)
         if n_samples != len(self.coords):
             raise ValueError(f"X has {n_samples} rows but coords has {len(self.coords)} rows.")
@@ -210,6 +232,14 @@ class SPCVSplitter:
                       'ward' minimises within-cluster variance and works well
                       for compact geographic blocks.
         random_state: Seed for KMeans and SpectralClustering reproducibility.
+        metric:       "euclidean" (projected coords) or "haversine" (lat/lon in
+                      decimal degrees). See the Note on linkage interaction.
+        pca_components: Variance fraction retained by PCA applied to block
+                      covariates before clustering. Default 0.95.
+        exact_max_samples: Sample count below which exact scipy AHC is used; above
+                      it an approximate sklearn AHC (k-NN graph) is used. Default 5000.
+        knn_neighbors: k for the k-NN connectivity graph in approximate AHC.
+                      Default 15.
 
     Note:
         'ward' linkage operates on Euclidean distances. When metric='haversine',
@@ -273,10 +303,29 @@ class SPCVSplitter:
     # ------------------------------------------------------------------
 
     def get_n_splits(self, X=None, y=None, groups=None) -> int:
+        """Number of folds (sklearn splitter interface; X/y/groups ignored)."""
         return self.n_splits
 
-    def split(self, X, y=None, groups=None) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-        """Yield (train_idx, test_idx) for each of n_splits folds."""
+    def split(
+        self,
+        X: np.ndarray,
+        y: Optional[np.ndarray] = None,
+        groups: Optional[np.ndarray] = None,
+    ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+        """
+        Yield (train_idx, test_idx) for each of n_splits folds.
+
+        Args:
+            X:      Array-like whose row count must match the calibration coords.
+            y:      Ignored (sklearn signature compatibility).
+            groups: Ignored (sklearn signature compatibility).
+
+        Yields:
+            (train_idx, test_idx) integer index arrays per fold.
+
+        Raises:
+            ValueError: If len(X) does not match the number of stored coords.
+        """
         n_samples = len(X)
         if n_samples != len(self.coords):
             raise ValueError(f"X has {n_samples} rows but coords has {len(self.coords)} rows.")

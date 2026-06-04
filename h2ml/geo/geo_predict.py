@@ -211,6 +211,10 @@ def predict_for_year(
     Returns:
         DataFrame with columns ['index', 'time', 'lon', 'lat'] plus one Float32
         prediction column per succeeded target (and interval columns when alpha is set).
+
+    Raises:
+        ImportError: If the [geo] extras are not installed.
+        ValueError: If root_dir or input_parquet_dir does not exist.
     """
     try:
         from h2mare.storage import ParquetIndexer
@@ -299,6 +303,10 @@ def predict_for_year_delta(
     Returns:
         DataFrame with columns ['index', 'time', 'lon', 'lat'] plus prediction and
         interval columns per succeeded target.
+
+    Raises:
+        ImportError: If the [geo] extras are not installed.
+        ValueError: If root_dir or input_parquet_dir does not exist.
     """
     try:
         from h2mare.storage import ParquetIndexer
@@ -376,6 +384,9 @@ def predict_map(
         vminmax:    Optional (vmin, vmax) for colormap clipping.
         agg_by:     Temporal aggregation level — 'month' or 'season'.
         save_path:  Path to save the plot; if None, calls plt.show().
+
+    Raises:
+        ImportError: If the [geo] extras are not installed.
     """
     try:
         from h2mare.storage import aggregate_by_space_time

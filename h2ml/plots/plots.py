@@ -129,6 +129,9 @@ def pipeline_scores(
                     ('AUC_Test' for classification, 'R2_Test' for regression).
         title:      Plot title.
         save_path:  Path to save figure. If None, shows the plot.
+
+    Raises:
+        ValueError: If the result has no fold DataFrames to plot.
     """
     frames = [df for df in [result.step1_fold_df, result.step3_fold_df, result.step4_fold_df] if df is not None]
     if not frames:
@@ -175,6 +178,9 @@ def cv_diagnostics(
         cv_result: CVResult or list[CVResult].
         title:     Panel title. Defaults to model name (single) or 'All Models' (list).
         save_path: Path to save figure. If None, shows the plot.
+
+    Raises:
+        ValueError: If a list is passed and none of the CVResults have folds.
     """
     from h2ml.pipeline.base import TaskType
 

@@ -78,6 +78,10 @@ def compare_results(
         DataFrame sorted by Conservative_Bound (falls back to Score_Mean when
         fold count cannot be inferred), one row per result.
 
+    Raises:
+        ValueError: If labels length does not match results, or if metric is None
+            while the results were scored on more than one metric.
+
     Example:
         >>> r1 = pipeline_a.run(store)
         >>> r2 = pipeline_b.run(store)

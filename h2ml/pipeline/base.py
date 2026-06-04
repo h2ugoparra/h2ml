@@ -41,6 +41,10 @@ class BaseStep(ABC):
     Optionally override:
         - fit_transform(X, y)  — default calls fit then transform
         - get_feature_names_out()
+
+    Args:
+        name:    Step name used in logs and __repr__. Defaults to the class name.
+        verbose: Log progress during fit/transform.
     """
 
     # Every subclass sets this at the class level

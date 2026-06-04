@@ -58,6 +58,9 @@ def remove_correlated_features(
 
     Returns:
         List of selected feature names in importance order.
+
+    Raises:
+        ValueError: If corr_threshold is not in the half-open interval (0, 1].
     """
     if methods is None:
         methods = ["pearson", "spearman", "kendall"]
@@ -85,8 +88,7 @@ def remove_correlated_features(
 
             # Remove if correlation exceeds threshold in any method
             correlated = any(
-                abs(cast(float, corr_matrices[method].loc[feature, other])) > corr_threshold
-                for method in methods
+                abs(cast(float, corr_matrices[method].loc[feature, other])) > corr_threshold for method in methods
             )
 
             if correlated:

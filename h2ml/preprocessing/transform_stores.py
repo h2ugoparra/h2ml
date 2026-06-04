@@ -22,9 +22,14 @@ def build_transform_stores(
         feature_names: Feature names for PipelineData.
         transforms:    List of transform names from Y_TRANSFORMS.
                        Defaults to all registered transforms.
+        coords:        Optional (n_samples, 2) coordinates copied into every store
+                       to enable spatial CV.
 
     Returns:
         Dict mapping transform name → PipelineData.
+
+    Raises:
+        KeyError: If a requested transform name is not registered in Y_TRANSFORMS.
     """
     transforms = list(Y_TRANSFORMS.keys()) if transforms is None else transforms
     stores = {}

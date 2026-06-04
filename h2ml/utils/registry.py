@@ -56,7 +56,7 @@ class ModelEntry:
     """
     Unified descriptor for a single model in the h2ml registry.
 
-    Args:
+    Attributes:
         model_cls:        Sklearn estimator class.
         default_kwargs:   Constructor args for the default (non-optimized) instance.
         requires_scaling: Whether StandardScaler must be applied before fitting.
@@ -64,6 +64,8 @@ class ModelEntry:
                           None means optimization is disabled for this model.
         opt_enabled:      Set False to exclude from optimization even if param_fn exists.
         single_njob:      Force n_jobs=1 in Optuna to avoid SQLite concurrency issues.
+        supports_class_weight: Whether the estimator accepts class_weight="balanced".
+                          When True, PipelineConfig.handle_imbalance can inject it.
     """
 
     model_cls: type
@@ -258,7 +260,7 @@ REGRESSOR_REGISTRY: dict[str, ModelEntry] = {
 
 # Optional heavy dependencies
 try:
-    from lightgbm import LGBMRegressor # type: ignore[import-not-found]
+    from lightgbm import LGBMRegressor  # type: ignore[import-not-found]
 
     REGRESSOR_REGISTRY["LGBMRegressor"] = ModelEntry(
         LGBMRegressor,
@@ -269,7 +271,7 @@ except ImportError:
     pass
 
 try:
-    from catboost import CatBoostRegressor # type: ignore[import-not-found]
+    from catboost import CatBoostRegressor  # type: ignore[import-not-found]
 
     REGRESSOR_REGISTRY["CatBoostRegressor"] = ModelEntry(
         CatBoostRegressor,
@@ -280,7 +282,7 @@ except ImportError:
     pass
 
 try:
-    from xgboost import XGBRegressor # type: ignore[import-not-found]
+    from xgboost import XGBRegressor  # type: ignore[import-not-found]
 
     REGRESSOR_REGISTRY["XGBRegressor"] = ModelEntry(
         XGBRegressor,

@@ -65,70 +65,71 @@ class PipelineConfig:
     """
     Configuration for H2MLPipeline.
 
-    Core:
-        task_type:       CLASSIFICATION or REGRESSION.
-        metric:          Short metric name used for model selection (steps 1–3) and HPO
-                         (step 4). Minimisation direction and sort order are derived
-                         automatically — no need to set a separate flag.
-                           Classification: "AUC" (default), "AUC_PR", "F1",
-                                           "LogLoss", "Brier"
-                           Regression:     "R2" (default), "MAE", "RMSE"
-        n_splits:        CV folds used in steps 1–3 for model screening and feature
-                         selection. More folds = more reliable estimates, higher cost.
-                         Default: 5.
-        random_state:    Seed for fold splitting and model initialisation. Default: 42.
-        verbose:         Log step-by-step progress. Default: False.
+    Attributes:
+        task_type:           CLASSIFICATION or REGRESSION.
+        metric:              Short metric name used for model selection (steps 1–3) and
+                             HPO (step 4). Minimisation direction and sort order are
+                             derived automatically — no need to set a separate flag.
+                             Classification: "AUC" (default), "AUC_PR", "F1", "LogLoss",
+                             "Brier". Regression: "R2" (default), "MAE", "RMSE".
+        n_splits:            CV folds used in steps 1–3 for model screening and feature
+                             selection. More folds = more reliable estimates, higher
+                             cost. Default: 5.
+        random_state:        Seed for fold splitting and model initialisation. Default: 42.
+        verbose:             Log step-by-step progress. Default: False.
 
-    Feature selection (step 2):
-        corr_threshold:  Drop a feature when its correlation with any already-retained
-                         feature exceeds this value in Pearson, Spearman, or Kendall.
-                         Range (0, 1]. Default: 0.7.
-        min_features:    Hard lower bound on features kept after the correlation filter;
-                         prevents the selector from removing everything. Default: 1.
+        corr_threshold:      (Step 2) Drop a feature when its correlation with any
+                             already-retained feature exceeds this value in Pearson,
+                             Spearman, or Kendall. Range (0, 1]. Default: 0.7.
+        min_features:        (Step 2) Hard lower bound on features kept after the
+                             correlation filter; prevents the selector from removing
+                             everything. Default: 1.
 
-    Hyperparameter optimisation (step 4):
-        n_trials:        Total Optuna trials budget. Each trial evaluates one
-                         hyperparameter configuration using opt_n_splits-fold CV, so
-                         total model fits = n_trials × opt_n_splits (plus a final
-                         n_splits-fold CV on the best params). Default: 50.
-        opt_n_splits:    CV folds inside each Optuna trial. Fewer folds make each trial
-                         faster at the cost of a noisier score estimate. Should be ≥
-                         n_splits // 2 to avoid unreliable HPO scores; setting it equal
-                         to n_splits gives unbiased estimates at higher compute cost.
-                         Default: 3.
-        n_hpo_repeats:   Number of independent HPO runs with different fold seeds. The
-                         repeat with the highest best_value is kept. Trials are divided
-                         evenly across repeats: trials_per_repeat = max(1, n_trials //
-                         n_hpo_repeats), so the total fit count stays constant.
-                         Default: 1.
+        n_trials:            (Step 4) Total Optuna trials budget. Each trial evaluates
+                             one hyperparameter configuration using opt_n_splits-fold
+                             CV, so total model fits = n_trials × opt_n_splits (plus a
+                             final n_splits-fold CV on the best params). Default: 50.
+        opt_n_splits:        (Step 4) CV folds inside each Optuna trial. Fewer folds make
+                             each trial faster at the cost of a noisier score estimate.
+                             Should be ≥ n_splits // 2 to avoid unreliable HPO scores;
+                             setting it equal to n_splits gives unbiased estimates at
+                             higher compute cost. Default: 3.
+        n_hpo_repeats:       (Step 4) Number of independent HPO runs with different fold
+                             seeds. The repeat with the highest best_value is kept.
+                             Trials are divided evenly across repeats: trials_per_repeat
+                             = max(1, n_trials // n_hpo_repeats), so the total fit count
+                             stays constant. Default: 1.
 
-    Spatial CV (ignored when store.coords is None):
-        spatial_cv_method:  Splitting strategy when spatial coordinates are provided.
-                              "block" — quantile-grid blocking; fast, no clustering.
-                              "spcv"  — Agglomerative Hierarchical Clustering + cluster
-                                        ensemble; more spatially coherent folds, slower.
-                            Default: "block".
-        spatial_cv_metric:  Distance metric used by both splitters.
-                              "euclidean" — projected coordinates (metres).
-                              "haversine" — geographic lat/lon in decimal degrees.
-                            Default: "euclidean".
-        n_blocks_per_fold:  Number of spatial blocks assigned to the test set per fold
-                            in the block splitter. Default: 5.
-        ahc_threshold:      Distance threshold for cutting the AHC dendrogram in
-                            SPCVSplitter. Derived automatically from the data when None.
-                            Default: None.
-        pca_components:     Variance fraction retained by PCA applied to block covariates
-                            before AHC clustering in SPCVSplitter. Default: 0.95.
-        exact_max_samples:  Sample count below which exact scipy AHC is used; above this
-                            an approximate sklearn AHC (k-NN graph) is used instead.
-                            Default: 5 000.
-        knn_neighbors:      k for the k-NN connectivity graph in approximate AHC.
-                            Default: 15.
+        spatial_cv_method:   Splitting strategy when spatial coordinates are provided
+                             (all spatial-CV fields are ignored when store.coords is
+                             None). "block" — quantile-grid blocking; fast, no
+                             clustering. "spcv" — Agglomerative Hierarchical Clustering +
+                             cluster ensemble; more spatially coherent folds, slower.
+                             Default: "block".
+        spatial_cv_metric:   Distance metric used by both splitters. "euclidean" —
+                             projected coordinates (metres). "haversine" — geographic
+                             lat/lon in decimal degrees. Default: "euclidean".
+        n_blocks_per_fold:   Number of spatial blocks assigned to the test set per fold
+                             in the block splitter. Default: 5.
+        time_bin_resolution: Temporal granularity for binning dates in spatial CV and
+                             local conformal calibration. "month" — 12 bins (Jan…Dec).
+                             "season" — 4 bins (DJF, MAM, JJA, SON). Default: "month".
+        ahc_threshold:       Distance threshold for cutting the AHC dendrogram in
+                             SPCVSplitter. Derived automatically from the data when None.
+                             Default: None.
+        pca_components:      Variance fraction retained by PCA applied to block
+                             covariates before AHC clustering in SPCVSplitter.
+                             Default: 0.95.
+        exact_max_samples:   Sample count below which exact scipy AHC is used; above this
+                             an approximate sklearn AHC (k-NN graph) is used instead.
+                             Default: 5 000.
+        knn_neighbors:       k for the k-NN connectivity graph in approximate AHC.
+                             Default: 15.
 
-    Imbalance (classification only):
-        handle_imbalance:   Inject class_weight="balanced" into every model whose
-                            registry entry has supports_class_weight=True. Has no effect
-                            on regression tasks. Default: False.
+        handle_imbalance:    (Classification only) Inject class_weight="balanced" into
+                             every model whose registry entry has
+                             supports_class_weight=True. No effect on regression tasks.
+                             Default: False.
     """
 
     task_type: TaskType = TaskType.CLASSIFICATION
@@ -197,6 +198,38 @@ class PipelineResult:
     Fields are populated progressively as steps complete; check completed_steps
     to see which steps have run. Use summary() to compare all stages at once and
     build_final_model() to refit on the full training set.
+
+    Attributes:
+        features:             Input PipelineData (full feature set).
+        step1_fold_df:        Per-fold metrics from step 1 (all models × transforms).
+        step1_agg_df:         Aggregated (mean ± std) step-1 metrics per model.
+        best_model_name:      Winning model name after step 1.
+        best_model_value:     Best model's score on the selection metric.
+        best_model_std:       Fold std of the best model's selection metric.
+        features_reduced:     PipelineData after step-2 feature reduction.
+        selector:             Fitted FeatureSelector (SHAP + correlation filter).
+        step3_fold_df:        Per-fold metrics from step 3 (reduced features).
+        step3_agg_df:         Aggregated step-3 metrics per model.
+        best_stage:           Winning stage after step 3: "default" or "reduced".
+        best_feature_stage:   Feature stage step 4 is built on — "default" or
+                              "reduced", never "optimized".
+        step3_reduced_stores: Cached reduced PipelineDatas keyed by transform name
+                              ("" for no transform). Not persisted.
+        best_params:          Best hyperparameters found in step 4 (None = defaults).
+        step4_fold_df:        Per-fold metrics from the step-4 final CV.
+        step4_agg_df:         Aggregated step-4 metrics.
+        step1_cv_result:      Raw step-1 CVResults — preserved for plots/persistence.
+        step3_cv_result:      Raw step-3 CVResults.
+        step4_cv_result:      Raw step-4 CVResult.
+        y_transform:          Winning y-transform name (set when run() sweeps transforms).
+        cv_type:              "spatial" when store.coords was set, else "random".
+        spatial_cv_metric:    Distance metric forwarded from PipelineConfig; used by
+                              build_final_model to build LocalConformalCalibration.
+        time_bin_resolution:  Temporal bin resolution forwarded from PipelineConfig.
+        cv_warnings:          Warnings for models with ≥1 failed CV fold (steps 1 & 3).
+        metric:               Short selection metric name, e.g. "AUC" or "R2".
+        splitter:             Splitter built once in step 1 and reused in steps 3-4.
+                              Not persisted.
     """
 
     # Input data
@@ -301,6 +334,9 @@ class PipelineResult:
 
         Returns:
             DataFrame with a "Stage" column prepended. Empty if no steps have run.
+
+        Raises:
+            ValueError: If metric is given but not present in the summary columns.
         """
         rows = []
         for agg_df, stage in [
@@ -386,6 +422,16 @@ class H2MLPipeline:
         run_step1_to_step3()  — steps 1-3, full selection without HPO
         run_from_step3()      — resume from a pre-reduced result (steps 3-4)
 
+    Args:
+        config:   Pipeline configuration.
+        models:   Override the default model registry list. When None, build_models()
+                  constructs a task-appropriate set from the registry.
+        metadata: Optional experiment labels (schema, target, batch) that appear as
+                  columns in fold/agg DataFrames. When None, only stage is set.
+
+    Raises:
+        ValueError: If the resolved model list is empty.
+
     Example:
         >>> pipeline = H2MLPipeline(config=PipelineConfig())
         >>> result   = pipeline.run(store)
@@ -398,14 +444,6 @@ class H2MLPipeline:
         models: Optional[list[ModelWrapper]] = None,
         metadata: Optional[RunMetadata] = None,
     ):
-        """
-        Args:
-            config:   Pipeline configuration.
-            models:   Override the default model registry list. When None, build_models()
-                      constructs a task-appropriate set from the registry.
-            metadata: Optional experiment labels (schema, target, batch) that appear as
-                      columns in fold/agg DataFrames. When None, only stage is set.
-        """
         if models is None:
             models = build_models(config.task_type.value)
         if not models:
@@ -472,6 +510,9 @@ class H2MLPipeline:
         """
         CV all models on all features and select the best — quick model screening.
         After: result.best_model_name, result.step1_agg_df.
+
+        Returns:
+            PipelineResult with step 1 completed.
         """
         self._validate_store(store)
         transform_stores = self._build_transform_stores(store, transforms)
@@ -479,8 +520,8 @@ class H2MLPipeline:
             PipelineResult(
                 features=store,
                 cv_type="spatial" if store.coords is not None else "random",
-            spatial_cv_metric=self.config.spatial_cv_metric,
-            time_bin_resolution=self.config.time_bin_resolution,
+                spatial_cv_metric=self.config.spatial_cv_metric,
+                time_bin_resolution=self.config.time_bin_resolution,
             ),
             transform_stores,
         )
@@ -493,6 +534,9 @@ class H2MLPipeline:
         """
         Run steps 1-2.
         After: result.selector.importance_summary() / result.features_reduced.feature_names
+
+        Returns:
+            PipelineResult with steps 1-2 completed.
         """
         self._validate_store(store)
         transform_stores = self._build_transform_stores(store, transforms)
@@ -516,6 +560,9 @@ class H2MLPipeline:
         Useful for inspecting best_stage and comparing models before committing to
         step 4's compute cost.
         After: result.best_model_name, result.best_stage, result.step3_agg_df
+
+        Returns:
+            PipelineResult with steps 1-3 completed (no HPO).
         """
         self._validate_store(store)
         transform_stores = self._build_transform_stores(store, transforms)
@@ -538,6 +585,18 @@ class H2MLPipeline:
         """
         Resume from step 3 using a PipelineResult from run_step1_to_step2().
         Requires result.features, result.features_reduced and result.best_model_name to be set.
+
+        Args:
+            result:           PipelineResult carrying steps 1-2 state.
+            transform_stores: Pre-built y-transform stores; rebuilt from result.features
+                              when None.
+
+        Returns:
+            PipelineResult with steps 3-4 completed.
+
+        Raises:
+            ValueError: If features, features_reduced, best_model_name, or selector
+                is missing from result.
         """
         missing = [
             attr
@@ -563,6 +622,17 @@ class H2MLPipeline:
 
         Requires: features, features_reduced, selector, best_model_name, best_stage,
                   best_model_value.
+
+        Args:
+            result:           PipelineResult with steps 1-3 complete.
+            transform_stores: Pre-built y-transform stores; rebuilt from result.features
+                              when None.
+
+        Returns:
+            PipelineResult with step 4 completed.
+
+        Raises:
+            ValueError: If any of the required steps 1-3 fields are missing.
         """
         missing = [
             attr
@@ -934,7 +1004,21 @@ class H2MLPipeline:
         store: PipelineData,
         transforms: Optional[Iterable[str]],
     ) -> Optional[dict[str, PipelineData]]:
-        """Build per-transform PipelineDatas from the raw store. Returns None when transforms=None."""
+        """
+        Build per-transform PipelineDatas from the raw store.
+
+        Args:
+            store:      Raw (untransformed) PipelineData.
+            transforms: y-transform names to build; None disables the sweep.
+
+        Returns:
+            Dict of transform name → PipelineData, or None when transforms is None.
+
+        Raises:
+            ValueError: If transforms are requested for a non-regression task, or
+                if every requested transform returned None (e.g. winsorize variants
+                with no outliers).
+        """
         if transforms is None:
             return None
         if self.config.task_type != TaskType.REGRESSION:
@@ -971,7 +1055,16 @@ class H2MLPipeline:
         return full_store
 
     def _validate_store(self, store: PipelineData) -> None:
-        """Raise descriptive ValueError for common data quality issues before any fitting begins."""
+        """
+        Validate a store for common data-quality issues before any fitting begins.
+
+        Args:
+            store: PipelineData to validate.
+
+        Raises:
+            ValueError: If the store has fewer samples than config.n_splits (or any
+                other checked data-quality issue).
+        """
         if store.n_samples < self.config.n_splits:
             raise ValueError(
                 f"store has {store.n_samples} samples but config.n_splits={self.config.n_splits}. "

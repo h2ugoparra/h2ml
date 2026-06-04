@@ -33,6 +33,21 @@ class FoldResult:
     """
     Stores the raw arrays produced in one CV fold.
     Metric computation happens downstream in evaluation/metrics.py.
+
+    Attributes:
+        fold_id:      Index of this fold within the CV run.
+        model_name:   Name of the model that produced these predictions.
+        y_train:      Ground-truth targets for the training rows.
+        y_test:       Ground-truth targets for the held-out rows.
+        y_pred_train: Point predictions on the training rows.
+        y_pred_test:  Point predictions on the held-out rows.
+        y_prob_train: Predicted class probabilities on the training rows
+                      (None for regressors).
+        y_prob_test:  Predicted class probabilities on the held-out rows
+                      (None for regressors).
+        train_idx:    Row indices used for training — kept for traceability.
+        test_idx:     Row indices held out — used to reassemble OOF predictions.
+        fit_time:     Wall-clock seconds spent fitting the model on this fold.
     """
 
     fold_id: int
@@ -70,11 +85,23 @@ class FoldResult:
 
 @dataclass
 class CVResult:
-    """All fold results for a single model run."""
+    """
+    All fold results for a single model run.
+
+    Attributes:
+        model_name:   Name of the model these folds belong to.
+        task_type:    TaskType.CLASSIFICATION or TaskType.REGRESSION.
+        folds:        Successful FoldResults, one per completed fold.
+        failed_folds: Indices of folds that raised during fit/predict and were
+                      skipped. A non-empty list means metrics are computed on fewer
+                      than the requested number of folds.
+    """
 
     model_name: str
     task_type: TaskType
-    folds: list[FoldResult] = field(default_factory=list)
+    folds: list[FoldResult] = field(default_factory=list)  # successful folds only
+    # Indices of folds that raised during fit/predict and were skipped. A non-empty
+    # list means metrics are computed on fewer than the requested number of folds.
     failed_folds: list[int] = field(default_factory=list)
 
     @property
@@ -373,7 +400,26 @@ class CrossValidator:
         exact_max_samples: int = 5_000,
         knn_neighbors: int = 15,
     ):
-        """Spatial splitter when coords provided, otherwise stratified/standard KFold."""
+        """
+        Spatial splitter when coords provided, otherwise stratified/standard KFold.
+
+        Args:
+            task_type:         Selects StratifiedKFold (classification) vs KFold
+                               (regression) in the non-spatial case.
+            coords:            (n_samples, 2) coordinates. When None, a random
+                               (non-spatial) splitter is returned.
+            n_blocks_per_fold: Blocks per test fold for SpatialBlockSplitter.
+            X, y:              Required by SPCVSplitter (passed through for AHC).
+            spatial_cv_method: "block" → SpatialBlockSplitter, "spcv" → SPCVSplitter.
+            ahc_threshold:     AHC distance threshold for SPCVSplitter (auto when None).
+            spatial_cv_metric: "euclidean" or "haversine".
+            pca_components:    Variance retained by PCA on block covariates (SPCV).
+            exact_max_samples: Sample threshold for exact vs approximate AHC (SPCV).
+            knn_neighbors:     k for the k-NN connectivity graph in approximate AHC.
+
+        Returns:
+            A scikit-learn-compatible splitter exposing split() and get_n_splits().
+        """
         if coords is not None:
             if spatial_cv_method == "spcv":
                 from h2ml.features.spatial_cv import SPCVSplitter
