@@ -53,16 +53,16 @@ df = predict_for_year(
 
 ### Spatio-temporal varying intervals
 
-When the model has a `LocalConformalCalibration` (built when `store.coords` and/or `store.times` were provided during training), `predict_for_year` automatically extracts `lon`, `lat`, and `time` from the scan and uses them to produce interval widths that vary by location and season. No extra arguments are needed.
+When the model has a `LocalConformalCalibration` (built when `store.coords` and/or `store.times` were provided during training), passing `local=True` makes `predict_for_year` extract `lon`, `lat`, and `time` from the scan and produce interval widths that vary by location and season.
 
-To compare global (constant-width) vs local intervals, or to force global intervals when a `LocalConformalCalibration` is present, use `local=False`:
+`local` defaults to `False`, so intervals use the global constant-width threshold unless you opt in:
 
 ```python
-# Spatio-temporally varying widths (default when local_conformal present)
-df_local = predict_for_year(..., alpha=0.10)
+# Global constant-width intervals (default)
+df_global = predict_for_year(..., alpha=0.10)
 
-# Global constant-width intervals
-df_global = predict_for_year(..., alpha=0.10, local=False)
+# Spatio-temporally varying widths (requires a LocalConformalCalibration)
+df_local = predict_for_year(..., alpha=0.10, local=True)
 ```
 
 See [Conformal Prediction — Spatio-temporal local calibration](conformal.md#spatio-temporal-local-calibration) for details on how the local calibration is built and tuned.
@@ -110,7 +110,7 @@ df = predict_for_year_delta(
     schema="v1",
     geo_extent=(-10.0, 35.0, 30.0, 70.0),
     alpha=0.10,
-    local=True,   # default — use LocalConformalCalibration when available
+    local=True,   # opt in to LocalConformalCalibration; default is False (global threshold)
 )
 # columns per target: {target}_{schema}, {target}_{schema}_pi_lower, {target}_{schema}_pi_upper
 ```

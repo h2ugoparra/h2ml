@@ -24,7 +24,7 @@ def _predict_single(
     model: FinalModel,
     col_name: str,
     alpha: Optional[float] = None,
-    local: bool = True,
+    local: bool = False,
 ) -> tuple[pl.Series, ...]:
     """
     Generate predictions (and optional conformal intervals) for one target.
@@ -44,9 +44,9 @@ def _predict_single(
         alpha:       Miscoverage level for conformal intervals. When None or the
                      model has no calibration, only the point prediction is returned.
                      Multiclass classifiers are unaffected.
-        local:       If True (default), use LocalConformalCalibration when available
-                     to produce spatially/temporally varying interval widths.
-                     If False, always use the global conformal threshold.
+        local:       If True, use LocalConformalCalibration when available to produce
+                     spatially/temporally varying interval widths.
+                     If False (default), always use the global conformal threshold.
 
     Returns:
         (pred_series,) when alpha is None, uncalibrated, or multiclass classifier.
@@ -108,7 +108,7 @@ def _predict_delta_single(
     model: "DeltaFinalModel",
     col_name: str,
     alpha: Optional[float] = None,
-    local: bool = True,
+    local: bool = False,
 ) -> tuple[pl.Series, ...]:
     """
     Generate delta predictions (and optional conformal intervals) for one target.
@@ -124,8 +124,8 @@ def _predict_delta_single(
         col_name:    Name for the prediction Series.
         alpha:       Miscoverage level. When None or model has no calibration,
                      only the point prediction is returned.
-        local:       If True (default), use LocalConformalCalibration when available.
-                     If False, always use the global conformal threshold.
+        local:       If True, use LocalConformalCalibration when available.
+                     If False (default), always use the global conformal threshold.
 
     Returns:
         (pred_series,) or (pred_series, lower_series, upper_series).
@@ -177,7 +177,7 @@ def predict_for_year(
     schema: str,
     geo_extent: tuple[float, float, float, float],
     alpha: Optional[float] = None,
-    local: bool = True,
+    local: bool = False,
 ) -> pl.DataFrame:
     """
     Load pre-trained FinalModels and generate predictions for a full calendar year.
@@ -203,9 +203,9 @@ def predict_for_year(
                            inversion). Binary classifiers: probability-space bands
                            clip(p ± q, 0, 1). Multiclass and uncalibrated models
                            are unaffected.
-        local:             If True (default), use LocalConformalCalibration when the
-                           model has one, producing interval widths that vary by
-                           location and season. Pass False to use the global threshold
+        local:             If True, use LocalConformalCalibration when the model has
+                           one, producing interval widths that vary by location and
+                           season. If False (default), use the global threshold
                            regardless of the scan's lon/lat/time columns.
 
     Returns:
@@ -272,7 +272,7 @@ def predict_for_year_delta(
     schema: str,
     geo_extent: tuple[float, float, float, float],
     alpha: float = 0.10,
-    local: bool = True,
+    local: bool = False,
 ) -> pl.DataFrame:
     """
     Load DeltaFinalModels and generate delta predictions + conformal intervals for a calendar year.
@@ -296,9 +296,9 @@ def predict_for_year_delta(
         schema:            Schema identifier used to locate model directories.
         geo_extent:        Spatial bounding box as (xmin, ymin, xmax, ymax).
         alpha:             Miscoverage level for conformal intervals (default 0.10 → 90%).
-        local:             If True (default), use LocalConformalCalibration when the
-                           model has one, producing interval widths that vary by
-                           location and season. Pass False to use the global threshold.
+        local:             If True, use LocalConformalCalibration when the model has
+                           one, producing interval widths that vary by location and
+                           season. If False (default), use the global threshold.
 
     Returns:
         DataFrame with columns ['index', 'time', 'lon', 'lat'] plus prediction and

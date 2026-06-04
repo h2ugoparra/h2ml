@@ -137,7 +137,7 @@ Note: at α=0.10, compound cells need ≥ 10 samples before the conformal quanti
 
 ## Geo prediction — conformal columns
 
-`predict_for_year` and `predict_for_year_delta` accept `alpha` to add conformal bound columns. When the model has a `LocalConformalCalibration`, the `lon`, `lat`, and `time` columns from the scan are automatically used — interval widths vary across space and time.
+`predict_for_year` and `predict_for_year_delta` accept `alpha` to add conformal bound columns. By default they use the global conformal threshold (constant-width intervals). Pass `local=True` to use a `LocalConformalCalibration` when the model has one — the `lon`, `lat`, and `time` columns from the scan are then used so interval widths vary across space and time.
 
 ```python
 # Spatio-temporally varying intervals (default when local_conformal is present)
@@ -166,7 +166,7 @@ pi_lower = max(0, inverse_fn(raw − q))
 pi_upper = inverse_fn(raw + q)
 ```
 
-When `local=True` (default), `q` is a per-sample value from `LocalConformalCalibration.threshold()`.
+When `local=True`, `q` is a per-sample value from `LocalConformalCalibration.threshold()`. The default is `local=False`, which uses the global constant `q`.
 
 ### Binary classifiers
 
