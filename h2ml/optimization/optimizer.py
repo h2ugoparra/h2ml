@@ -40,6 +40,7 @@ from sklearn.model_selection import StratifiedKFold, KFold
 from sklearn.preprocessing import LabelBinarizer, StandardScaler
 
 from h2ml.core.spatial_config import SpatialCVConfig
+from h2ml.evaluation.metrics import _MINIMIZE
 from h2ml.optimization.opt_params import ModelEntry, get_entry
 
 
@@ -47,8 +48,10 @@ from h2ml.optimization.opt_params import ModelEntry, get_entry
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 # Metrics whose objective returns a negated value for internal maximisation.
-# Used to flip display values back to their natural (positive) direction.
-_NEGATED_METRICS: frozenset[str] = frozenset({"LogLoss", "Brier", "MAE", "RMSE"})
+# Used to flip display values back to their natural (positive) direction. These are
+# exactly the error (lower-is-better) metrics, so derive them from _MINIMIZE rather
+# than re-listing them — keeping a single source of truth for metric direction.
+_NEGATED_METRICS: frozenset[str] = frozenset(name for name, minimize in _MINIMIZE.items() if minimize)
 
 
 def _to_display(value: float, metric: str) -> float:
