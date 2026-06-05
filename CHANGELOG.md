@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-06-05
+
+### Added
+
+- `LocalConformalCalibration.summary()` — per-block (and per-time-bin) calibration
+  diagnostics as a DataFrame, with a `used` column showing the fallback level each
+  cell resolves to (`compound`/`block`/`global`)
+- `SpatialBlockSplitter.plot()` / `SPCVSplitter.plot()` — two-panel block/fold
+  scatter; `plot_spatial_blocks` is now exported from `h2ml.plots`
+
+### Changed
+
+- SHAP dependence plots now use LOWESS with a bootstrap confidence band
+
+## [0.1.1]
+
+- Promote `h2mare` and `polars` to core dependencies; fix geo-prediction bugs
+
 ## [0.1.0] - 2026-05-07
 
 Initial public release.
