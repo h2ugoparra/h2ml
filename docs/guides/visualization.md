@@ -50,3 +50,23 @@ spatial_folds(result, store, save_path="plots/folds.png")
 ```
 
 Only available when `result.cv_type == "spatial"`.
+
+## Spatial blocks
+
+A two-panel scatter showing each sample's block ID (left) and the fold it is held
+out in (right). Call `.plot()` directly on a fitted splitter, or use the exported
+`plot_spatial_blocks` function:
+
+```python
+from h2ml.plots import plot_spatial_blocks
+
+# Shortcut method on the splitter (result.splitter is the fitted instance)
+result.splitter.plot(save_path="plots/blocks.png")
+
+# Equivalent explicit call
+plot_spatial_blocks(result.splitter, save_path="plots/blocks.png")
+```
+
+`lon_col` / `lat_col` (default `1` / `0`) select which columns of the splitter's
+coords are longitude and latitude. `result.splitter` is `None` after
+`PipelineResult.load()` — rebuild via `build_final_model()` first.
