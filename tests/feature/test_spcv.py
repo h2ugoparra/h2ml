@@ -283,3 +283,26 @@ class TestValidation:
             rng.standard_normal(n),
             n_splits=5,
         )
+
+
+class TestSplitterPlot:
+    """splitter.plot() delegates to plots.plot_spatial_blocks and writes a figure."""
+
+    def test_spcv_plot_writes_file(self, splitter, tmp_path):
+        import matplotlib
+
+        matplotlib.use("Agg")
+        out = tmp_path / "spcv_blocks.png"
+        splitter.plot(save_path=out)
+        assert out.exists() and out.stat().st_size > 0
+
+    def test_block_splitter_plot_writes_file(self, coords, tmp_path):
+        import matplotlib
+
+        matplotlib.use("Agg")
+        from h2ml.features.spatial_cv import SpatialBlockSplitter
+
+        sp = SpatialBlockSplitter(coords, n_splits=5, n_blocks_per_fold=3)
+        out = tmp_path / "block_blocks.png"
+        sp.plot(save_path=out)
+        assert out.exists() and out.stat().st_size > 0

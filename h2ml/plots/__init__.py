@@ -5,6 +5,7 @@ from h2ml.plots.plots import (
     shap_importance,
     shap_summary_plot,
     shap_dependence,
+    plot_spatial_blocks,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "shap_importance",
     "shap_summary_plot",
     "shap_dependence",
+    "plot_spatial_blocks",
 ]

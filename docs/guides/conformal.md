@@ -103,23 +103,22 @@ Extra context dimensions not present at calibration time are silently ignored �
 
 ```python
 lc = final.local_conformal
-from h2ml.evaluation.conformal import _conformal_quantile
 
-print("n_spatial_blocks:", len(lc.scores_by_block))
-if lc.compound_scores:
-    sizes = {k: len(v) for k, v in lc.compound_scores.items()}
-    print("compound cells populated:", len(sizes))
-    print("cells ≥ min_compound_n:", sum(v >= lc.min_compound_n for v in sizes.values()))
+# One row per spatial block, plus one per populated (block, time_bin) compound cell.
+# Bin labels follow the model's time_bin_resolution (season → DJF/MAM/JJA/SON, month → 1–12).
+print(lc.summary(alpha=0.10))
 
-    season_names = {0: "DJF", 1: "MAM", 2: "JJA", 3: "SON"}
-    for block_idx in range(min(5, len(lc.scores_by_block))):
-        spatial_q = _conformal_quantile(lc.scores_by_block[block_idx], 0.10)
-        print(f"block {block_idx} (spatial q={spatial_q:.3f}):")
-        for season in range(4):
-            cs = lc.compound_scores.get((block_idx, season))
-            if cs is not None:
-                print(f"  {season_names[season]}: n={len(cs)}, q={_conformal_quantile(cs, 0.10):.3f}")
+# Which cells fall through to the global fallback (too few samples)?
+print(lc.summary().query("used == 'global'"))
+
+# Limit the report to the first few blocks:
+print(lc.summary(max_blocks=5))
 ```
+
+`summary()` returns a DataFrame with columns `block`, `level` (`spatial`/`compound`),
+`time_bin`, `bin_name`, `n` (samples), `q` (conformal quantile at `alpha`), and `used` —
+the fallback level a query resolving to that cell actually hits (`compound`, `block`, or
+`global`). The `used` column makes the sparsity problem below directly visible.
 
 ### Tuning
 

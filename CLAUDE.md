@@ -6,7 +6,7 @@ A 4-step AutoML pipeline wrapping sklearn-compatible estimators.
 
 ## Tech Stack
 
-Python 3.11+. Key libraries: `scikit-learn`, `optuna` (HPO), `shap` (feature selection), `joblib` (parallel CV), `lightgbm`/`xgboost`/`catboost` (`[boosting]` extra), `h2mare` (core dep; `polars` is also core; `[geo]` extra adds `cartopy` for `predict_map`). Dev: `uv`, `ruff`, `pytest`, `tox`, `mkdocs`.
+Python 3.11+ (pinned to 3.13 locally via `.python-version`). Key libraries: `scikit-learn`, `optuna` (HPO), `shap` (feature selection), `joblib` (parallel CV), `lightgbm`/`xgboost`/`catboost` (`[boosting]` extra), `h2mare` (core dep; `polars` is also core; `[geo]` extra adds `cartopy` for `predict_map`). Dev: `uv`, `ruff`, `pytest`, `tox`, `mkdocs`.
 
 ## Commands
 
@@ -37,8 +37,8 @@ SpatialBlockSplitter / SPCVSplitter          → activated when store.coords is 
 FinalModel (pipeline/final_model.py)         → predict/predict_proba + optional ConformalCalibration
                                                or LocalConformalCalibration (space-time block-local)
 DeltaFinalModel (pipeline/final_model.py)    → P(present) × E(count|present); built via build_delta_final_model()
-ModelRegistry (utils/registry.py)            → single source of truth; build_models(task)
-Optimizer (optimization/optimizer.py)        → run_study(); optimize_all() for batch use
+model registry (utils/registry.py)           → CLASSIFIER_REGISTRY / REGRESSOR_REGISTRY dicts of ModelEntry; build_models(task)
+optimizer (optimization/optimizer.py)        → run_study(); optimize_all() for batch use  [module functions, no class]
 
 core/ (foundational, dependency-free leaf layer; nothing in core imports other h2ml packages)
   base.py         → TaskType, BaseStep/PredictorMixin, BaseClassifier/Regressor/Preprocessor
@@ -103,6 +103,7 @@ compare_results(results, labels, metric, n_folds)  # sort direction auto-derived
 
 ## Conventions
 
+- **Logging** — use `loguru` (`from loguru import logger`), not stdlib `logging`
 - **CatBoost** uses `random_seed` (not `random_state`) and `thread_count` (not `n_jobs`)
 - **SHAP routing**: tree models → `TreeExplainer`; linear SVM (`kernel="linear"`, `probability=False`) → `LinearExplainer`; all others → KernelSHAP with `shap.kmeans` background (capped at `max_background=100`)
 - **y-transform names**: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`, `"winlog"`, `"winsqrt"`; winsorize variants silently skipped when no outliers
@@ -112,3 +113,9 @@ compare_results(results, labels, metric, n_folds)  # sort direction auto-derived
 ## h2mare dependency
 
 `h2mare` (PyPI, core dependency) — geospatial storage (`ParquetIndexer`), aggregation, map plotting. Import paths in `h2ml/geo/geo_predict.py` use `h2mare.*`. The `[geo]` extra adds `cartopy`, required only for `predict_map` (`polars` is a core dependency).
+
+## Git workflow
+
+- Never commit to main directly
+- Branch naming: 'feat/', 'fix/', 'chore/'
+- Commit messages: conventional commits format
