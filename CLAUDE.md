@@ -6,7 +6,7 @@ A 4-step AutoML pipeline wrapping sklearn-compatible estimators.
 
 ## Tech Stack
 
-Python 3.11+. Key libraries: `scikit-learn`, `optuna` (HPO), `shap` (feature selection), `joblib` (parallel CV), `lightgbm`/`xgboost`/`catboost` (`[boosting]` extra), `h2mare` (core dep; `polars` is also core; `[geo]` extra adds `cartopy` for `predict_map`). Dev: `uv`, `ruff`, `pytest`, `tox`, `mkdocs`.
+Python 3.11+ (pinned to 3.13 locally via `.python-version`). Key libraries: `scikit-learn`, `optuna` (HPO), `shap` (feature selection), `joblib` (parallel CV), `lightgbm`/`xgboost`/`catboost` (`[boosting]` extra), `h2mare` (core dep; `polars` is also core; `[geo]` extra adds `cartopy` for `predict_map`). Dev: `uv`, `ruff`, `pytest`, `tox`, `mkdocs`.
 
 ## Commands
 
@@ -37,8 +37,8 @@ SpatialBlockSplitter / SPCVSplitter          → activated when store.coords is 
 FinalModel (pipeline/final_model.py)         → predict/predict_proba + optional ConformalCalibration
                                                or LocalConformalCalibration (space-time block-local)
 DeltaFinalModel (pipeline/final_model.py)    → P(present) × E(count|present); built via build_delta_final_model()
-ModelRegistry (utils/registry.py)            → single source of truth; build_models(task)
-Optimizer (optimization/optimizer.py)        → run_study(); optimize_all() for batch use
+model registry (utils/registry.py)           → CLASSIFIER_REGISTRY / REGRESSOR_REGISTRY dicts of ModelEntry; build_models(task)
+optimizer (optimization/optimizer.py)        → run_study(); optimize_all() for batch use  [module functions, no class]
 
 core/ (foundational, dependency-free leaf layer; nothing in core imports other h2ml packages)
   base.py         → TaskType, BaseStep/PredictorMixin, BaseClassifier/Regressor/Preprocessor
