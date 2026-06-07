@@ -868,7 +868,6 @@ class TestLocalConformalCalibration:
         assert abs(q - expected) < 1e-10
 
     def test_combined_spatio_temporal(self):
-        lc = _make_local_conformal()
         coords = np.array([[0.5, 0.5], [9.5, 9.5]])
         times = np.array(["2021-03-15", "2021-08-20"])
         # Build a combined local conformal that uses both
