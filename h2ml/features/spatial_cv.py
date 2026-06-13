@@ -567,14 +567,18 @@ class SPCVSplitter:
         rs = self.random_state
 
         # --- per-block representative values ---
-        block_coords = np.zeros((n_blocks, 2))
-        block_X = np.zeros((n_blocks, self.X.shape[1]))
-        block_y = np.zeros((n_blocks, 1))
-        for b in range(n_blocks):
-            mask = block_labels == b
-            block_coords[b] = self.coords[mask].mean(axis=0)
-            block_X[b] = self.X[mask].mean(axis=0)
-            block_y[b, 0] = self.y[mask].mean()
+        # Per-block means via bincount-with-weights: it accumulates each block's
+        # samples in ascending index order, identical to arr[mask].mean(), but in a
+        # single C pass instead of one boolean-mask reduction per block. block_labels
+        # is compacted (contiguous 0..n_blocks-1) upstream, so every block count ≥ 1.
+        counts = np.bincount(block_labels, minlength=n_blocks)
+
+        def _block_mean(col: np.ndarray) -> np.ndarray:
+            return np.bincount(block_labels, weights=col, minlength=n_blocks) / counts
+
+        block_coords = np.column_stack([_block_mean(self.coords[:, j]) for j in range(2)])
+        block_X = np.column_stack([_block_mean(self.X[:, j]) for j in range(self.X.shape[1])])
+        block_y = _block_mean(self.y)[:, None]
 
         # --- PCA on block covariates to remove redundancy before clustering ---
         from sklearn.decomposition import PCA
