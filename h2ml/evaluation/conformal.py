@@ -66,10 +66,21 @@ class ConformalCalibration:
 
 
 def _conformal_quantile(scores: np.ndarray, alpha: float) -> float:
-    """Return the conformal quantile giving ≥ 1-alpha coverage."""
+    """Return the conformal quantile giving ≥ 1-alpha coverage.
+
+    scores must be sorted ascending — all call sites pre-sort. Indexes the sorted
+    array directly with linear interpolation, which is numerically identical to
+    np.quantile(method="linear") but skips its internal partition. This matters
+    because LocalConformalCalibration calls this once per (block, time-bin) cell.
+    """
     n = len(scores)
     level = min(np.ceil((1 - alpha) * (n + 1)) / n, 1.0)
-    return float(np.quantile(scores, level))
+    pos = level * (n - 1)
+    lo = int(np.floor(pos))
+    hi = int(np.ceil(pos))
+    if lo == hi:
+        return float(scores[lo])
+    return float(scores[lo] + (pos - lo) * (scores[hi] - scores[lo]))
 
 
 def _time_bin(times: np.ndarray, resolution: str) -> np.ndarray:
