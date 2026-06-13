@@ -980,7 +980,9 @@ class H2MLPipeline:
             raise ValueError(
                 f"transforms are only supported for regression tasks. Got task_type='{self.config.task_type.value}'."
             )
-        stores = build_transform_stores(store.X, store.y, store.feature_names, list(transforms), coords=store.coords)
+        stores = build_transform_stores(
+            store.X, store.y, store.feature_names, list(transforms), coords=store.coords, times=store.times
+        )
         if not stores:
             raise ValueError(
                 "No valid transform stores built — all transforms returned None. "
