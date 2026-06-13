@@ -281,6 +281,27 @@ class TestTransformsParameter:
 # ---------------------------------------------------------------------------
 
 
+class TestContextPropagation:
+    def test_coords_propagated_to_every_store(self, X, clean_y):
+        coords = np.random.default_rng(1).uniform(0, 10, size=(len(clean_y), 2))
+        result = build_transformed_stores(X, clean_y, FEATURE_NAMES, coords=coords)
+        assert result  # non-empty
+        for store in result.values():
+            np.testing.assert_array_equal(store.coords, coords)
+
+    def test_times_propagated_to_every_store(self, X, clean_y):
+        times = np.array(["2021-01-15"] * len(clean_y), dtype="datetime64[D]")
+        result = build_transformed_stores(X, clean_y, FEATURE_NAMES, times=times)
+        assert result  # non-empty
+        for store in result.values():
+            np.testing.assert_array_equal(store.times, times)
+
+    def test_times_none_by_default(self, X, clean_y):
+        result = build_transformed_stores(X, clean_y, FEATURE_NAMES)
+        for store in result.values():
+            assert store.times is None
+
+
 class TestPipelineDataIntegrity:
     def test_each_store_passes_shape_validation(self, X, clean_y):
         """PipelineData.__post_init__ validates shape — should not raise."""
