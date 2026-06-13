@@ -332,10 +332,12 @@ def aggregate_metrics(fold_df: pd.DataFrame, group_by_stage: bool = True) -> pd.
     # Exclude fold id from aggregation
     numeric_cols = [c for c in numeric_cols if c != "Fold"]
 
-    mean_df = fold_df.groupby(group_cols)[numeric_cols].mean().add_suffix("_Mean")
-    std_df = fold_df.groupby(group_cols)[numeric_cols].std().add_suffix("_Std")
-
-    agg_df = pd.concat([mean_df, std_df], axis=1).reset_index()
+    # Single groupby pass computing both statistics, then flatten the MultiIndex
+    # columns (col, "mean") → "col_Mean" / (col, "std") → "col_Std". std uses
+    # pandas' default ddof=1, matching the previous .std() call.
+    grouped = fold_df.groupby(group_cols)[numeric_cols].agg(["mean", "std"])
+    grouped.columns = [f"{col}_{stat.capitalize()}" for col, stat in grouped.columns]
+    agg_df = grouped.reset_index()
 
     # Interleave Mean/Std columns for readability: AUC_Test_Mean, AUC_Test_Std, ...
     metric_cols = []

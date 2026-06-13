@@ -412,7 +412,11 @@ def _build_local_conformal(
     block_id_all: np.ndarray = splitter.block_id_
     task_type = cv.task_type
 
-    sample_scores: dict[int, float] = {}
+    # OOF test folds are disjoint, so concatenating their (index, score) arrays in
+    # fold order reproduces the previous dict's insertion-ordered keys/values
+    # without the per-sample Python loop.
+    idx_parts: list[np.ndarray] = []
+    score_parts: list[np.ndarray] = []
     for f in cv.folds:
         if task_type == TaskType.REGRESSION:
             fold_scores: Optional[np.ndarray] = np.abs(f.y_test - f.y_pred_test)
@@ -420,14 +424,13 @@ def _build_local_conformal(
             fold_scores = _classification_scores(f, classes)
             if fold_scores is None:
                 return None
-        for idx, score in zip(f.test_idx, fold_scores):
-            sample_scores[int(idx)] = float(score)
+        idx_parts.append(np.asarray(f.test_idx, dtype=int))
+        score_parts.append(np.asarray(fold_scores, dtype=float))
 
-    if not sample_scores:
+    indices = np.concatenate(idx_parts) if idx_parts else np.array([], dtype=int)
+    if indices.size == 0:
         return None
-
-    indices = np.array(list(sample_scores.keys()))
-    scores_arr = np.array([sample_scores[i] for i in indices])
+    scores_arr = np.concatenate(score_parts)
     block_ids = block_id_all[indices]
 
     unique_blocks = np.unique(block_ids)
