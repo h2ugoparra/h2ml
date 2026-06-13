@@ -196,11 +196,23 @@ class CrossValidator:
         else:
             prebuilt_splitter = None
 
+        # Pre-compute StandardScaler fold arrays once when a concrete splitter is
+        # available and any step needs scaling. The scaler fit is deterministic per
+        # fold, so re-fitting it for every (model, fold) pair is pure waste — workers
+        # receive the pre-computed arrays and skip _maybe_scale() entirely.
+        precomputed_scaled_folds: Optional[list] = None
+        if prebuilt_splitter is not None and any(getattr(s, "requires_scaling", False) for s in steps):
+            precomputed_scaled_folds = []
+            for tr_idx, te_idx in prebuilt_splitter.split(X, y):
+                sc = StandardScaler()
+                precomputed_scaled_folds.append((sc.fit_transform(X[tr_idx]), sc.transform(X[te_idx])))
+
         def _run_one(step: PredictorStep) -> CVResult:
             import warnings
 
             warnings.filterwarnings("ignore")
             params = (best_params or {}).get(step.name)
+            sf = precomputed_scaled_folds if getattr(step, "requires_scaling", False) else None
             return self.run(
                 step,
                 X,
@@ -211,6 +223,7 @@ class CrossValidator:
                 coords=coords,
                 spatial=spatial,
                 _splitter=prebuilt_splitter,
+                _scaled_folds=sf,
             )
 
         if n_jobs == 1:

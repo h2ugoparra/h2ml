@@ -255,16 +255,20 @@ class LocalConformalCalibration:
         if self.has_times and times is not None and self.time_bin_resolution:
             time_bins = _time_bin(times, self.time_bin_resolution)
 
-        return np.array(
-            [
-                self._block_threshold(
-                    bi,
-                    alpha,
-                    time_bin=None if time_bins is None else int(time_bins[i]),
-                )
-                for i, bi in enumerate(block_indices)
-            ]
-        )
+        # A sample's threshold depends only on (block_idx, time_bin) for a fixed
+        # alpha, so memoise per cell — a large prediction grid has far more samples
+        # than distinct (block, bin) cells, turning n quantile calls into a handful.
+        cell_cache: dict = {}
+        out = np.empty(len(block_indices), dtype=float)
+        for i, bi in enumerate(block_indices):
+            tb = None if time_bins is None else int(time_bins[i])
+            key = (int(bi), tb)
+            q = cell_cache.get(key)
+            if q is None:
+                q = self._block_threshold(int(bi), alpha, time_bin=tb)
+                cell_cache[key] = q
+            out[i] = q
+        return out
 
     def summary(self, alpha: float = 0.10, max_blocks: Optional[int] = None) -> pd.DataFrame:
         """Per-block (and per-time-bin) calibration thresholds at the given alpha.
