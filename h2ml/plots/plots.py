@@ -18,6 +18,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+from loguru import logger
+
 import matplotlib  # noqa: F401
 # matplotlib.use("Agg")
 
@@ -315,7 +317,7 @@ def _regression_diagnostics(
     residuals = y_true - y_pred
 
     if np.allclose(residuals, 0):
-        print(f"All residuals are ~0 for '{title}' — skipping diagnostics.")
+        logger.info(f"All residuals are ~0 for '{title}' — skipping diagnostics.")
         return
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))

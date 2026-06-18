@@ -368,6 +368,7 @@ def _build_local_conformal(
     min_compound_n: int = 5,
     classes: Optional[Any] = None,
     time_bin_resolution: str = "month",
+    oof_scores: Optional[np.ndarray] = None,
 ) -> Optional[LocalConformalCalibration]:
     """
     Build a LocalConformalCalibration from OOF residuals.
@@ -375,6 +376,12 @@ def _build_local_conformal(
     Residuals are partitioned by spatial block (from splitter.block_id_) and,
     when times are provided, additionally by time bin to form compound
     (block × time_bin) cells.
+
+    By default, per-sample nonconformity scores are derived from
+    result.best_cv_result (absolute residuals for regression, 1 - p(true) for
+    classification). Pass oof_scores to override with externally computed,
+    sample-indexed scores — e.g. the combined delta residuals from
+    _delta_oof_residuals — so the local calibrator matches the global one's scale.
 
     Requires result.splitter to have a block_id_ attribute — set by both
     SpatialBlockSplitter and SPCVSplitter. Returns None when the splitter is
@@ -412,25 +419,34 @@ def _build_local_conformal(
     block_id_all: np.ndarray = splitter.block_id_
     task_type = cv.task_type
 
-    # OOF test folds are disjoint, so concatenating their (index, score) arrays in
-    # fold order reproduces the previous dict's insertion-ordered keys/values
-    # without the per-sample Python loop.
-    idx_parts: list[np.ndarray] = []
-    score_parts: list[np.ndarray] = []
-    for f in cv.folds:
-        if task_type == TaskType.REGRESSION:
-            fold_scores: Optional[np.ndarray] = np.abs(f.y_test - f.y_pred_test)
-        else:
-            fold_scores = _classification_scores(f, classes)
-            if fold_scores is None:
-                return None
-        idx_parts.append(np.asarray(f.test_idx, dtype=int))
-        score_parts.append(np.asarray(fold_scores, dtype=float))
+    if oof_scores is not None:
+        # Caller-supplied, sample-indexed nonconformity scores (e.g. combined delta
+        # residuals). Finite entries define the OOF set; NaNs mark uncovered samples.
+        oof_scores = np.asarray(oof_scores, dtype=float)
+        indices = np.where(np.isfinite(oof_scores))[0]
+        if indices.size == 0:
+            return None
+        scores_arr = oof_scores[indices]
+    else:
+        # OOF test folds are disjoint, so concatenating their (index, score) arrays in
+        # fold order reproduces the previous dict's insertion-ordered keys/values
+        # without the per-sample Python loop.
+        idx_parts: list[np.ndarray] = []
+        score_parts: list[np.ndarray] = []
+        for f in cv.folds:
+            if task_type == TaskType.REGRESSION:
+                fold_scores: Optional[np.ndarray] = np.abs(f.y_test - f.y_pred_test)
+            else:
+                fold_scores = _classification_scores(f, classes)
+                if fold_scores is None:
+                    return None
+            idx_parts.append(np.asarray(f.test_idx, dtype=int))
+            score_parts.append(np.asarray(fold_scores, dtype=float))
 
-    indices = np.concatenate(idx_parts) if idx_parts else np.array([], dtype=int)
-    if indices.size == 0:
-        return None
-    scores_arr = np.concatenate(score_parts)
+        indices = np.concatenate(idx_parts) if idx_parts else np.array([], dtype=int)
+        if indices.size == 0:
+            return None
+        scores_arr = np.concatenate(score_parts)
     block_ids = block_id_all[indices]
 
     unique_blocks = np.unique(block_ids)
@@ -566,8 +582,10 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
                         store.coords[valid],
                         np.abs(oof_preds[valid] - oof_labels[valid]),
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    from loguru import logger
+
+                    logger.debug(f"Variogram fit skipped (diagnostic only): {e}")
 
     return FinalModel(
         estimator=estimator,
@@ -589,16 +607,22 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
 # ---------------------------------------------------------------------------
 
 
-def _build_delta_conformal(
+def _delta_oof_residuals(
     clf_result: "PipelineResult",
     reg_result: "PipelineResult",
     reg_final: FinalModel,
     X_full: "pd.DataFrame | np.ndarray",
     y_full: np.ndarray,
     positive_indices: np.ndarray,
-) -> Optional[ConformalCalibration]:
+) -> Optional[np.ndarray]:
     """
-    Build a ConformalCalibration for the combined delta output using OOF predictions.
+    Sample-indexed combined delta OOF residuals: |y_full - (P_oof × count_hat)|.
+
+    The returned array has length len(y_full) and is indexed by original sample
+    position, with NaN where a residual is unavailable (e.g. a failed CV fold). It is
+    the shared basis for both the global (ConformalCalibration) and the space-time
+    local (LocalConformalCalibration) delta calibrators, so both are calibrated on the
+    same count-scale residuals.
 
     P_oof (all N samples) comes from clf_result.best_cv_result.
     count_oof_pos (positive samples, already inverse-transformed by CV) comes from
@@ -607,8 +631,6 @@ def _build_delta_conformal(
 
     Pass X_full as a DataFrame (with all feature column names) when the clf and reg
     were trained on different feature sets — reg_final.predict selects its own columns.
-
-    Nonconformity score: |y_full - (P_oof × count_hat)|
 
     Args:
         clf_result:       Fitted classifier PipelineResult (supplies P_oof).
@@ -621,8 +643,8 @@ def _build_delta_conformal(
         positive_indices: Indices of presence (count > 0) samples within X_full.
 
     Returns:
-        ConformalCalibration over the combined delta output, or None when the
-        required OOF predictions are unavailable (a warning is logged).
+        (N,) float residual array (NaN where unavailable), or None when the required
+        OOF predictions are unavailable (a warning is logged).
     """
     from loguru import logger
 
@@ -675,16 +697,41 @@ def _build_delta_conformal(
         count_hat_full[zero_indices] = zero_preds
 
     delta_oof = P_oof * count_hat_full
-    valid = np.isfinite(delta_oof)
-    n_excluded = int((~valid).sum())
+    delta_resid = np.abs(y_full - delta_oof)
+    n_excluded = int((~np.isfinite(delta_resid)).sum())
     if n_excluded:
         logger.warning(
             f"Delta conformal calibration: {n_excluded} samples excluded due to NaN (likely from failed CV folds)."
         )
+    return delta_resid
 
-    scores = np.abs(y_full[valid] - delta_oof[valid])
+
+def _build_delta_conformal(
+    clf_result: "PipelineResult",
+    reg_result: "PipelineResult",
+    reg_final: FinalModel,
+    X_full: "pd.DataFrame | np.ndarray",
+    y_full: np.ndarray,
+    positive_indices: np.ndarray,
+) -> Optional[ConformalCalibration]:
+    """
+    Build a global ConformalCalibration for the combined delta output using OOF predictions.
+
+    Nonconformity score: |y_full - (P_oof × count_hat)|, computed by
+    _delta_oof_residuals. Returns None when the required OOF predictions are
+    unavailable (a warning is logged) or when no finite residual remains.
+
+    Pass X_full as a DataFrame (with all feature column names) when the clf and reg
+    were trained on different feature sets — reg_final.predict selects its own columns.
+    """
+    delta_resid = _delta_oof_residuals(clf_result, reg_result, reg_final, X_full, y_full, positive_indices)
+    if delta_resid is None:
+        return None
+    valid = np.isfinite(delta_resid)
+    if not valid.any():
+        return None
     return ConformalCalibration(
-        scores=np.sort(scores),
+        scores=np.sort(delta_resid[valid]),
         n=int(valid.sum()),
         task_type=TaskType.REGRESSION,
     )
@@ -883,14 +930,29 @@ def build_delta_final_model(
     """
     clf_final = build_final_model(clf_result)
     reg_final = build_final_model(reg_result)
-    conformal = _build_delta_conformal(clf_result, reg_result, reg_final, X_full, y_full, positive_indices)
 
-    # Local conformal: use clf_result's splitter (covers all N samples) and
-    # build from the combined delta OOF residuals via the clf store's coords/times.
+    # Combined delta OOF residuals (count scale), sample-indexed with NaN where
+    # unavailable. Shared by the global and local calibrators so both are calibrated
+    # on the same residuals — the local one must NOT fall back to the classifier's
+    # probability-scale scores, which would miscalibrate count-scale intervals.
+    delta_resid = _delta_oof_residuals(clf_result, reg_result, reg_final, X_full, y_full, positive_indices)
+
+    conformal: Optional[ConformalCalibration] = None
+    if delta_resid is not None:
+        valid = np.isfinite(delta_resid)
+        if valid.any():
+            conformal = ConformalCalibration(
+                scores=np.sort(delta_resid[valid]),
+                n=int(valid.sum()),
+                task_type=TaskType.REGRESSION,
+            )
+
+    # Local conformal: use clf_result's splitter (covers all N samples) and the same
+    # delta residuals, partitioned by the clf store's spatial blocks / time bins.
     local_conformal: Optional[LocalConformalCalibration] = None
     _clf_stage = clf_result.best_feature_stage or clf_result.best_stage
     clf_store = clf_result.features_reduced if _clf_stage == "reduced" else clf_result.features
-    if clf_store is not None and clf_result.splitter is not None:
+    if delta_resid is not None and clf_store is not None and clf_result.splitter is not None:
         if clf_store.coords is not None or clf_store.times is not None:
             local_conformal = _build_local_conformal(
                 clf_result,
@@ -898,6 +960,7 @@ def build_delta_final_model(
                 times=clf_store.times,
                 metric=clf_result.spatial_cv_metric,
                 time_bin_resolution=clf_result.time_bin_resolution,
+                oof_scores=delta_resid,
             )
 
     variogram = clf_final.variogram  # reuse — same spatial residual structure
