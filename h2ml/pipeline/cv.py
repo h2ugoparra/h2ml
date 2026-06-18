@@ -305,7 +305,6 @@ class CrossValidator:
         if not getattr(step, "requires_scaling", False):
             return X_train, X_test
 
-        # cols  = X_train.columns
         scaler = StandardScaler()
         X_train = scaler.fit_transform(X_train)
         X_test = scaler.transform(X_test)
