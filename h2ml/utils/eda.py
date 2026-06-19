@@ -148,6 +148,7 @@ def check_pipeline_readiness(
     target: str | None = None,
     task: str | None = None,
     n_splits: int = 5,
+    max_classes: int = 2,
 ) -> pd.DataFrame:
     """
     Report issues that would stop (or degrade) an H2MLPipeline run, before you run it.
@@ -161,11 +162,16 @@ def check_pipeline_readiness(
     use profile_dataset, and for outliers use flag_outliers.
 
     Args:
-        df:       DataFrame of features (and optionally the target).
-        target:   Target column name. When given, target-specific checks run.
-        task:     "classification" enables class-count / imbalance checks. None or
-                  "regression" skips them.
-        n_splits: Planned CV fold count, checked against the row count.
+        df:          DataFrame of features (and optionally the target).
+        target:      Target column name. When given, target-specific checks run.
+        task:        "classification" enables class-count / cardinality / imbalance
+                     checks. None or "regression" skips them.
+        n_splits:    Planned CV fold count, checked against the row count.
+        max_classes: For classification, a numeric target with more than this many
+                     distinct values is flagged as likely count/continuous data
+                     mistakenly typed as classification (the pipeline would treat each
+                     value as its own class). Default 2 — only a binary 0/1 target
+                     passes; raise it if you genuinely have a numeric multiclass label.
 
     Returns:
         DataFrame [check, severity, columns, detail], one row per detected issue
@@ -216,6 +222,21 @@ def check_pipeline_readiness(
                 n_classes = int(y.nunique(dropna=True))
                 if n_classes < 2:
                     issues.append(("single_class_target", "error", str(target), f"only {n_classes} class; need >= 2"))
+                elif pd.api.types.is_numeric_dtype(y) and n_classes > max_classes:
+                    # Likely counts/continuous mis-typed as classification. Flag this
+                    # instead of class_imbalance, whose "handle_imbalance=True" advice
+                    # would be misleading here (the real fix is regression/binarize).
+                    issues.append(
+                        (
+                            "high_cardinality_target",
+                            "warning",
+                            str(target),
+                            f"{n_classes} distinct numeric values (> max_classes={max_classes}) — looks "
+                            "like counts/continuous, not a categorical label. Classification treats each "
+                            "value as its own class; use task='regression', binarize (e.g. y > 0), or the "
+                            "delta model.",
+                        )
+                    )
                 else:
                     counts = y.value_counts()
                     ratio = float(counts.min() / counts.sum())

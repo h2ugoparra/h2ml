@@ -157,6 +157,25 @@ class TestCheckPipelineReadiness:
         assert not row.empty
         assert row["severity"].iloc[0] == "warning"
 
+    def test_count_target_flagged_as_high_cardinality_not_imbalance(self):
+        rng = np.random.default_rng(3)
+        counts = rng.poisson(2.0, 200)  # 0,1,2,3,... many distinct values
+        data = pd.DataFrame({"t": counts, "a": rng.normal(size=200)})
+        checks = set(check_pipeline_readiness(data, target="t", task="classification")["check"])
+        assert "high_cardinality_target" in checks
+        # The misleading imbalance row must NOT also fire for a count target.
+        assert "class_imbalance" not in checks
+
+    def test_binary_target_not_high_cardinality(self):
+        data = pd.DataFrame({"t": np.array([0, 1] * 25), "a": np.arange(50.0)})
+        checks = set(check_pipeline_readiness(data, target="t", task="classification")["check"])
+        assert "high_cardinality_target" not in checks
+
+    def test_max_classes_allows_numeric_multiclass(self):
+        data = pd.DataFrame({"t": np.array([0, 1, 2, 3, 4] * 10), "a": np.arange(50.0)})
+        checks = set(check_pipeline_readiness(data, target="t", task="classification", max_classes=5)["check"])
+        assert "high_cardinality_target" not in checks
+
     def test_regression_skips_class_checks(self):
         data = pd.DataFrame({"t": np.ones(50), "a": np.arange(50.0)})
         # constant target is fine for regression — only the constant *feature* logic
