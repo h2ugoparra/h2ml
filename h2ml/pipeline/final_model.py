@@ -522,19 +522,30 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
         FinalModel instance.
 
     Raises:
-        ValueError: If best_model_name is no longer present in the registry
-            (e.g. the model was removed after the pipeline ran).
+        ValueError: If the result is incomplete (no step-1 CV result, no
+            best_model_name, or the chosen feature store is missing), or if
+            best_model_name is no longer present in the registry (e.g. the model
+            was removed after the pipeline ran).
     """
     from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
 
-    assert result.step1_cv_result is not None
+    # Explicit precondition checks (not asserts) — build_final_model is public via
+    # result.build_final_model(), so a partial result must fail with a clear message
+    # rather than an opaque error (and asserts vanish under python -O).
+    if result.step1_cv_result is None:
+        raise ValueError("Cannot build final model: result has no step-1 CV result. Run the pipeline first.")
+    if result.best_model_name is None:
+        raise ValueError("Cannot build final model: result.best_model_name is not set. Run the pipeline first.")
     task_type = result.step1_cv_result[0].task_type
 
     feature_stage = result.best_feature_stage or result.best_stage
     store = result.features_reduced if feature_stage == "reduced" else result.features
+    if store is None:
+        raise ValueError(
+            f"Cannot build final model: the '{feature_stage}' feature store is missing from the result."
+        )
 
     registry = CLASSIFIER_REGISTRY if task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
-    assert result.best_model_name is not None
     entry = registry.get(result.best_model_name)
     if entry is None:
         raise ValueError(
@@ -547,7 +558,6 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     else:
         estimator = entry.model_cls(**entry.default_kwargs)
 
-    assert store is not None
     X = store.X
     scaler = None
     if entry.requires_scaling:

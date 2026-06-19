@@ -258,6 +258,12 @@ class TestBuildFinalModel:
         preds = final.predict(X_new[:, feature_idx])
         assert preds.shape == (10,)
 
+    def test_raises_on_incomplete_result(self):
+        """An empty/partial result raises a clear ValueError instead of an opaque
+        AssertionError (which also vanishes under python -O)."""
+        with pytest.raises(ValueError, match="step-1 CV result"):
+            PipelineResult().build_final_model()
+
 
 # ---------------------------------------------------------------------------
 # ConformalCalibration

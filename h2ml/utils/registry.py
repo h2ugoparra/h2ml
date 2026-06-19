@@ -9,7 +9,6 @@ Each entry encodes everything needed to build, scale, and optimize a model:
     - requires_scaling: Whether StandardScaler must be applied before fitting.
     - param_fn:         Optuna trial function → hyperparameter dict (None = disabled).
     - opt_enabled:      Set False to exclude from optimization even if param_fn exists.
-    - single_njob:      Force n_jobs=1 in Optuna to avoid SQLite concurrency issues.
 
 CLASSIFIER_REGISTRY and REGRESSOR_REGISTRY are the single source of truth consumed
 by both the pipeline (build_steps) and the optimizer (get_entry via opt_params.py).
@@ -61,7 +60,6 @@ class ModelEntry:
         param_fn:         Optuna trial function returning a hyperparameter dict.
                           None means optimization is disabled for this model.
         opt_enabled:      Set False to exclude from optimization even if param_fn exists.
-        single_njob:      Force n_jobs=1 in Optuna to avoid SQLite concurrency issues.
         supports_class_weight: Whether the estimator accepts class_weight="balanced".
                           When True, PipelineConfig.handle_imbalance can inject it.
     """
@@ -71,7 +69,6 @@ class ModelEntry:
     requires_scaling: bool = False
     param_fn: Optional[Callable] = None
     opt_enabled: bool = True
-    single_njob: bool = False
     supports_class_weight: bool = False
 
     def __post_init__(self) -> None:
@@ -215,9 +212,7 @@ REGRESSOR_REGISTRY: dict[str, ModelEntry] = {
     "RandomForestRegressor": ModelEntry(
         RandomForestRegressor,
         default_kwargs={"random_state": 42},
-        param_fn=rp.randomforest_r_params,
-        single_njob=True,
-    ),
+        param_fn=rp.randomforest_r_params,    ),
     "GradientBoostingRegressor": ModelEntry(
         GradientBoostingRegressor,
         default_kwargs={"random_state": 42},
@@ -226,9 +221,7 @@ REGRESSOR_REGISTRY: dict[str, ModelEntry] = {
     "HistGradientBoostingRegressor": ModelEntry(
         HistGradientBoostingRegressor,
         default_kwargs={"random_state": 42},
-        param_fn=rp.histgradientboosting_r_params,
-        single_njob=True,
-    ),
+        param_fn=rp.histgradientboosting_r_params,    ),
     "SVR": ModelEntry(
         SVR,
         requires_scaling=True,
@@ -237,9 +230,7 @@ REGRESSOR_REGISTRY: dict[str, ModelEntry] = {
     "ExtraTreesRegressor": ModelEntry(
         ExtraTreesRegressor,
         default_kwargs={"random_state": 42},
-        param_fn=rp.extratrees_r_params,
-        single_njob=True,
-    ),
+        param_fn=rp.extratrees_r_params,    ),
     "BaggingRegressor": ModelEntry(
         BaggingRegressor,
         default_kwargs={"random_state": 42},

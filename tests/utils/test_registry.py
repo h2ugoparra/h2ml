@@ -46,10 +46,6 @@ class TestModelEntry:
         entry = self._entry_with_param_fn()
         assert entry.opt_enabled is True
 
-    def test_single_njob_false_by_default(self):
-        entry = self._entry_with_param_fn()
-        assert entry.single_njob is False
-
     def test_opt_enabled_true_without_param_fn_raises(self):
         """opt_enabled=True with param_fn=None is an invalid combination."""
         with pytest.raises(ValueError, match="param_fn"):

@@ -586,8 +586,11 @@ class SPCVSplitter:
 
         if block_X.shape[1] > 1:
             block_X_scaled = StandardScaler().fit_transform(block_X)
-            n_components = min(self.pca_components, block_X.shape[0], block_X.shape[1])
-            block_X_proj = PCA(n_components=n_components, random_state=rs).fit_transform(block_X_scaled)
+            # pca_components is a variance fraction in (0, 1); PCA picks the number of
+            # components needed to retain it, bounded internally by min(n_blocks,
+            # n_features). (The previous min() against the integer dims was a no-op — a
+            # fraction < 1 always wins.)
+            block_X_proj = PCA(n_components=self.pca_components, random_state=rs).fit_transform(block_X_scaled)
             logger.debug(
                 f"SPCVSplitter stage 2: PCA reduced {block_X.shape[1]} covariates → "
                 f"{block_X_proj.shape[1]} components ({self.pca_components} variance threshold)."
