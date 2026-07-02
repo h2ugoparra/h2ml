@@ -20,9 +20,6 @@ from typing import Optional
 
 from loguru import logger
 
-import matplotlib  # noqa: F401
-# matplotlib.use("Agg")
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
