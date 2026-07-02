@@ -12,8 +12,8 @@ from sklearn.svm import SVC
 from h2ml.pipeline.step import (
     ModelWrapper,
     make_classifier,
-    make_regressor,
     make_preprocessor,
+    make_regressor,
 )
 
 

@@ -8,7 +8,7 @@ Requires the [geo] optional dependencies:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Literal, Optional
 
 import numpy as np
 import polars as pl

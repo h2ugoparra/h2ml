@@ -7,19 +7,17 @@ Pure cross-validation engine. Responsibilities:
 
 from __future__ import annotations
 
-from loguru import logger
-
 import time
-from joblib import Parallel, delayed
-from typing import Optional, Any, Callable, Sequence, cast
+from typing import Any, Callable, Optional, Sequence, cast
 
 import numpy as np
+from joblib import Parallel, delayed
+from loguru import logger
 from sklearn.preprocessing import StandardScaler
 
-from h2ml.core.base import TaskType, PredictorStep
+from h2ml.core.base import PredictorStep, TaskType
 from h2ml.core.cv_result import CVResult, FoldResult  # re-exported for back-compat
 from h2ml.core.spatial_config import SpatialCVConfig
-
 
 # ---------------------------------------------------------------------------
 # CrossValidator

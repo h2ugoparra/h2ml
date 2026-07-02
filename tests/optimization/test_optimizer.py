@@ -13,19 +13,18 @@ import numpy as np
 import optuna
 import pytest
 
+from h2ml.core.spatial_config import SpatialCVConfig
+from h2ml.optimization.opt_params import ModelEntry
 from h2ml.optimization.optimizer import (
+    CLF_METRICS,
+    REG_METRICS,
     _build_objective,
     _score_auc,
     _score_r2,
     _score_rmse,
-    CLF_METRICS,
-    REG_METRICS,
     optimize_all,
     run_study,
 )
-from h2ml.optimization.opt_params import ModelEntry
-from h2ml.core.spatial_config import SpatialCVConfig
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

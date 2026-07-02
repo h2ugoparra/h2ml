@@ -15,7 +15,6 @@ import numpy as np
 
 from h2ml.core.base import TaskType
 
-
 # ---------------------------------------------------------------------------
 # FoldResult — raw output of a single fold
 # ---------------------------------------------------------------------------

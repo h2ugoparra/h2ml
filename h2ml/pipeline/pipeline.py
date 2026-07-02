@@ -6,37 +6,40 @@ tunable parameters; PipelineResult carries every artifact produced by the run.
 """
 
 from __future__ import annotations
-from loguru import logger
+
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Optional, Any, cast
+from typing import TYPE_CHECKING, Any, Iterable, Optional, cast
+
+from loguru import logger
 
 if TYPE_CHECKING:
-    from h2ml.pipeline.final_model import FinalModel
     from h2ml.features.spatial_cv import SpatialMetric
+    from h2ml.pipeline.final_model import FinalModel
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from sklearn.preprocessing import StandardScaler
+
 from h2ml.core.base import TaskType
 from h2ml.core.feature_store import PipelineData
 from h2ml.core.spatial_config import SpatialCVConfig
 from h2ml.core.step import ModelWrapper
-from h2ml.pipeline.cv import CrossValidator, CVResult
-from h2ml.features.selector import FeatureSelector
 from h2ml.evaluation.metrics import (
-    RunMetadata,
-    aggregate_metrics,
-    compute_metrics_all,
-    select_best,
     # Metric metadata (short name → agg column, minimise direction) — used by
     # PipelineConfig.metric_col / minimize_metric.
     METRIC_COL,
     METRIC_MINIMIZE,
+    RunMetadata,
+    aggregate_metrics,
+    compute_metrics_all,
+    select_best,
 )
+from h2ml.features.selector import FeatureSelector
 from h2ml.optimization.optimizer import run_study
-from h2ml.utils.registry import build_models
+from h2ml.pipeline.cv import CrossValidator, CVResult
 from h2ml.preprocessing.transform_stores import build_transform_stores
+from h2ml.utils.registry import build_models
 
 
 @dataclass
@@ -377,7 +380,8 @@ class PipelineResult:
         Returns:
             FinalModel ready for prediction on new data.
         """
-        from h2ml.pipeline.final_model import FinalModel, build_final_model as _build  # noqa: F401
+        from h2ml.pipeline.final_model import FinalModel  # noqa: F401
+        from h2ml.pipeline.final_model import build_final_model as _build
 
         return _build(self)
 

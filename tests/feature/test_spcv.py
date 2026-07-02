@@ -46,7 +46,6 @@ import pytest
 
 from h2ml.features.spatial_cv import SPCVSplitter
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -224,14 +223,14 @@ class TestReproducibility:
     def test_two_splitters_same_args_identical_folds(self, coords, X, y):
         sp1 = SPCVSplitter(coords, X, y, n_splits=5, random_state=42)
         sp2 = SPCVSplitter(coords, X, y, n_splits=5, random_state=42)
-        for (tr1, te1), (tr2, te2) in zip(sp1.split(X, y), sp2.split(X, y)):
+        for (tr1, te1), (tr2, te2) in zip(sp1.split(X, y), sp2.split(X, y), strict=True):
             np.testing.assert_array_equal(tr1, tr2)
             np.testing.assert_array_equal(te1, te2)
 
     def test_repeated_split_calls_are_identical(self, splitter, X, y):
         folds_a = list(splitter.split(X, y))
         folds_b = list(splitter.split(X, y))
-        for (tra, tea), (trb, teb) in zip(folds_a, folds_b):
+        for (tra, tea), (trb, teb) in zip(folds_a, folds_b, strict=True):
             np.testing.assert_array_equal(tra, trb)
             np.testing.assert_array_equal(tea, teb)
 

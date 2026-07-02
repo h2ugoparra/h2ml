@@ -15,9 +15,8 @@ if TYPE_CHECKING:
     import pandas as pd
 
 from h2ml.evaluation.compare import compare_results
-from h2ml.pipeline.pipeline import PipelineResult
 from h2ml.features.feature_store import PipelineData
-
+from h2ml.pipeline.pipeline import PipelineResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -269,8 +268,8 @@ class TestOOFBrier:
         assert val is None or (isinstance(val, float) and np.isnan(val))
 
     def test_oof_brier_computed_from_predictions(self):
-        from h2ml.pipeline.cv import CVResult, FoldResult
         from h2ml.pipeline.base import TaskType
+        from h2ml.pipeline.cv import CVResult, FoldResult
 
         result = _make_result()
         cv = CVResult(model_name="RFC", task_type=TaskType.CLASSIFICATION)

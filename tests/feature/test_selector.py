@@ -48,8 +48,8 @@ Coverage:
 """
 
 from __future__ import annotations
-from typing import Optional
 
+from typing import Optional
 from unittest.mock import patch
 
 import numpy as np
@@ -57,11 +57,10 @@ import pandas as pd
 import pytest
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 
-from h2ml.pipeline.base import TaskType
-from h2ml.pipeline.step import make_classifier, make_regressor
 from h2ml.features.feature_store import PipelineData
 from h2ml.features.selector import FeatureSelector
-
+from h2ml.pipeline.base import TaskType
+from h2ml.pipeline.step import make_classifier, make_regressor
 
 # ---------------------------------------------------------------------------
 # Helpers

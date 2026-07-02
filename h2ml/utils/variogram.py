@@ -27,7 +27,6 @@ import numpy as np
 from scipy.optimize import curve_fit
 from scipy.spatial.distance import cdist
 
-
 # ---------------------------------------------------------------------------
 # Variogram model
 # ---------------------------------------------------------------------------

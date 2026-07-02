@@ -14,15 +14,13 @@ Covers:
 
 from __future__ import annotations
 
-
 import numpy as np
 import pandas as pd
 import pytest
 
 from h2ml.features.feature_store import PipelineData
-from h2ml.persistence.result_io import save_result, load_result
+from h2ml.persistence.result_io import load_result, save_result
 from h2ml.pipeline.pipeline import PipelineResult
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -18,18 +18,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from loguru import logger
-
-import matplotlib  # noqa: F401
-# matplotlib.use("Agg")
-
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import scipy.stats as stats
-from sklearn.metrics import roc_curve, auc as sklearn_auc
-
+import seaborn as sns
+from loguru import logger
+from sklearn.metrics import auc as sklearn_auc
+from sklearn.metrics import roc_curve
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -505,7 +501,7 @@ def shap_dependence(
 
     fig.suptitle(title or "SHAP Dependence Plots", fontsize=12, fontweight="bold")
 
-    for ax, feat in zip(axes_flat, top_features):
+    for ax, feat in zip(axes_flat, top_features, strict=False):
         idx = feat_idx.get(feat)
         if idx is None:
             ax.set_visible(False)
@@ -542,8 +538,8 @@ def _compute_final_shap(result) -> tuple:
     if getattr(result, "_final_shap_cache", None) is not None:
         return result._final_shap_cache
 
-    from h2ml.features.shap_importance import get_shap_values
     from h2ml.core.feature_store import PipelineData
+    from h2ml.features.shap_importance import get_shap_values
     from h2ml.pipeline.final_model import build_final_model
 
     final = build_final_model(result)

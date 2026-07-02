@@ -9,7 +9,7 @@ across runs with different PipelineConfig settings, feature schemas, or datasets
 
 from __future__ import annotations
 
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import pandas as pd
@@ -262,6 +262,7 @@ def _get_oof_brier(result: "PipelineResult") -> Optional[float]:
     OOF data is unavailable.
     """
     from sklearn.metrics import brier_score_loss
+
     from h2ml.core.base import TaskType
 
     cv = result.best_cv_result

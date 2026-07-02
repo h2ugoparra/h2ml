@@ -14,11 +14,11 @@ Responsibilities:
 
 from __future__ import annotations
 
-from typing import Optional, Any
-from loguru import logger
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
+from loguru import logger
 from sklearn.base import is_classifier, is_regressor
 
 from h2ml.core.base import (
@@ -26,7 +26,6 @@ from h2ml.core.base import (
     BaseRegressor,
     TaskType,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -1,32 +1,5 @@
 """Optimization Parameters and search ranges for Regressors"""
 
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.tree import DecisionTreeRegressor
-
-
-def adaboost_r_params(trial):
-    """AdaBoost Optuna trials"""
-    return {
-        "estimator": trial.suggest_categorical("estimator", [DecisionTreeRegressor(), RandomForestRegressor()]),
-        "n_estimators": trial.suggest_int("n_estimators", 50, 500),
-        "learning_rate": trial.suggest_float("learning_rate", 0.01, 1.0),
-        "loss": trial.suggest_categorical("loss", ["linear", "square", "exponential"]),
-        "random_state": 42,
-    }
-
-
-def bagging_r_params(trial):
-    """Bagging Optuna trials"""
-    return {
-        "estimator": trial.suggest_categorical("estimator", [DecisionTreeRegressor(), RandomForestRegressor()]),
-        "n_estimators": trial.suggest_int("n_estimators", 50, 500),
-        "max_samples": trial.suggest_float("max_samples", 0.1, 1.0),
-        "max_features": trial.suggest_float("max_features", 0.1, 1.0),
-        "bootstrap": trial.suggest_categorical("bootstrap", [True, False]),
-        "bootstrap_features": trial.suggest_categorical("bootstrap_features", [True, False]),
-        "random_state": 42,
-    }
-
 
 def extratrees_r_params(trial):
     """Extra Trees Optuna trials"""
@@ -50,18 +23,6 @@ def histgradientboosting_r_params(trial):
         "max_iter": trial.suggest_int("max_iter", 50, 1000),
         "max_leaf_nodes": trial.suggest_int("max_leaf_nodes", 2, 100),
         "l2_regularization": trial.suggest_float("l2_regularization", 1e-5, 0.1, log=True),
-        "random_state": 42,
-    }
-
-
-def decisiontree_r_params(trial):
-    """Decision Tree Optuna trials"""
-    return {
-        "max_depth": trial.suggest_int("max_depth", 1, 32),
-        "min_samples_split": trial.suggest_int("min_samples_split", 2, 32),
-        "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 32),
-        "max_features": trial.suggest_categorical("max_features", ["sqrt", "log2", None]),
-        "criterion": trial.suggest_categorical("criterion", ["squared_error", "friedman_mse", "poisson"]),
         "random_state": 42,
     }
 
