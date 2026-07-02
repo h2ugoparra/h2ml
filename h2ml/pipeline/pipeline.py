@@ -589,6 +589,7 @@ class H2MLPipeline:
         ]
         if missing:
             raise ValueError(f"result must have {missing} set. Run run_step1_to_step2() first.")
+        transform_stores = self._rebuild_transform_stores(result, transform_stores)
         result = self._run_step3(result, transform_stores)
         result = self._run_step4(result, transform_stores)
         return result
@@ -636,6 +637,7 @@ class H2MLPipeline:
                 "Steps 1–3 must be complete (run run_step1_to_step3() or load a result "
                 "that includes them)."
             )
+        transform_stores = self._rebuild_transform_stores(result, transform_stores)
         return self._run_step4(result, transform_stores)
 
     # ------------------------------------------------------------------
@@ -993,6 +995,24 @@ class H2MLPipeline:
                 "Check that the y array has outliers if using winsorize-based transforms."
             )
         return stores
+
+    def _rebuild_transform_stores(
+        self,
+        result: PipelineResult,
+        transform_stores: Optional[dict[str, PipelineData]],
+    ) -> Optional[dict[str, PipelineData]]:
+        """
+        Rebuild the winning transform's store for resumed runs (steps 3-4).
+
+        result.features holds the raw (untransformed) store, so a resume without
+        pre-built transform_stores would otherwise optimise on raw y even though
+        the pipeline selected a y-transform. Returns transform_stores unchanged
+        when provided or when no transform won.
+        """
+        if transform_stores is not None or not result.y_transform:
+            return transform_stores
+        assert result.features is not None  # validated by the callers
+        return self._build_transform_stores(result.features, [result.y_transform])
 
     def _resolve_opt_store(
         self,
