@@ -31,7 +31,7 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
 from h2ml.core.base import TaskType
-from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS
+from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS, Y_TRANSFORMS
 
 # Calibration types live in evaluation/conformal.py. They are imported here both for use
 # by the factory helpers below and so that joblib pickles written before the move — which
@@ -61,8 +61,9 @@ class FinalModel:
                           powers predict_interval / predict_set. None when no calibration
                           was available (e.g. partial pipeline run).
         y_transform:      Name of the y-transform applied during training (e.g. "log"),
-                          or None. Predictions/intervals are in the transformed space;
-                          the caller inverts them. See preprocessing/transforms.py.
+                          or None. predict() returns the transformed space and the
+                          caller inverts it; predict_interval() bounds are already in
+                          the original scale. See preprocessing/transforms.py.
         local_conformal:  Space-time block-local conformal calibrator. Used instead of
                           `conformal` when coords/times are passed to predict_interval/
                           predict_set, giving per-sample thresholds. None unless the run
@@ -148,8 +149,10 @@ class FinalModel:
         spatial block's residual distribution, giving wider intervals in
         high-error regions and narrower ones where the model is well calibrated.
 
-        Note: if the pipeline used a y-transform, the interval is in the
-        transformed space. Apply the inverse transform to the bounds if needed.
+        Note: bounds are always in the original y scale. q is calibrated on
+        original-scale OOF residuals, so when the pipeline used a y-transform the
+        point estimate is inverted internally before the interval is applied —
+        do not apply the inverse transform to the returned bounds.
 
         Args:
             X:      Input features (DataFrame or ndarray).
@@ -174,6 +177,13 @@ class FinalModel:
                 "Rebuild FinalModel via result.build_final_model() after a full pipeline run."
             )
         y_hat = self.predict(X)
+        # q is calibrated on original-scale OOF residuals (CV inverse-transforms
+        # predictions before storing them), so the interval must be applied in the
+        # original scale — invert the point estimate first when a transform is set.
+        if self.y_transform is not None:
+            inverse_fn = INVERSE_TRANSFORMS.get(self.y_transform)
+            if inverse_fn is not None:
+                y_hat = inverse_fn(y_hat)
         if (coords is not None or times is not None) and self.local_conformal is not None:
             q = self.local_conformal.threshold(alpha, coords=coords, times=times)
         else:
@@ -564,7 +574,20 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
         scaler = StandardScaler()
         X = scaler.fit_transform(X)
 
-    estimator.fit(X, store.y)
+    # The refit target must be in the same y-space the winning model was validated
+    # in. The "default" feature stage keeps the raw input store, so when a
+    # y-transform won the sweep the transform is re-applied here — otherwise the
+    # deployed model would differ from the CV winner and callers that invert
+    # predictions (DeltaFinalModel, geo_predict) would invert an already
+    # original-scale output.
+    y_fit = store.y
+    if result.y_transform and store.y_transform is None:
+        transformed = Y_TRANSFORMS[result.y_transform](store.y)
+        # win* transforms return None when y has no outliers — identity in that case
+        if transformed is not None:
+            y_fit = transformed
+
+    estimator.fit(X, y_fit)
 
     classes = getattr(estimator, "classes_", None)
 

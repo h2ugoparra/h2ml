@@ -82,8 +82,9 @@ def _predict_single(
             return pred_series, lower_series, upper_series
         return (pred_series,)
 
-    # Regression: keep raw (transform-space) predictions so we can build intervals
-    # in transform space before inverting, which gives correct asymmetric bounds.
+    # Regression: predictions are inverse-transformed to the original scale first;
+    # q is calibrated on original-scale OOF residuals, so intervals are built
+    # around the original-scale point estimate (never in transform space).
     raw = model.predict(X)
     inverse_fn = INVERSE_TRANSFORMS.get(model.y_transform) if model.y_transform else None
     preds = inverse_fn(raw).astype(np.float32) if inverse_fn else raw.astype(np.float32)
@@ -94,8 +95,8 @@ def _predict_single(
             q = model.local_conformal.threshold(alpha, coords=coords, times=times)
         else:
             q = model.conformal.threshold(alpha)
-        lower = np.maximum(0.0, inverse_fn(raw - q) if inverse_fn else raw - q).astype(np.float32)
-        upper = (inverse_fn(raw + q) if inverse_fn else raw + q).astype(np.float32)
+        lower = np.maximum(0.0, preds - q).astype(np.float32)
+        upper = (preds + q).astype(np.float32)
         lower_series = pl.Series(f"{col_name}_pi_lower", [None] * n, dtype=pl.Float32).scatter(idx, lower)
         upper_series = pl.Series(f"{col_name}_pi_upper", [None] * n, dtype=pl.Float32).scatter(idx, upper)
         return pred_series, lower_series, upper_series
@@ -156,7 +157,7 @@ def _predict_delta_single(
     pred_series = pl.Series(col_name, [None] * n, dtype=pl.Float32).scatter(idx, delta)
 
     if alpha is not None and model.conformal is not None:
-        if model.local_conformal is not None and (coords is not None or times is not None):
+        if local and model.local_conformal is not None and (coords is not None or times is not None):
             q = model.local_conformal.threshold(alpha, coords=coords, times=times)
         else:
             q = float(model.conformal.threshold(alpha))

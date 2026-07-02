@@ -266,6 +266,78 @@ class TestBuildFinalModel:
 
 
 # ---------------------------------------------------------------------------
+# y-transform scale — refit target and interval space
+# ---------------------------------------------------------------------------
+
+
+class TestTransformScale:
+    """The winning y-transform must govern the refit target and interval scale.
+
+    KNeighborsRegressor(weights="distance") reproduces its training targets
+    exactly, so the space the model was fitted in is directly observable from
+    predict() on the training rows.
+    """
+
+    def _result_with_log_transform(self, stage: str) -> tuple[PipelineResult, np.ndarray, np.ndarray]:
+        """Minimal regression result where the "log" transform won the sweep."""
+        rng = np.random.default_rng(3)
+        X = rng.standard_normal((60, 3))
+        y = rng.uniform(0.5, 50.0, size=60)
+        result = PipelineResult(
+            features=PipelineData(X=X, feature_names=["a", "b", "c"], y=y),
+            step1_cv_result=[CVResult(model_name="KNeighborsRegressor", task_type=TaskType.REGRESSION)],
+            best_model_name="KNeighborsRegressor",
+            best_stage=stage,
+            best_feature_stage=stage,
+            y_transform="log",
+        )
+        if stage == "reduced":
+            # The reduced store carries the transformed y (built in step 2 from
+            # the winning transform's store).
+            result.features_reduced = PipelineData(
+                X=X, feature_names=["a", "b", "c"], y=np.log1p(y), y_true=y, y_transform="log"
+            )
+        return result, X, y
+
+    def test_default_stage_refits_on_transformed_y(self):
+        """The 'default' feature stage keeps the raw input store — the refit must
+        re-apply the winning transform, or the deployed model differs from the CV
+        winner and callers invert an already original-scale output."""
+        result, X, y = self._result_with_log_transform("default")
+        final = result.build_final_model()
+        np.testing.assert_allclose(final.predict(X), np.log1p(y), rtol=1e-6)
+
+    def test_reduced_stage_does_not_double_transform(self):
+        """features_reduced already carries transformed y — it must be used as-is."""
+        result, X, y = self._result_with_log_transform("reduced")
+        final = result.build_final_model()
+        np.testing.assert_allclose(final.predict(X), np.log1p(y), rtol=1e-6)
+
+    def test_predict_interval_bounds_in_original_scale(self):
+        """q is calibrated on original-scale OOF residuals, so the bounds must be
+        centred on the inverse-transformed point estimate — not on the
+        transform-space prediction."""
+        from sklearn.neighbors import KNeighborsRegressor
+
+        rng = np.random.default_rng(4)
+        X = rng.standard_normal((40, 3))
+        y = rng.uniform(1.0, 30.0, size=40)
+        est = KNeighborsRegressor(weights="distance").fit(X, np.log1p(y))
+        scores = np.sort(rng.uniform(0.1, 2.0, size=100))
+        fm = FinalModel(
+            estimator=est,
+            feature_names=["a", "b", "c"],
+            task_type=TaskType.REGRESSION,
+            y_transform="log",
+            conformal=ConformalCalibration(scores=scores, n=len(scores), task_type=TaskType.REGRESSION),
+        )
+        lower, upper = fm.predict_interval(X, alpha=0.10)
+        q = fm.conformal.threshold(0.10)
+        np.testing.assert_allclose(lower, y - q, rtol=1e-6, atol=1e-8)
+        np.testing.assert_allclose(upper, y + q, rtol=1e-6, atol=1e-8)
+
+
+# ---------------------------------------------------------------------------
 # ConformalCalibration
 # ---------------------------------------------------------------------------
 
