@@ -20,11 +20,11 @@ from sklearn.metrics import (
     brier_score_loss,
     f1_score,
     log_loss,
-    roc_auc_score,
     # Regression
     mean_absolute_error,
     mean_squared_error,
     r2_score,
+    roc_auc_score,
 )
 
 from h2ml.core.base import TaskType

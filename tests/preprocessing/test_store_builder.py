@@ -50,7 +50,6 @@ from h2ml.preprocessing.transform_stores import (
 )
 from h2ml.preprocessing.transforms import Y_TRANSFORMS, log_transform, sqrt_transform
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

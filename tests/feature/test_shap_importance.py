@@ -16,16 +16,15 @@ from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC, SVR
 
-from h2ml.pipeline.base import TaskType
-from h2ml.pipeline.step import make_classifier, make_regressor
 from h2ml.features.feature_store import PipelineData
 from h2ml.features.shap_importance import (
     _extract_shap_array,
     _select_explainer,
-    get_shap_values,
     get_oof_shap_values,
+    get_shap_values,
 )
-
+from h2ml.pipeline.base import TaskType
+from h2ml.pipeline.step import make_classifier, make_regressor
 
 # ---------------------------------------------------------------------------
 # Fixtures

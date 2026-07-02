@@ -29,13 +29,12 @@ import pytest
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LogisticRegression, Ridge
 
+from h2ml.evaluation.metrics import RunMetadata
+from h2ml.features.feature_store import PipelineData
+from h2ml.features.selector import FeatureSelector
 from h2ml.pipeline.base import TaskType
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig, PipelineResult
 from h2ml.pipeline.step import make_classifier, make_regressor
-from h2ml.features.feature_store import PipelineData
-from h2ml.features.selector import FeatureSelector
-from h2ml.evaluation.metrics import RunMetadata
-
 
 # ---------------------------------------------------------------------------
 # Shared test data

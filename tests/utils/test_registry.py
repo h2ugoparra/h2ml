@@ -10,14 +10,13 @@ import pytest
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
+from h2ml.pipeline.step import ModelWrapper
 from h2ml.utils.registry import (
-    ModelEntry,
     CLASSIFIER_REGISTRY,
     REGRESSOR_REGISTRY,
+    ModelEntry,
     build_models,
 )
-from h2ml.pipeline.step import ModelWrapper
-
 
 # ---------------------------------------------------------------------------
 # ModelEntry

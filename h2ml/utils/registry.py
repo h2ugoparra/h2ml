@@ -20,28 +20,27 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from sklearn.ensemble import (
-    RandomForestClassifier,
-    GradientBoostingClassifier,
     AdaBoostClassifier,
-    ExtraTreesClassifier,
-    BaggingClassifier,
-    HistGradientBoostingClassifier,
-    RandomForestRegressor,
-    GradientBoostingRegressor,
-    HistGradientBoostingRegressor,
-    ExtraTreesRegressor,
     AdaBoostRegressor,
+    BaggingClassifier,
     BaggingRegressor,
+    ExtraTreesClassifier,
+    ExtraTreesRegressor,
+    GradientBoostingClassifier,
+    GradientBoostingRegressor,
+    HistGradientBoostingClassifier,
+    HistGradientBoostingRegressor,
+    RandomForestClassifier,
+    RandomForestRegressor,
 )
-from sklearn.svm import SVR, SVC
 from sklearn.linear_model import LogisticRegression, PoissonRegressor
-from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
+from sklearn.svm import SVC, SVR
 
-from h2ml.core.step import ModelWrapper
 from h2ml.core.param_spaces import classifiers as cp
 from h2ml.core.param_spaces import regressors as rp
-
+from h2ml.core.step import ModelWrapper
 
 # ---------------------------------------------------------------------------
 # ModelEntry

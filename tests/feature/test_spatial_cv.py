@@ -38,7 +38,6 @@ import pytest
 
 from h2ml.features.spatial_cv import SpatialBlockSplitter
 
-
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
@@ -175,7 +174,7 @@ class TestSpatialIntegrity:
 
         splitter = SpatialBlockSplitter(coords, n_splits=2, n_blocks_per_fold=1)
 
-        for train_idx, test_idx in splitter.split(X_dummy):
+        for _train_idx, test_idx in splitter.split(X_dummy):
             # Test samples should be either all from north (idx < 100) or all south (idx >= 100)
             north_in_test = np.sum(test_idx < n)
             south_in_test = np.sum(test_idx >= n)
@@ -195,14 +194,14 @@ class TestReproducibility:
     def test_two_splitters_same_args_identical_folds(self, uniform_coords, X_dummy):
         s1 = SpatialBlockSplitter(uniform_coords, n_splits=5, n_blocks_per_fold=5)
         s2 = SpatialBlockSplitter(uniform_coords, n_splits=5, n_blocks_per_fold=5)
-        for (tr1, te1), (tr2, te2) in zip(s1.split(X_dummy), s2.split(X_dummy)):
+        for (tr1, te1), (tr2, te2) in zip(s1.split(X_dummy), s2.split(X_dummy), strict=True):
             np.testing.assert_array_equal(tr1, tr2)
             np.testing.assert_array_equal(te1, te2)
 
     def test_repeated_split_calls_identical(self, splitter, X_dummy):
         folds_a = list(splitter.split(X_dummy))
         folds_b = list(splitter.split(X_dummy))
-        for (tr_a, te_a), (tr_b, te_b) in zip(folds_a, folds_b):
+        for (tr_a, te_a), (tr_b, te_b) in zip(folds_a, folds_b, strict=True):
             np.testing.assert_array_equal(tr_a, tr_b)
             np.testing.assert_array_equal(te_a, te_b)
 

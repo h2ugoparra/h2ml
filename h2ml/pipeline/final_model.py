@@ -31,7 +31,6 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
 from h2ml.core.base import TaskType
-from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS, Y_TRANSFORMS
 
 # Calibration types live in evaluation/conformal.py. They are imported here both for use
 # by the factory helpers below and so that joblib pickles written before the move — which
@@ -42,6 +41,7 @@ from h2ml.evaluation.conformal import (
     _build_context,
     _time_bin,
 )
+from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS, Y_TRANSFORMS
 
 
 @dataclass
@@ -244,7 +244,7 @@ class FinalModel:
 
         sets = []
         if p.ndim == 1:
-            for pi, q in zip(p, q_arr):
+            for pi, q in zip(p, q_arr, strict=True):
                 labels = []
                 if pi <= q:
                     labels.append(classes[0])
@@ -252,7 +252,7 @@ class FinalModel:
                     labels.append(classes[1])
                 sets.append(np.array(labels))
         else:
-            for row, q in zip(p, q_arr):
+            for row, q in zip(p, q_arr, strict=True):
                 labels = [classes[k] for k in range(len(classes)) if 1 - row[k] <= q]
                 sets.append(np.array(labels))
         return sets
@@ -494,7 +494,7 @@ def _build_local_conformal(
     if oof_times is not None:
         bins = _time_bin(oof_times, time_bin_resolution)
         raw_compound: dict = {}
-        for bi, tb, score in zip(oof_block_indices, bins, scores_arr):
+        for bi, tb, score in zip(oof_block_indices, bins, scores_arr, strict=True):
             raw_compound.setdefault((int(bi), int(tb)), []).append(float(score))
         compound = {k: np.sort(v) for k, v in raw_compound.items()}
         _resolution = time_bin_resolution

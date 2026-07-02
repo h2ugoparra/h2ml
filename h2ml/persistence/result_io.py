@@ -26,17 +26,16 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
 from pathlib import Path
 from typing import Optional
 
 import joblib
 import numpy as np
 import pandas as pd
-import shutil
 from loguru import logger
 
 from h2ml.core.feature_store import PipelineData
-
 
 # ---------------------------------------------------------------------------
 # Field registry — keep in sync with PipelineResult

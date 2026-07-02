@@ -24,7 +24,6 @@ import pandas as pd
 
 from h2ml.core.base import TaskType
 
-
 _SEASON_NAMES = {0: "DJF", 1: "MAM", 2: "JJA", 3: "SON"}
 
 

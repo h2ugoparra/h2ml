@@ -6,6 +6,7 @@ Tests for FinalModel (inference, scaling, persistence) and build_final_model().
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
@@ -13,8 +14,6 @@ import pytest
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 
-from h2ml.pipeline.base import TaskType
-from h2ml.pipeline.cv import CVResult, FoldResult
 from h2ml.evaluation.conformal import (
     ConformalCalibration,
     LocalConformalCalibration,
@@ -22,6 +21,10 @@ from h2ml.evaluation.conformal import (
     _encode_times,
     _time_bin,
 )
+from h2ml.features.feature_store import PipelineData
+from h2ml.features.selector import FeatureSelector
+from h2ml.pipeline.base import TaskType
+from h2ml.pipeline.cv import CVResult, FoldResult
 from h2ml.pipeline.final_model import (
     DeltaFinalModel,
     FinalModel,
@@ -31,10 +34,6 @@ from h2ml.pipeline.final_model import (
 )
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig, PipelineResult
 from h2ml.pipeline.step import make_classifier
-from h2ml.features.feature_store import PipelineData
-from h2ml.features.selector import FeatureSelector
-from unittest.mock import MagicMock, patch
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -510,8 +509,9 @@ class TestPredictSet:
 
 class TestBuildFinalModelConformal:
     def test_conformal_is_set_after_pipeline_run(self):
-        from sklearn.linear_model import LogisticRegression
         from unittest.mock import patch
+
+        from sklearn.linear_model import LogisticRegression
 
         rng = np.random.default_rng(0)
         store = PipelineData(
@@ -537,8 +537,9 @@ class TestBuildFinalModelConformal:
         assert final.conformal.n > 0
 
     def test_conformal_persists_through_save_load(self, tmp_path):
-        from sklearn.linear_model import LogisticRegression
         from unittest.mock import patch
+
+        from sklearn.linear_model import LogisticRegression
 
         rng = np.random.default_rng(1)
         store = PipelineData(
@@ -797,8 +798,9 @@ class TestBuildDeltaConformal:
 
 class TestBuildDeltaFinalModel:
     def test_returns_delta_final_model(self):
-        from sklearn.linear_model import LogisticRegression
         from sklearn.ensemble import RandomForestRegressor as RFR
+        from sklearn.linear_model import LogisticRegression
+
         from h2ml.pipeline.step import make_classifier, make_regressor
 
         rng = np.random.default_rng(0)
@@ -962,8 +964,9 @@ class TestLocalConformalCalibration:
         all_times = np.concatenate([times_0, times_1])
         all_block_idx = np.array([0] * n + [1] * n)
 
-        from h2ml.evaluation.conformal import _build_context
         from sklearn.preprocessing import StandardScaler
+
+        from h2ml.evaluation.conformal import _build_context
 
         ctx = _build_context(all_coords, all_times)
         scaler = StandardScaler().fit(ctx)
@@ -1100,7 +1103,9 @@ def _make_compound_local_conformal(min_block_n: int = 3) -> LocalConformalCalibr
     all_times = np.concatenate([times_win[:n], times_sum[:n], times_win[n:], times_sum[n:]])
 
     from sklearn.preprocessing import StandardScaler
-    from h2ml.evaluation.conformal import _build_context, _time_bin as tb
+
+    from h2ml.evaluation.conformal import _build_context
+    from h2ml.evaluation.conformal import _time_bin as tb
 
     ctx = _build_context(all_coords, all_times)
     scaler = StandardScaler().fit(ctx)
@@ -1108,7 +1113,7 @@ def _make_compound_local_conformal(min_block_n: int = 3) -> LocalConformalCalibr
 
     bins = tb(all_times, "season")
     raw_compound: dict = {}
-    for bi, tbin, score in zip(all_block_idx, bins, all_scores):
+    for bi, tbin, score in zip(all_block_idx, bins, all_scores, strict=True):
         raw_compound.setdefault((int(bi), int(tbin)), []).append(float(score))
     compound = {k: np.sort(np.array(v)) for k, v in raw_compound.items()}
 

@@ -20,11 +20,10 @@ What this module does NOT do:
 
 from __future__ import annotations
 
-from loguru import logger
 from typing import Literal, Optional, cast
 
 import pandas as pd
-
+from loguru import logger
 
 CorrelationMethod = Literal["pearson", "spearman", "kendall"]
 

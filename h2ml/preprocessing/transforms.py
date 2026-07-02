@@ -17,7 +17,9 @@ Winsorize-based transforms replace upper outliers with the IQR upper limit.
 """
 
 from __future__ import annotations
+
 from typing import Callable, Optional
+
 import numpy as np
 
 

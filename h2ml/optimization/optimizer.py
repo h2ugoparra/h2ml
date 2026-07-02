@@ -21,11 +21,11 @@ Interface contract (expected by pipeline/pipeline.py):
 
 from __future__ import annotations
 
-from loguru import logger
 from typing import Any, Callable, Optional
 
 import numpy as np
 import optuna
+from loguru import logger
 from sklearn.metrics import (
     average_precision_score,
     brier_score_loss,
@@ -41,7 +41,6 @@ from sklearn.preprocessing import LabelBinarizer, StandardScaler
 from h2ml.core.spatial_config import SpatialCVConfig
 from h2ml.evaluation.metrics import METRIC_MINIMIZE
 from h2ml.optimization.opt_params import ModelEntry, get_entry
-
 
 # Silence Optuna's default verbose logging — pipeline controls verbosity
 optuna.logging.set_verbosity(optuna.logging.WARNING)

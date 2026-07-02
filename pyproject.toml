@@ -85,8 +85,6 @@ commands =
     pytest tests/ -q
 """
 
-[tool.pytest.ini_options]
-pythonpath = ["h2ml"]
 
 [tool.coverage.run]
 source = ["h2ml"]
@@ -100,6 +98,6 @@ skip_covered = false
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "W", "F"]
+select = ["E", "W", "F", "I", "B"]
 ignore = ["E221", "E251", "E302", "E303", "E203", "E272"]
 

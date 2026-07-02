@@ -434,11 +434,12 @@ class SPCVSplitter:
         does not support haversine) and converted to a condensed form via squareform.
         ward linkage falls back to average for haversine, matching the approximate path.
         """
-        from scipy.cluster.hierarchy import linkage as ahc_linkage, fcluster
+        from scipy.cluster.hierarchy import fcluster
+        from scipy.cluster.hierarchy import linkage as ahc_linkage
 
         if self.metric == "haversine":
-            from sklearn.metrics import pairwise_distances
             from scipy.spatial.distance import squareform
+            from sklearn.metrics import pairwise_distances
 
             coords_rad = np.deg2rad(self.coords)
             D = pairwise_distances(coords_rad, metric="haversine")

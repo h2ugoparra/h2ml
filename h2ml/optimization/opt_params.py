@@ -7,7 +7,7 @@ Provides get_entry() for the optimizer to retrieve a ModelEntry by name and task
 
 from __future__ import annotations
 
-from h2ml.utils.registry import ModelEntry, CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
+from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY, ModelEntry
 
 # Re-export ModelEntry so optimizer.py can import it from here without change.
 __all__ = ["ModelEntry", "get_entry"]

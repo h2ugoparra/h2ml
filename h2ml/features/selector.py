@@ -12,17 +12,17 @@ step 4 (CV on reduced features):
 
 from __future__ import annotations
 
-from loguru import logger
 from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
+from loguru import logger
 
 from h2ml.core.base import BasePreprocessor, TaskType
 from h2ml.core.feature_store import PipelineData
-from h2ml.features.shap_importance import get_oof_shap_values, get_shap_values
 from h2ml.features.correlation import remove_correlated_features
+from h2ml.features.shap_importance import get_oof_shap_values, get_shap_values
 
 
 class FeatureSelector(BasePreprocessor):

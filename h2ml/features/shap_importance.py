@@ -18,17 +18,16 @@ What this module does NOT do:
 from __future__ import annotations
 
 import warnings
-from loguru import logger
 from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
 import shap
+from loguru import logger
 
 from h2ml.core.base import TaskType
 from h2ml.core.feature_store import PipelineData
-
 
 # ---------------------------------------------------------------------------
 # Explainer routing
@@ -279,7 +278,7 @@ def get_oof_shap_values(
         oof_shap:           np.ndarray of shape (n_samples, n_features).
         feature_importance: pd.Series indexed by feature name, sorted descending.
     """
-    from sklearn.model_selection import StratifiedKFold, KFold
+    from sklearn.model_selection import KFold, StratifiedKFold
     from sklearn.preprocessing import StandardScaler
 
     X = store.X
