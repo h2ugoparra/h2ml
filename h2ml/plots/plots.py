@@ -172,6 +172,7 @@ def cv_diagnostics(
 
     Classification (3×2): predicted probability by class, log-loss by class,
     raw residuals vs predicted, residuals histogram, ROC curve, calibration.
+    Binary targets only — multiclass CVResults raise a clear error.
 
     Regression (2×2): observed vs predicted, residuals vs fitted,
     residuals histogram, QQ plot.
@@ -182,7 +183,8 @@ def cv_diagnostics(
         save_path: Path to save figure. If None, shows the plot.
 
     Raises:
-        ValueError: If a list is passed and none of the CVResults have folds.
+        ValueError: If a list is passed and none of the CVResults have folds, or
+            if the classification CVResult holds multiclass probabilities.
     """
     from h2ml.core.base import TaskType
 
@@ -203,6 +205,14 @@ def cv_diagnostics(
 
     if task_type == TaskType.CLASSIFICATION:
         y_prob = np.concatenate([f.y_prob_test for f in all_folds])
+        # The panel's log-loss/residual/ROC/calibration math assumes 1-D
+        # positive-class probabilities with 0/1 labels; a 2-D matrix would crash
+        # deep inside roc_curve with a cryptic message.
+        if y_prob.ndim == 2:
+            raise ValueError(
+                "cv_diagnostics: the classification panel supports binary targets only, "
+                f"but got a multiclass probability matrix with {y_prob.shape[1]} classes."
+            )
         _classification_diagnostics(y_true, y_prob, main_title, save_path)
     else:
         _regression_diagnostics(y_true, y_pred, main_title, save_path)
