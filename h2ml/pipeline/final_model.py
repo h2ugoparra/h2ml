@@ -541,9 +541,7 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     feature_stage = result.best_feature_stage or result.best_stage
     store = result.features_reduced if feature_stage == "reduced" else result.features
     if store is None:
-        raise ValueError(
-            f"Cannot build final model: the '{feature_stage}' feature store is missing from the result."
-        )
+        raise ValueError(f"Cannot build final model: the '{feature_stage}' feature store is missing from the result.")
 
     registry = CLASSIFIER_REGISTRY if task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
     entry = registry.get(result.best_model_name)
