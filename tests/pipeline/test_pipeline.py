@@ -347,6 +347,31 @@ class TestHandleImbalance:
             logger.remove(handler)
         assert not any("imbalance" in str(w).lower() for w in warned)
 
+    def test_fixed_class_weight_overrides_sampled_best_params(self, clf_store):
+        """Every trial runs with fixed_params overriding sampled values, so the
+        final model must too — a sampled class_weight=None in study.best_params
+        must not undo handle_imbalance in the step-4 CV or in result.best_params."""
+        models = [make_classifier(RandomForestClassifier(n_estimators=10, random_state=42))]
+        pipeline = H2MLPipeline(models=models, config=_clf_config(handle_imbalance=True))
+        with _mock_selector(["feat_0", "feat_1", "feat_2"]):
+            result = pipeline.run_step1_to_step3(clf_store)
+
+        captured = {}
+        orig_run = pipeline._cv.run
+
+        def spy_run(*args, **kwargs):
+            captured["best_params"] = kwargs.get("best_params")
+            return orig_run(*args, **kwargs)
+
+        with (
+            _mock_optimizer({"n_estimators": 10, "class_weight": None}),
+            patch.object(pipeline._cv, "run", side_effect=spy_run),
+        ):
+            result = pipeline.run_step4_only(result)
+
+        assert captured["best_params"]["class_weight"] == "balanced"
+        assert result.best_params["class_weight"] == "balanced"
+
 
 # ---------------------------------------------------------------------------
 # PipelineResult

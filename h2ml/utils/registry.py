@@ -212,7 +212,8 @@ REGRESSOR_REGISTRY: dict[str, ModelEntry] = {
     "RandomForestRegressor": ModelEntry(
         RandomForestRegressor,
         default_kwargs={"random_state": 42},
-        param_fn=rp.randomforest_r_params,    ),
+        param_fn=rp.randomforest_r_params,
+    ),
     "GradientBoostingRegressor": ModelEntry(
         GradientBoostingRegressor,
         default_kwargs={"random_state": 42},
@@ -221,7 +222,8 @@ REGRESSOR_REGISTRY: dict[str, ModelEntry] = {
     "HistGradientBoostingRegressor": ModelEntry(
         HistGradientBoostingRegressor,
         default_kwargs={"random_state": 42},
-        param_fn=rp.histgradientboosting_r_params,    ),
+        param_fn=rp.histgradientboosting_r_params,
+    ),
     "SVR": ModelEntry(
         SVR,
         requires_scaling=True,
@@ -230,7 +232,8 @@ REGRESSOR_REGISTRY: dict[str, ModelEntry] = {
     "ExtraTreesRegressor": ModelEntry(
         ExtraTreesRegressor,
         default_kwargs={"random_state": 42},
-        param_fn=rp.extratrees_r_params,    ),
+        param_fn=rp.extratrees_r_params,
+    ),
     "BaggingRegressor": ModelEntry(
         BaggingRegressor,
         default_kwargs={"random_state": 42},

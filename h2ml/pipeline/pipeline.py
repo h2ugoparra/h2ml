@@ -909,8 +909,12 @@ class H2MLPipeline:
         # study.best_params only contains trial.suggest_* values — merge with
         # registry default_kwargs so fixed kwargs (e.g. probability=True for SVC)
         # are preserved when _build_fold_model reconstructs the estimator.
+        # fixed_params are re-applied last: every trial was evaluated with them
+        # overriding sampled values (see _build_objective), so the final model must
+        # match — otherwise a sampled class_weight=None from the search space would
+        # silently undo handle_imbalance in the deployed params.
         default_kwargs = {**self._get_default_params(estimator_name), **fixed_params}
-        merged_params = {**default_kwargs, **study.best_params}
+        merged_params = {**default_kwargs, **study.best_params, **fixed_params}
 
         metadata = self._metadata_with(stage="optimized")
         if result.y_transform:
