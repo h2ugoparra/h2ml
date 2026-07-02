@@ -20,6 +20,10 @@ from typing import Iterator, Literal, Optional
 
 import numpy as np
 from loguru import logger
+from sklearn.model_selection import KFold, StratifiedKFold
+
+from h2ml.core.base import TaskType
+from h2ml.core.spatial_config import SpatialCVConfig
 
 SpatialMetric = Literal["euclidean", "haversine"]
 LinkageCriterion = Literal["ward", "complete", "average", "single"]
@@ -634,3 +638,72 @@ class SPCVSplitter:
         ).fit_predict(S)
 
         return fold_per_block[block_labels].astype(np.int32)
+
+
+# ---------------------------------------------------------------------------
+# Splitter factory — shared by the CV engine and the optimizer
+# ---------------------------------------------------------------------------
+
+
+def build_splitter(
+    task_type: TaskType | str,
+    n_splits: int,
+    random_state: int,
+    shuffle: bool = True,
+    coords: Optional[np.ndarray] = None,
+    X: Optional[np.ndarray] = None,
+    y: Optional[np.ndarray] = None,
+    spatial: Optional[SpatialCVConfig] = None,
+):
+    """
+    Build the CV splitter: spatial when coords are provided, otherwise
+    stratified/standard KFold.
+
+    Single construction point shared by CrossValidator and the Optuna
+    objective, so splitter selection and parameter forwarding cannot drift
+    between the two.
+
+    Args:
+        task_type:    TaskType or its string value; selects StratifiedKFold
+                      (classification) vs KFold (regression) in the non-spatial case.
+        n_splits:     Number of CV folds.
+        random_state: Seed for fold shuffling / block assignment.
+        shuffle:      Shuffle before splitting in the non-spatial case.
+        coords:       (n_samples, 2) coordinates. When None, a random
+                      (non-spatial) splitter is returned.
+        X, y:         Required by SPCVSplitter (passed through for AHC).
+        spatial:      Spatial-CV parameters (method, metric, AHC/PCA knobs).
+                      Defaults to SpatialCVConfig() when None — note this uses
+                      the engine-level "block" method, not PipelineConfig's
+                      "spcv" default.
+
+    Returns:
+        A scikit-learn-compatible splitter exposing split() and get_n_splits().
+    """
+    spatial = spatial or SpatialCVConfig()
+    if coords is not None:
+        if spatial.spatial_cv_method == "spcv":
+            assert X is not None and y is not None, "SPCVSplitter requires X and y."
+            return SPCVSplitter(
+                coords=coords,
+                X=X,
+                y=y,
+                n_splits=n_splits,
+                threshold=spatial.ahc_threshold,
+                random_state=random_state,
+                metric=spatial.spatial_cv_metric,
+                pca_components=spatial.pca_components,
+                exact_max_samples=spatial.exact_max_samples,
+                knn_neighbors=spatial.knn_neighbors,
+            )
+        return SpatialBlockSplitter(
+            coords=coords,
+            n_splits=n_splits,
+            n_blocks_per_fold=spatial.n_blocks_per_fold,
+            random_state=random_state,
+            metric=spatial.spatial_cv_metric,
+        )
+    kwargs = dict(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
+    if TaskType(task_type) == TaskType.CLASSIFICATION:
+        return StratifiedKFold(**kwargs)
+    return KFold(**kwargs)

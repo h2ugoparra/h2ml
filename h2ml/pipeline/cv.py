@@ -14,7 +14,6 @@ from joblib import Parallel, delayed
 from typing import Optional, Any, Callable, Sequence, cast
 
 import numpy as np
-from sklearn.model_selection import KFold, StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
 from h2ml.core.base import TaskType, PredictorStep
@@ -260,37 +259,18 @@ class CrossValidator:
         Returns:
             A scikit-learn-compatible splitter exposing split() and get_n_splits().
         """
-        spatial = spatial or SpatialCVConfig()
-        if coords is not None:
-            if spatial.spatial_cv_method == "spcv":
-                from h2ml.features.spatial_cv import SPCVSplitter
+        from h2ml.features.spatial_cv import build_splitter
 
-                assert X is not None and y is not None
-                return SPCVSplitter(
-                    coords=coords,
-                    X=X,
-                    y=y,
-                    n_splits=self.n_splits,
-                    threshold=spatial.ahc_threshold,
-                    random_state=self.random_state,
-                    metric=spatial.spatial_cv_metric,
-                    pca_components=spatial.pca_components,
-                    exact_max_samples=spatial.exact_max_samples,
-                    knn_neighbors=spatial.knn_neighbors,
-                )
-            from h2ml.features.spatial_cv import SpatialBlockSplitter
-
-            return SpatialBlockSplitter(
-                coords=coords,
-                n_splits=self.n_splits,
-                n_blocks_per_fold=spatial.n_blocks_per_fold,
-                random_state=self.random_state,
-                metric=spatial.spatial_cv_metric,
-            )
-        kwargs: dict[str, Any] = dict(n_splits=self.n_splits, shuffle=self.shuffle, random_state=self.random_state)
-        if task_type == TaskType.CLASSIFICATION:
-            return StratifiedKFold(**kwargs)
-        return KFold(**kwargs)
+        return build_splitter(
+            task_type,
+            n_splits=self.n_splits,
+            random_state=self.random_state,
+            shuffle=self.shuffle,
+            coords=coords,
+            X=X,
+            y=y,
+            spatial=spatial,
+        )
 
     def _maybe_scale(
         self,

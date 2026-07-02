@@ -154,7 +154,7 @@ class TestSorting:
         assert df.iloc[0]["Score_Mean"] >= df.iloc[1]["Score_Mean"]
 
     def test_sorted_ascending_for_minimize_metric(self):
-        # RMSE is lower-is-better; _MINIMIZE derives ascending sort automatically
+        # RMSE is lower-is-better; METRIC_MINIMIZE derives ascending sort automatically
         r1 = _make_result(score_mean=0.80, metric="RMSE")
         r2 = _make_result(score_mean=0.92, metric="RMSE")
         df = compare_results([r1, r2], labels=["low", "high"])

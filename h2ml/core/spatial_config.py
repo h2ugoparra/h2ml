@@ -8,6 +8,13 @@ object keeps the long call chains readable and makes adding a parameter a one-li
 
 Defaults match the engine-level defaults in CrossValidator, so constructing
 SpatialCVConfig() reproduces a direct CrossValidator call with no spatial overrides.
+
+NOTE — deliberate default divergence: SpatialCVConfig defaults to
+spatial_cv_method="block" (fast, robust on small data) for direct engine use
+(CrossValidator.run / run_study with coords but no config), while PipelineConfig
+defaults to "spcv" and always passes an explicit config, so the pipeline never
+relies on this default. Pass spatial_cv_method explicitly if you need direct
+calls to match pipeline behaviour.
 """
 
 from __future__ import annotations
@@ -27,6 +34,8 @@ class SpatialCVConfig:
     Attributes:
         n_blocks_per_fold: Blocks per test fold for SpatialBlockSplitter.
         spatial_cv_method: "block" → SpatialBlockSplitter, "spcv" → SPCVSplitter.
+                           Defaults to "block" here; PipelineConfig defaults to
+                           "spcv" (see the module docstring for why they differ).
         ahc_threshold:     AHC distance threshold for SPCVSplitter (auto when None).
         spatial_cv_metric: "euclidean" or "haversine".
         pca_components:    Variance retained by PCA on block covariates (SPCV).
