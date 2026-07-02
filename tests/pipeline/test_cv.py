@@ -645,7 +645,7 @@ class TestSpatialBlockCV:
 
         X, y = classification_data
         step = make_classifier(RandomForestClassifier(n_estimators=5, random_state=42))
-        with patch("h2ml.pipeline.cv.StratifiedKFold") as mock_skf:
+        with patch("h2ml.features.spatial_cv.StratifiedKFold") as mock_skf:
             mock_skf.return_value.split.return_value = iter([])
             try:
                 cv5.run(step, X, y, coords=None)

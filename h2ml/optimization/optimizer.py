@@ -36,11 +36,10 @@ from sklearn.metrics import (
     r2_score,
     roc_auc_score,
 )
-from sklearn.model_selection import StratifiedKFold, KFold
 from sklearn.preprocessing import LabelBinarizer, StandardScaler
 
 from h2ml.core.spatial_config import SpatialCVConfig
-from h2ml.evaluation.metrics import _MINIMIZE
+from h2ml.evaluation.metrics import METRIC_MINIMIZE
 from h2ml.optimization.opt_params import ModelEntry, get_entry
 
 
@@ -49,9 +48,9 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 # Metrics whose objective returns a negated value for internal maximisation.
 # Used to flip display values back to their natural (positive) direction. These are
-# exactly the error (lower-is-better) metrics, so derive them from _MINIMIZE rather
+# exactly the error (lower-is-better) metrics, so derive them from METRIC_MINIMIZE rather
 # than re-listing them — keeping a single source of truth for metric direction.
-_NEGATED_METRICS: frozenset[str] = frozenset(name for name, minimize in _MINIMIZE.items() if minimize)
+_NEGATED_METRICS: frozenset[str] = frozenset(name for name, minimize in METRIC_MINIMIZE.items() if minimize)
 
 
 def _to_display(value: float, metric: str) -> float:
@@ -190,12 +189,6 @@ _DEFAULT_METRIC: dict[str, str] = {
     "regression": "R2",
 }
 
-_SPLITTER = {
-    "classification": StratifiedKFold,
-    "regression": KFold,
-}
-
-
 # ---------------------------------------------------------------------------
 # Objective builder
 # ---------------------------------------------------------------------------
@@ -238,37 +231,20 @@ def _build_objective(
         model entry has no param_fn, and optuna.TrialPruned when the pruner stops
         an unpromising trial.
     """
-    spatial = spatial or SpatialCVConfig()
     if _splitter is not None:
         splitter = _splitter
-    elif coords is not None:
-        if spatial.spatial_cv_method == "spcv":
-            from h2ml.features.spatial_cv import SPCVSplitter
-
-            splitter = SPCVSplitter(
-                coords=coords,
-                X=X,
-                y=y,
-                n_splits=n_splits,
-                threshold=spatial.ahc_threshold,
-                random_state=random_state,
-                metric=spatial.spatial_cv_metric,
-                pca_components=spatial.pca_components,
-                exact_max_samples=spatial.exact_max_samples,
-                knn_neighbors=spatial.knn_neighbors,
-            )
-        else:
-            from h2ml.features.spatial_cv import SpatialBlockSplitter
-
-            splitter = SpatialBlockSplitter(
-                coords=coords,
-                n_splits=n_splits,
-                n_blocks_per_fold=spatial.n_blocks_per_fold,
-                random_state=random_state,
-                metric=spatial.spatial_cv_metric,
-            )
     else:
-        splitter = _SPLITTER[task](n_splits=n_splits, shuffle=True, random_state=random_state)
+        from h2ml.features.spatial_cv import build_splitter
+
+        splitter = build_splitter(
+            task,
+            n_splits=n_splits,
+            random_state=random_state,
+            coords=coords,
+            X=X,
+            y=y,
+            spatial=spatial,
+        )
 
     fixed_params = fixed_params or {}
 

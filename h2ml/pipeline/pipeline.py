@@ -31,8 +31,8 @@ from h2ml.evaluation.metrics import (
     select_best,
     # Metric metadata (short name → agg column, minimise direction) — used by
     # PipelineConfig.metric_col / minimize_metric.
-    _METRIC_COL,
-    _MINIMIZE,
+    METRIC_COL,
+    METRIC_MINIMIZE,
 )
 from h2ml.optimization.optimizer import run_study
 from h2ml.utils.registry import build_models
@@ -144,8 +144,8 @@ class PipelineConfig:
                 ) from None
         if self.task_type not in (TaskType.CLASSIFICATION, TaskType.REGRESSION):
             raise ValueError(f'task_type must be "classification" or "regression", got "{self.task_type.value}"')
-        if self.metric not in _METRIC_COL:
-            raise ValueError(f"metric must be one of {list(_METRIC_COL)}, got {self.metric!r}")
+        if self.metric not in METRIC_COL:
+            raise ValueError(f"metric must be one of {list(METRIC_COL)}, got {self.metric!r}")
         if self.n_splits < 2:
             raise ValueError(f"n_splits must be >= 2, got {self.n_splits}")
         if self.opt_n_splits < 2:
@@ -173,12 +173,12 @@ class PipelineConfig:
     @property
     def minimize_metric(self) -> bool:
         """True for error metrics (LogLoss, Brier, MAE, RMSE), False for score metrics."""
-        return _MINIMIZE[self.metric]
+        return METRIC_MINIMIZE[self.metric]
 
     @property
     def metric_col(self) -> str:
         """Full agg DataFrame column name, e.g. 'AUC' → 'AUC_Test_Mean'."""
-        return _METRIC_COL[self.metric]
+        return METRIC_COL[self.metric]
 
     @property
     def spatial_cv(self) -> SpatialCVConfig:

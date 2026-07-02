@@ -887,26 +887,20 @@ class TestSpatialCV:
             )
 
     def test_random_splitter_used_when_no_coords(self, small_clf_data):
-        """When coords=None, _SPLITTER[task] is used instead of SpatialBlockSplitter."""
-        from unittest.mock import patch, MagicMock
-        import h2ml.optimization.optimizer as opt_module
+        """When coords=None, StratifiedKFold is used instead of SpatialBlockSplitter."""
+        from unittest.mock import patch
 
         X, y = small_clf_data
-        mock_cls = MagicMock()
         n_splits = 2
         indices = np.arange(self.N)
         half = self.N // 2
-        mock_cls.return_value.split.return_value = iter(
-            [
-                (indices[:half], indices[half:]),
-                (indices[half:], indices[:half]),
-            ]
-        )
-        patched_splitter = {
-            "classification": mock_cls,
-            "regression": opt_module._SPLITTER["regression"],
-        }
-        with patch.object(opt_module, "_SPLITTER", patched_splitter):
+        with patch("h2ml.features.spatial_cv.StratifiedKFold") as mock_cls:
+            mock_cls.return_value.split.return_value = iter(
+                [
+                    (indices[:half], indices[half:]),
+                    (indices[half:], indices[:half]),
+                ]
+            )
             _build_objective(
                 _fast_clf_entry(),
                 X,

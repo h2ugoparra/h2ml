@@ -35,7 +35,7 @@ from h2ml.core.cv_result import CVResult, FoldResult
 # ---------------------------------------------------------------------------
 
 # Short metric name → full aggregated-DataFrame column name
-_METRIC_COL: dict[str, str] = {
+METRIC_COL: dict[str, str] = {
     # Classification
     "AUC": "AUC_Test_Mean",
     "AUC_PR": "AUC_PR_Test_Mean",
@@ -49,7 +49,7 @@ _METRIC_COL: dict[str, str] = {
 }
 
 # Whether each metric should be minimised (True) or maximised (False)
-_MINIMIZE: dict[str, bool] = {
+METRIC_MINIMIZE: dict[str, bool] = {
     "AUC": False,
     "AUC_PR": False,
     "F1": False,

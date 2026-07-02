@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
-from h2ml.evaluation.metrics import _MINIMIZE
+from h2ml.evaluation.metrics import METRIC_MINIMIZE
 
 if TYPE_CHECKING:
     from h2ml.pipeline.pipeline import PipelineResult
@@ -40,7 +40,7 @@ def compare_results(
         Score_Mean         — mean CV score for the selected metric
         Score_Std          — fold std for the selected metric
         Conservative_Bound — variance-penalised score used for ranking. Direction is
-                             derived automatically from the metric name via _MINIMIZE:
+                             derived automatically from the metric name via METRIC_MINIMIZE:
                                higher-is-better: Score_Mean - Score_Std / sqrt(n_folds)
                                lower-is-better:  Score_Mean + Score_Std / sqrt(n_folds)
                              A model with high mean but high variance is pulled toward
@@ -66,7 +66,7 @@ def compare_results(
                  optimised on different metrics. When omitted, Score_Mean falls
                  back to each result's ``best_model_value``. Minimisation
                  direction and sort order are derived automatically from
-                 ``_MINIMIZE`` — no need to pass ``ascending`` manually.
+                 ``METRIC_MINIMIZE`` — no need to pass ``ascending`` manually.
         n_folds: Number of CV folds used in all runs. When provided it overrides
                  automatic inference from the fold DataFrames, which can fail if
                  results were loaded from disk or the fold DataFrames are absent.
@@ -112,7 +112,7 @@ def compare_results(
             score_std = result.best_model_std
             display_metric = result.metric
 
-        minimize = _MINIMIZE.get(display_metric, False) if display_metric else False
+        minimize = METRIC_MINIMIZE.get(display_metric, False) if display_metric else False
 
         conservative_bound: Optional[float] = None
         if score_mean is not None and score_std is not None and fold_count:
@@ -142,9 +142,9 @@ def compare_results(
 
     # Sort direction derived from metric, not from an ascending argument
     if metric is not None:
-        sort_ascending = _MINIMIZE.get(metric, False)
+        sort_ascending = METRIC_MINIMIZE.get(metric, False)
     else:
-        unique_minimize = {_MINIMIZE.get(r.metric, False) for r in results if r.metric}
+        unique_minimize = {METRIC_MINIMIZE.get(r.metric, False) for r in results if r.metric}
         sort_ascending = unique_minimize.pop() if len(unique_minimize) == 1 else False
 
     if df["Conservative_Bound"].isna().all():
