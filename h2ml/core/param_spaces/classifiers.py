@@ -116,6 +116,7 @@ def gradientboosting_c_params(trial):
         "min_samples_split": trial.suggest_int("min_samples_split", 2, 20),
         "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 10),
         "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+        "random_state": 42,
     }
 
 
