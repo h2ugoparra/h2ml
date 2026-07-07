@@ -352,7 +352,11 @@ def _classification_scores(f: Any, classes: Optional[Any]) -> Optional[np.ndarra
     from loguru import logger
 
     if f.y_prob_test.ndim == 1:
-        return np.where(f.y_test == 1, 1.0 - f.y_prob_test, f.y_prob_test)
+        # y_prob_test holds P(classes[1]) — cv.py stores proba[:, 1]. Resolve the
+        # positive label from classes_ so non-{0,1} binary encodings (e.g. {1, 2})
+        # score correctly; fall back to 1 when classes are unavailable.
+        pos_label = classes[1] if classes is not None and len(classes) == 2 else 1
+        return np.where(f.y_test == pos_label, 1.0 - f.y_prob_test, f.y_prob_test)
 
     if classes is None:
         logger.warning(
@@ -708,6 +712,21 @@ def _delta_oof_residuals(
     if count_oof_pos is None:
         logger.warning("Delta conformal calibration skipped: regressor OOF predictions unavailable.")
         return None
+
+    # count_oof_pos is indexed by position within the positive subset, but its
+    # length is max(test_idx)+1 — shorter than n_pos when a failed CV fold held
+    # the highest indices. Pad with NaN so those samples are excluded from the
+    # residuals (warned about below) instead of crashing the assignment.
+    n_pos = len(positive_indices)
+    if len(count_oof_pos) > n_pos:
+        logger.warning(
+            f"Delta conformal calibration skipped: regressor OOF length {len(count_oof_pos)} "
+            f"exceeds the {n_pos} positive samples. Pass the same positive_indices the "
+            "regressor was trained on."
+        )
+        return None
+    if len(count_oof_pos) < n_pos:
+        count_oof_pos = np.concatenate([count_oof_pos, np.full(n_pos - len(count_oof_pos), np.nan)])
 
     count_hat_full = np.full(n_full, np.nan)
     count_hat_full[positive_indices] = count_oof_pos
