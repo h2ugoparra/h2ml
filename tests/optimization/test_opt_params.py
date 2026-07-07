@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from h2ml.optimization.opt_params import get_entry, ModelEntry
+from h2ml.optimization.opt_params import ModelEntry, get_entry
 
 
 class TestGetEntry:

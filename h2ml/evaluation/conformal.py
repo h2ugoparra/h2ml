@@ -24,7 +24,6 @@ import pandas as pd
 
 from h2ml.core.base import TaskType
 
-
 _SEASON_NAMES = {0: "DJF", 1: "MAM", 2: "JJA", 3: "SON"}
 
 
@@ -66,10 +65,21 @@ class ConformalCalibration:
 
 
 def _conformal_quantile(scores: np.ndarray, alpha: float) -> float:
-    """Return the conformal quantile giving ≥ 1-alpha coverage."""
+    """Return the conformal quantile giving ≥ 1-alpha coverage.
+
+    scores must be sorted ascending — all call sites pre-sort. Indexes the sorted
+    array directly with linear interpolation, which is numerically identical to
+    np.quantile(method="linear") but skips its internal partition. This matters
+    because LocalConformalCalibration calls this once per (block, time-bin) cell.
+    """
     n = len(scores)
     level = min(np.ceil((1 - alpha) * (n + 1)) / n, 1.0)
-    return float(np.quantile(scores, level))
+    pos = level * (n - 1)
+    lo = int(np.floor(pos))
+    hi = int(np.ceil(pos))
+    if lo == hi:
+        return float(scores[lo])
+    return float(scores[lo] + (pos - lo) * (scores[hi] - scores[lo]))
 
 
 def _time_bin(times: np.ndarray, resolution: str) -> np.ndarray:
@@ -233,7 +243,7 @@ class LocalConformalCalibration:
         if self.has_times and _times is None:
             # Times expected but not provided — use spatial subspace only for k-NN.
             col_slice = slice(0, n_coord_cols)
-        elif not self.has_coords and _coords is None:
+        elif self.has_coords and _coords is None:
             # Coords expected but not provided — use temporal subspace only.
             col_slice = slice(n_coord_cols, None)
         else:
@@ -255,16 +265,20 @@ class LocalConformalCalibration:
         if self.has_times and times is not None and self.time_bin_resolution:
             time_bins = _time_bin(times, self.time_bin_resolution)
 
-        return np.array(
-            [
-                self._block_threshold(
-                    bi,
-                    alpha,
-                    time_bin=None if time_bins is None else int(time_bins[i]),
-                )
-                for i, bi in enumerate(block_indices)
-            ]
-        )
+        # A sample's threshold depends only on (block_idx, time_bin) for a fixed
+        # alpha, so memoise per cell — a large prediction grid has far more samples
+        # than distinct (block, bin) cells, turning n quantile calls into a handful.
+        cell_cache: dict = {}
+        out = np.empty(len(block_indices), dtype=float)
+        for i, bi in enumerate(block_indices):
+            tb = None if time_bins is None else int(time_bins[i])
+            key = (int(bi), tb)
+            q = cell_cache.get(key)
+            if q is None:
+                q = self._block_threshold(int(bi), alpha, time_bin=tb)
+                cell_cache[key] = q
+            out[i] = q
+        return out
 
     def summary(self, alpha: float = 0.10, max_blocks: Optional[int] = None) -> pd.DataFrame:
         """Per-block (and per-time-bin) calibration thresholds at the given alpha.

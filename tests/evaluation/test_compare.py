@@ -15,9 +15,8 @@ if TYPE_CHECKING:
     import pandas as pd
 
 from h2ml.evaluation.compare import compare_results
-from h2ml.pipeline.pipeline import PipelineResult
 from h2ml.features.feature_store import PipelineData
-
+from h2ml.pipeline.pipeline import PipelineResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -154,7 +153,7 @@ class TestSorting:
         assert df.iloc[0]["Score_Mean"] >= df.iloc[1]["Score_Mean"]
 
     def test_sorted_ascending_for_minimize_metric(self):
-        # RMSE is lower-is-better; _MINIMIZE derives ascending sort automatically
+        # RMSE is lower-is-better; METRIC_MINIMIZE derives ascending sort automatically
         r1 = _make_result(score_mean=0.80, metric="RMSE")
         r2 = _make_result(score_mean=0.92, metric="RMSE")
         df = compare_results([r1, r2], labels=["low", "high"])
@@ -269,8 +268,8 @@ class TestOOFBrier:
         assert val is None or (isinstance(val, float) and np.isnan(val))
 
     def test_oof_brier_computed_from_predictions(self):
-        from h2ml.pipeline.cv import CVResult, FoldResult
         from h2ml.pipeline.base import TaskType
+        from h2ml.pipeline.cv import CVResult, FoldResult
 
         result = _make_result()
         cv = CVResult(model_name="RFC", task_type=TaskType.CLASSIFICATION)

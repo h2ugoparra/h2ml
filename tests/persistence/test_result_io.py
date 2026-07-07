@@ -14,15 +14,13 @@ Covers:
 
 from __future__ import annotations
 
-
 import numpy as np
 import pandas as pd
 import pytest
 
 from h2ml.features.feature_store import PipelineData
-from h2ml.persistence.result_io import save_result, load_result
+from h2ml.persistence.result_io import load_result, save_result
 from h2ml.pipeline.pipeline import PipelineResult
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -337,6 +335,30 @@ class TestEdgeCases:
 
         loaded = load_result(dest)
         assert loaded.best_model_name == "RF"
+
+    def test_save_into_empty_directory(self, tmp_path):
+        dest = tmp_path / "run"
+        dest.mkdir()
+        save_result(_full_result(), dest)
+        assert load_result(dest).best_model_name is not None
+
+    def test_save_refuses_unrelated_directory(self, tmp_path):
+        """A populated directory that is not a previous save must not be wiped
+        (regression: save_result rmtree'd any existing path unconditionally)."""
+        dest = tmp_path / "run"
+        dest.mkdir()
+        (dest / "important.txt").write_text("do not delete")
+
+        with pytest.raises(ValueError, match="refusing to overwrite"):
+            save_result(_full_result(), dest)
+        assert (dest / "important.txt").read_text() == "do not delete"
+
+    def test_save_refuses_existing_file_path(self, tmp_path):
+        dest = tmp_path / "run"
+        dest.write_text("a file, not a directory")
+        with pytest.raises(ValueError, match="refusing to overwrite"):
+            save_result(_full_result(), dest)
+        assert dest.read_text() == "a file, not a directory"
 
     def test_numpy_scalar_params_serialise(self, tmp_path):
         """Optuna may produce numpy int/float params — these must survive JSON round-trip."""

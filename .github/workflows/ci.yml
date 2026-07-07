@@ -60,4 +60,5 @@ jobs:
           python-version: "3.11"
       - run: uv sync --dev
       - run: uv run ruff check h2ml/ tests/
+      - run: uv run ruff format --check h2ml/ tests/
       - run: uv run pytest tests/

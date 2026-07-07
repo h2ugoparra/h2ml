@@ -10,14 +10,13 @@ import pytest
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
+from h2ml.pipeline.step import ModelWrapper
 from h2ml.utils.registry import (
-    ModelEntry,
     CLASSIFIER_REGISTRY,
     REGRESSOR_REGISTRY,
+    ModelEntry,
     build_models,
 )
-from h2ml.pipeline.step import ModelWrapper
-
 
 # ---------------------------------------------------------------------------
 # ModelEntry
@@ -45,10 +44,6 @@ class TestModelEntry:
     def test_opt_enabled_true_by_default(self):
         entry = self._entry_with_param_fn()
         assert entry.opt_enabled is True
-
-    def test_single_njob_false_by_default(self):
-        entry = self._entry_with_param_fn()
-        assert entry.single_njob is False
 
     def test_opt_enabled_true_without_param_fn_raises(self):
         """opt_enabled=True with param_fn=None is an invalid combination."""

@@ -43,14 +43,13 @@ Coverage:
 """
 
 from __future__ import annotations
+
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from h2ml.pipeline.base import TaskType
-from h2ml.pipeline.cv import CVResult, FoldResult
 from h2ml.evaluation.metrics import (
     RunMetadata,
     aggregate_metrics,
@@ -58,7 +57,8 @@ from h2ml.evaluation.metrics import (
     compute_metrics_all,
     select_best,
 )
-
+from h2ml.pipeline.base import TaskType
+from h2ml.pipeline.cv import CVResult, FoldResult
 
 # ---------------------------------------------------------------------------
 # Helpers — build deterministic CVResult objects
@@ -243,8 +243,8 @@ class TestComputeMetricsClassification:
 
     def test_brier_perfect_predictor_is_zero(self):
         """A model predicting exact probabilities should have Brier score 0."""
-        from h2ml.pipeline.cv import CVResult, FoldResult
         from h2ml.evaluation.metrics import compute_metrics
+        from h2ml.pipeline.cv import CVResult, FoldResult
 
         result = CVResult(model_name="Perfect", task_type=TaskType.CLASSIFICATION)
         result.folds.append(

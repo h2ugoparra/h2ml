@@ -26,17 +26,16 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
 from pathlib import Path
 from typing import Optional
 
 import joblib
 import numpy as np
 import pandas as pd
-import shutil
 from loguru import logger
 
 from h2ml.core.feature_store import PipelineData
-
 
 # ---------------------------------------------------------------------------
 # Field registry — keep in sync with PipelineResult
@@ -94,12 +93,28 @@ def save_result(result, path: str | Path) -> None:
     """
     Persist a PipelineResult to *path* (created if it does not exist).
 
+    An existing path is only overwritten when it is an empty directory or a
+    previous save (contains metadata.json) — anything else is refused so a
+    mistyped path cannot wipe an unrelated directory tree.
+
     Args:
         result: PipelineResult instance.
         path:   Destination directory.
+
+    Raises:
+        ValueError: If *path* exists but is not an empty directory or a
+            previously saved result.
     """
     root = Path(path)
     if root.exists():
+        is_prior_result = root.is_dir() and (root / "metadata.json").exists()
+        is_empty_dir = root.is_dir() and not any(root.iterdir())
+        if not (is_prior_result or is_empty_dir):
+            raise ValueError(
+                f"save_result: refusing to overwrite '{root}' — it exists but is not an "
+                "empty directory or a previously saved result (no metadata.json). "
+                "Delete it manually or choose another path."
+            )
         shutil.rmtree(root)
     root.mkdir(parents=True)
 

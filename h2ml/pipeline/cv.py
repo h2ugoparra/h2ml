@@ -7,20 +7,17 @@ Pure cross-validation engine. Responsibilities:
 
 from __future__ import annotations
 
-from loguru import logger
-
 import time
-from joblib import Parallel, delayed
-from typing import Optional, Any, Callable, Sequence, cast
+from typing import Any, Callable, Optional, Sequence, cast
 
 import numpy as np
-from sklearn.model_selection import KFold, StratifiedKFold
+from joblib import Parallel, delayed
+from loguru import logger
 from sklearn.preprocessing import StandardScaler
 
-from h2ml.core.base import TaskType, PredictorStep
+from h2ml.core.base import PredictorStep, TaskType
 from h2ml.core.cv_result import CVResult, FoldResult  # re-exported for back-compat
 from h2ml.core.spatial_config import SpatialCVConfig
-
 
 # ---------------------------------------------------------------------------
 # CrossValidator
@@ -196,11 +193,23 @@ class CrossValidator:
         else:
             prebuilt_splitter = None
 
+        # Pre-compute StandardScaler fold arrays once when a concrete splitter is
+        # available and any step needs scaling. The scaler fit is deterministic per
+        # fold, so re-fitting it for every (model, fold) pair is pure waste — workers
+        # receive the pre-computed arrays and skip _maybe_scale() entirely.
+        precomputed_scaled_folds: Optional[list] = None
+        if prebuilt_splitter is not None and any(getattr(s, "requires_scaling", False) for s in steps):
+            precomputed_scaled_folds = []
+            for tr_idx, te_idx in prebuilt_splitter.split(X, y):
+                sc = StandardScaler()
+                precomputed_scaled_folds.append((sc.fit_transform(X[tr_idx]), sc.transform(X[te_idx])))
+
         def _run_one(step: PredictorStep) -> CVResult:
             import warnings
 
             warnings.filterwarnings("ignore")
             params = (best_params or {}).get(step.name)
+            sf = precomputed_scaled_folds if getattr(step, "requires_scaling", False) else None
             return self.run(
                 step,
                 X,
@@ -211,6 +220,7 @@ class CrossValidator:
                 coords=coords,
                 spatial=spatial,
                 _splitter=prebuilt_splitter,
+                _scaled_folds=sf,
             )
 
         if n_jobs == 1:
@@ -247,37 +257,18 @@ class CrossValidator:
         Returns:
             A scikit-learn-compatible splitter exposing split() and get_n_splits().
         """
-        spatial = spatial or SpatialCVConfig()
-        if coords is not None:
-            if spatial.spatial_cv_method == "spcv":
-                from h2ml.features.spatial_cv import SPCVSplitter
+        from h2ml.features.spatial_cv import build_splitter
 
-                assert X is not None and y is not None
-                return SPCVSplitter(
-                    coords=coords,
-                    X=X,
-                    y=y,
-                    n_splits=self.n_splits,
-                    threshold=spatial.ahc_threshold,
-                    random_state=self.random_state,
-                    metric=spatial.spatial_cv_metric,
-                    pca_components=spatial.pca_components,
-                    exact_max_samples=spatial.exact_max_samples,
-                    knn_neighbors=spatial.knn_neighbors,
-                )
-            from h2ml.features.spatial_cv import SpatialBlockSplitter
-
-            return SpatialBlockSplitter(
-                coords=coords,
-                n_splits=self.n_splits,
-                n_blocks_per_fold=spatial.n_blocks_per_fold,
-                random_state=self.random_state,
-                metric=spatial.spatial_cv_metric,
-            )
-        kwargs: dict[str, Any] = dict(n_splits=self.n_splits, shuffle=self.shuffle, random_state=self.random_state)
-        if task_type == TaskType.CLASSIFICATION:
-            return StratifiedKFold(**kwargs)
-        return KFold(**kwargs)
+        return build_splitter(
+            task_type,
+            n_splits=self.n_splits,
+            random_state=self.random_state,
+            shuffle=self.shuffle,
+            coords=coords,
+            X=X,
+            y=y,
+            spatial=spatial,
+        )
 
     def _maybe_scale(
         self,
@@ -292,7 +283,6 @@ class CrossValidator:
         if not getattr(step, "requires_scaling", False):
             return X_train, X_test
 
-        # cols  = X_train.columns
         scaler = StandardScaler()
         X_train = scaler.fit_transform(X_train)
         X_test = scaler.transform(X_test)

@@ -6,37 +6,40 @@ tunable parameters; PipelineResult carries every artifact produced by the run.
 """
 
 from __future__ import annotations
-from loguru import logger
+
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Optional, Any, cast
+from typing import TYPE_CHECKING, Any, Iterable, Optional, cast
+
+from loguru import logger
 
 if TYPE_CHECKING:
-    from h2ml.pipeline.final_model import FinalModel
     from h2ml.features.spatial_cv import SpatialMetric
+    from h2ml.pipeline.final_model import FinalModel
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from sklearn.preprocessing import StandardScaler
+
 from h2ml.core.base import TaskType
 from h2ml.core.feature_store import PipelineData
 from h2ml.core.spatial_config import SpatialCVConfig
 from h2ml.core.step import ModelWrapper
-from h2ml.pipeline.cv import CrossValidator, CVResult
-from h2ml.features.selector import FeatureSelector
 from h2ml.evaluation.metrics import (
+    # Metric metadata (short name → agg column, minimise direction) — used by
+    # PipelineConfig.metric_col / minimize_metric.
+    METRIC_COL,
+    METRIC_MINIMIZE,
     RunMetadata,
     aggregate_metrics,
     compute_metrics_all,
     select_best,
-    # Metric metadata (short name → agg column, minimise direction) — used by
-    # PipelineConfig.metric_col / minimize_metric.
-    _METRIC_COL,
-    _MINIMIZE,
 )
+from h2ml.features.selector import FeatureSelector
 from h2ml.optimization.optimizer import run_study
-from h2ml.utils.registry import build_models
+from h2ml.pipeline.cv import CrossValidator, CVResult
 from h2ml.preprocessing.transform_stores import build_transform_stores
+from h2ml.utils.registry import build_models
 
 
 @dataclass
@@ -144,8 +147,8 @@ class PipelineConfig:
                 ) from None
         if self.task_type not in (TaskType.CLASSIFICATION, TaskType.REGRESSION):
             raise ValueError(f'task_type must be "classification" or "regression", got "{self.task_type.value}"')
-        if self.metric not in _METRIC_COL:
-            raise ValueError(f"metric must be one of {list(_METRIC_COL)}, got {self.metric!r}")
+        if self.metric not in METRIC_COL:
+            raise ValueError(f"metric must be one of {list(METRIC_COL)}, got {self.metric!r}")
         if self.n_splits < 2:
             raise ValueError(f"n_splits must be >= 2, got {self.n_splits}")
         if self.opt_n_splits < 2:
@@ -173,12 +176,12 @@ class PipelineConfig:
     @property
     def minimize_metric(self) -> bool:
         """True for error metrics (LogLoss, Brier, MAE, RMSE), False for score metrics."""
-        return _MINIMIZE[self.metric]
+        return METRIC_MINIMIZE[self.metric]
 
     @property
     def metric_col(self) -> str:
         """Full agg DataFrame column name, e.g. 'AUC' → 'AUC_Test_Mean'."""
-        return _METRIC_COL[self.metric]
+        return METRIC_COL[self.metric]
 
     @property
     def spatial_cv(self) -> SpatialCVConfig:
@@ -377,7 +380,8 @@ class PipelineResult:
         Returns:
             FinalModel ready for prediction on new data.
         """
-        from h2ml.pipeline.final_model import FinalModel, build_final_model as _build  # noqa: F401
+        from h2ml.pipeline.final_model import FinalModel  # noqa: F401
+        from h2ml.pipeline.final_model import build_final_model as _build
 
         return _build(self)
 
@@ -589,6 +593,7 @@ class H2MLPipeline:
         ]
         if missing:
             raise ValueError(f"result must have {missing} set. Run run_step1_to_step2() first.")
+        transform_stores = self._rebuild_transform_stores(result, transform_stores)
         result = self._run_step3(result, transform_stores)
         result = self._run_step4(result, transform_stores)
         return result
@@ -636,6 +641,7 @@ class H2MLPipeline:
                 "Steps 1–3 must be complete (run run_step1_to_step3() or load a result "
                 "that includes them)."
             )
+        transform_stores = self._rebuild_transform_stores(result, transform_stores)
         return self._run_step4(result, transform_stores)
 
     # ------------------------------------------------------------------
@@ -876,15 +882,18 @@ class H2MLPipeline:
         best_model = self._get_model(result.best_model_name)
         estimator_name = best_model.estimator.__class__.__name__
 
-        if not self._is_opt_enabled(estimator_name):
-            self._log(f"  {estimator_name} has opt_enabled=False — skipping optimization.")
-            result.best_params = self._get_default_params(estimator_name)
-            return result
-
         # Fixed params are injected into every Optuna trial alongside searched params.
+        # Built before the opt_enabled check: the skip path must also carry them, or a
+        # deployed opt-disabled winner would silently lose class_weight="balanced"
+        # even though CV ranked it with weights injected.
         fixed_params: dict = {}
         if self.config.handle_imbalance and self._supports_class_weight(estimator_name):
             fixed_params["class_weight"] = "balanced"
+
+        if not self._is_opt_enabled(estimator_name):
+            self._log(f"  {estimator_name} has opt_enabled=False — skipping optimization.")
+            result.best_params = {**self._get_default_params(estimator_name), **fixed_params}
+            return result
 
         study = run_study(
             name=estimator_name,
@@ -907,8 +916,12 @@ class H2MLPipeline:
         # study.best_params only contains trial.suggest_* values — merge with
         # registry default_kwargs so fixed kwargs (e.g. probability=True for SVC)
         # are preserved when _build_fold_model reconstructs the estimator.
+        # fixed_params are re-applied last: every trial was evaluated with them
+        # overriding sampled values (see _build_objective), so the final model must
+        # match — otherwise a sampled class_weight=None from the search space would
+        # silently undo handle_imbalance in the deployed params.
         default_kwargs = {**self._get_default_params(estimator_name), **fixed_params}
-        merged_params = {**default_kwargs, **study.best_params}
+        merged_params = {**default_kwargs, **study.best_params, **fixed_params}
 
         metadata = self._metadata_with(stage="optimized")
         if result.y_transform:
@@ -980,13 +993,33 @@ class H2MLPipeline:
             raise ValueError(
                 f"transforms are only supported for regression tasks. Got task_type='{self.config.task_type.value}'."
             )
-        stores = build_transform_stores(store.X, store.y, store.feature_names, list(transforms), coords=store.coords)
+        stores = build_transform_stores(
+            store.X, store.y, store.feature_names, list(transforms), coords=store.coords, times=store.times
+        )
         if not stores:
             raise ValueError(
                 "No valid transform stores built — all transforms returned None. "
                 "Check that the y array has outliers if using winsorize-based transforms."
             )
         return stores
+
+    def _rebuild_transform_stores(
+        self,
+        result: PipelineResult,
+        transform_stores: Optional[dict[str, PipelineData]],
+    ) -> Optional[dict[str, PipelineData]]:
+        """
+        Rebuild the winning transform's store for resumed runs (steps 3-4).
+
+        result.features holds the raw (untransformed) store, so a resume without
+        pre-built transform_stores would otherwise optimise on raw y even though
+        the pipeline selected a y-transform. Returns transform_stores unchanged
+        when provided or when no transform won.
+        """
+        if transform_stores is not None or not result.y_transform:
+            return transform_stores
+        assert result.features is not None  # validated by the callers
+        return self._build_transform_stores(result.features, [result.y_transform])
 
     def _resolve_opt_store(
         self,

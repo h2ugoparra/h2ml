@@ -6,6 +6,7 @@ Tests for FinalModel (inference, scaling, persistence) and build_final_model().
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
@@ -13,8 +14,6 @@ import pytest
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 
-from h2ml.pipeline.base import TaskType
-from h2ml.pipeline.cv import CVResult, FoldResult
 from h2ml.evaluation.conformal import (
     ConformalCalibration,
     LocalConformalCalibration,
@@ -22,19 +21,20 @@ from h2ml.evaluation.conformal import (
     _encode_times,
     _time_bin,
 )
+from h2ml.features.feature_store import PipelineData
+from h2ml.features.selector import FeatureSelector
+from h2ml.pipeline.base import TaskType
+from h2ml.pipeline.cv import CVResult, FoldResult
 from h2ml.pipeline.final_model import (
     DeltaFinalModel,
     FinalModel,
     _build_conformal_calibration,
     _build_delta_conformal,
+    _delta_oof_residuals,
     build_delta_final_model,
 )
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig, PipelineResult
 from h2ml.pipeline.step import make_classifier
-from h2ml.features.feature_store import PipelineData
-from h2ml.features.selector import FeatureSelector
-from unittest.mock import MagicMock, patch
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -258,6 +258,84 @@ class TestBuildFinalModel:
         preds = final.predict(X_new[:, feature_idx])
         assert preds.shape == (10,)
 
+    def test_raises_on_incomplete_result(self):
+        """An empty/partial result raises a clear ValueError instead of an opaque
+        AssertionError (which also vanishes under python -O)."""
+        with pytest.raises(ValueError, match="step-1 CV result"):
+            PipelineResult().build_final_model()
+
+
+# ---------------------------------------------------------------------------
+# y-transform scale — refit target and interval space
+# ---------------------------------------------------------------------------
+
+
+class TestTransformScale:
+    """The winning y-transform must govern the refit target and interval scale.
+
+    KNeighborsRegressor(weights="distance") reproduces its training targets
+    exactly, so the space the model was fitted in is directly observable from
+    predict() on the training rows.
+    """
+
+    def _result_with_log_transform(self, stage: str) -> tuple[PipelineResult, np.ndarray, np.ndarray]:
+        """Minimal regression result where the "log" transform won the sweep."""
+        rng = np.random.default_rng(3)
+        X = rng.standard_normal((60, 3))
+        y = rng.uniform(0.5, 50.0, size=60)
+        result = PipelineResult(
+            features=PipelineData(X=X, feature_names=["a", "b", "c"], y=y),
+            step1_cv_result=[CVResult(model_name="KNeighborsRegressor", task_type=TaskType.REGRESSION)],
+            best_model_name="KNeighborsRegressor",
+            best_stage=stage,
+            best_feature_stage=stage,
+            y_transform="log",
+        )
+        if stage == "reduced":
+            # The reduced store carries the transformed y (built in step 2 from
+            # the winning transform's store).
+            result.features_reduced = PipelineData(
+                X=X, feature_names=["a", "b", "c"], y=np.log1p(y), y_true=y, y_transform="log"
+            )
+        return result, X, y
+
+    def test_default_stage_refits_on_transformed_y(self):
+        """The 'default' feature stage keeps the raw input store — the refit must
+        re-apply the winning transform, or the deployed model differs from the CV
+        winner and callers invert an already original-scale output."""
+        result, X, y = self._result_with_log_transform("default")
+        final = result.build_final_model()
+        np.testing.assert_allclose(final.predict(X), np.log1p(y), rtol=1e-6)
+
+    def test_reduced_stage_does_not_double_transform(self):
+        """features_reduced already carries transformed y — it must be used as-is."""
+        result, X, y = self._result_with_log_transform("reduced")
+        final = result.build_final_model()
+        np.testing.assert_allclose(final.predict(X), np.log1p(y), rtol=1e-6)
+
+    def test_predict_interval_bounds_in_original_scale(self):
+        """q is calibrated on original-scale OOF residuals, so the bounds must be
+        centred on the inverse-transformed point estimate — not on the
+        transform-space prediction."""
+        from sklearn.neighbors import KNeighborsRegressor
+
+        rng = np.random.default_rng(4)
+        X = rng.standard_normal((40, 3))
+        y = rng.uniform(1.0, 30.0, size=40)
+        est = KNeighborsRegressor(weights="distance").fit(X, np.log1p(y))
+        scores = np.sort(rng.uniform(0.1, 2.0, size=100))
+        fm = FinalModel(
+            estimator=est,
+            feature_names=["a", "b", "c"],
+            task_type=TaskType.REGRESSION,
+            y_transform="log",
+            conformal=ConformalCalibration(scores=scores, n=len(scores), task_type=TaskType.REGRESSION),
+        )
+        lower, upper = fm.predict_interval(X, alpha=0.10)
+        q = fm.conformal.threshold(0.10)
+        np.testing.assert_allclose(lower, y - q, rtol=1e-6, atol=1e-8)
+        np.testing.assert_allclose(upper, y + q, rtol=1e-6, atol=1e-8)
+
 
 # ---------------------------------------------------------------------------
 # ConformalCalibration
@@ -344,6 +422,30 @@ class TestConformalCalibration:
         cal = _build_conformal_calibration(MockResult())
         assert cal is not None
         assert np.all(cal.scores >= 0) and np.all(cal.scores <= 1)
+
+    def test_classification_scores_use_classes_for_pos_label(self):
+        """Binary labels that are not {0, 1} (e.g. {1, 2}) must resolve the
+        positive class from classes_ (regression: y_test == 1 was hardcoded,
+        silently swapping the scores for other encodings)."""
+        fold = FoldResult(
+            fold_id=0,
+            model_name="M",
+            y_train=np.array([1.0, 2.0]),
+            y_test=np.array([2.0, 1.0]),
+            y_pred_train=np.array([1.0, 2.0]),
+            y_pred_test=np.array([2.0, 1.0]),
+            y_prob_train=np.array([0.5, 0.5]),
+            y_prob_test=np.array([0.9, 0.2]),  # P(class 2)
+        )
+        cv = CVResult(model_name="M", task_type=TaskType.CLASSIFICATION, folds=[fold])
+
+        class MockResult:
+            best_cv_result = cv
+
+        cal = _build_conformal_calibration(MockResult(), classes=np.array([1.0, 2.0]))
+        assert cal is not None
+        # y=2 (positive): score = 1 - 0.9 = 0.1; y=1 (negative): score = 0.2
+        assert np.allclose(cal.scores, [0.1, 0.2])
 
     def test_returns_none_when_no_cv_result(self):
         class MockResult:
@@ -432,8 +534,9 @@ class TestPredictSet:
 
 class TestBuildFinalModelConformal:
     def test_conformal_is_set_after_pipeline_run(self):
-        from sklearn.linear_model import LogisticRegression
         from unittest.mock import patch
+
+        from sklearn.linear_model import LogisticRegression
 
         rng = np.random.default_rng(0)
         store = PipelineData(
@@ -459,8 +562,9 @@ class TestBuildFinalModelConformal:
         assert final.conformal.n > 0
 
     def test_conformal_persists_through_save_load(self, tmp_path):
-        from sklearn.linear_model import LogisticRegression
         from unittest.mock import patch
+
+        from sklearn.linear_model import LogisticRegression
 
         rng = np.random.default_rng(1)
         store = PipelineData(
@@ -716,11 +820,35 @@ class TestBuildDeltaConformal:
         y_wrong = y[:50]
         assert _build_delta_conformal(clf_r, reg_r, reg_f, X_wrong, y_wrong, pos) is None
 
+    def test_truncated_regressor_oof_pads_instead_of_crashing(self):
+        """oof_predictions has length max(test_idx)+1, so a failed fold holding
+        the highest positive indices makes it shorter than n_pos (regression:
+        the assignment crashed with a broadcast ValueError). The uncovered
+        positives must be excluded as NaN instead."""
+        clf_r, _, reg_f, X, y, pos = self._setup(n=60)
+        truncated_cv = _make_indexed_cv_result(TaskType.REGRESSION, len(pos) - 5, seed=3)
+        reg_r = MockResult(cv=truncated_cv)
+
+        resid = _delta_oof_residuals(clf_r, reg_r, reg_f, X, y, pos)
+        assert resid is not None
+        assert len(resid) == 60
+        assert np.isnan(resid[pos[-5:]]).all()
+        assert np.isfinite(resid).sum() == 60 - 5
+
+    def test_oversized_regressor_oof_returns_none(self):
+        """A regressor OOF longer than the positive subset means the inputs are
+        inconsistent — skip calibration with a warning rather than mis-align."""
+        clf_r, _, reg_f, X, y, pos = self._setup(n=60)
+        oversized_cv = _make_indexed_cv_result(TaskType.REGRESSION, len(pos) + 5, seed=3)
+        reg_r = MockResult(cv=oversized_cv)
+        assert _delta_oof_residuals(clf_r, reg_r, reg_f, X, y, pos) is None
+
 
 class TestBuildDeltaFinalModel:
     def test_returns_delta_final_model(self):
-        from sklearn.linear_model import LogisticRegression
         from sklearn.ensemble import RandomForestRegressor as RFR
+        from sklearn.linear_model import LogisticRegression
+
         from h2ml.pipeline.step import make_classifier, make_regressor
 
         rng = np.random.default_rng(0)
@@ -884,8 +1012,9 @@ class TestLocalConformalCalibration:
         all_times = np.concatenate([times_0, times_1])
         all_block_idx = np.array([0] * n + [1] * n)
 
-        from h2ml.evaluation.conformal import _build_context
         from sklearn.preprocessing import StandardScaler
+
+        from h2ml.evaluation.conformal import _build_context
 
         ctx = _build_context(all_coords, all_times)
         scaler = StandardScaler().fit(ctx)
@@ -907,6 +1036,50 @@ class TestLocalConformalCalibration:
         q = lc_st.threshold(0.10, coords=coords, times=times)
         assert q.shape == (2,)
         assert q[1] > q[0]
+
+    def test_times_only_query_on_spatiotemporal_calibrator(self):
+        """A calibrator built with coords AND times must answer a times-only query
+        via the temporal subspace (regression: the subspace condition was inverted,
+        crashing with a broadcast error)."""
+        rng = np.random.default_rng(2)
+        n = 20
+        scores_0 = rng.uniform(0.0, 0.2, n)
+        scores_1 = rng.uniform(0.8, 1.5, n)
+        coords_0 = rng.uniform(0.0, 1.0, (n, 2))
+        coords_1 = rng.uniform(9.0, 10.0, (n, 2))
+        times_0 = np.array(["2021-01-15"] * n)
+        times_1 = np.array(["2021-07-15"] * n)
+
+        all_coords = np.vstack([coords_0, coords_1])
+        all_times = np.concatenate([times_0, times_1])
+        all_block_idx = np.array([0] * n + [1] * n)
+
+        from sklearn.preprocessing import StandardScaler
+
+        from h2ml.evaluation.conformal import _build_context
+
+        ctx = _build_context(all_coords, all_times)
+        scaler = StandardScaler().fit(ctx)
+        oof_ctx = scaler.transform(ctx)
+
+        lc_st = LocalConformalCalibration(
+            scores_by_block=[np.sort(scores_0), np.sort(scores_1)],
+            oof_context_scaled=oof_ctx,
+            oof_block_indices=all_block_idx,
+            context_mean=scaler.mean_,
+            context_std=scaler.scale_,
+            fallback_scores=np.sort(np.concatenate([scores_0, scores_1])),
+            metric="euclidean",
+            min_block_n=3,
+            has_coords=True,
+            has_times=True,
+        )
+
+        # Blocks are separated by season, so the temporal subspace alone should
+        # resolve the right block: winter → block 0 (low), summer → block 1 (high).
+        q_winter = lc_st.threshold(0.10, times=np.array(["2021-01-20"]))[0]
+        q_summer = lc_st.threshold(0.10, times=np.array(["2021-07-20"]))[0]
+        assert q_summer > q_winter
 
     def test_predict_interval_uses_local_conformal(self):
         """predict_interval with coords returns varying widths; without coords is scalar."""
@@ -1022,7 +1195,9 @@ def _make_compound_local_conformal(min_block_n: int = 3) -> LocalConformalCalibr
     all_times = np.concatenate([times_win[:n], times_sum[:n], times_win[n:], times_sum[n:]])
 
     from sklearn.preprocessing import StandardScaler
-    from h2ml.evaluation.conformal import _build_context, _time_bin as tb
+
+    from h2ml.evaluation.conformal import _build_context
+    from h2ml.evaluation.conformal import _time_bin as tb
 
     ctx = _build_context(all_coords, all_times)
     scaler = StandardScaler().fit(ctx)
@@ -1030,7 +1205,7 @@ def _make_compound_local_conformal(min_block_n: int = 3) -> LocalConformalCalibr
 
     bins = tb(all_times, "season")
     raw_compound: dict = {}
-    for bi, tbin, score in zip(all_block_idx, bins, all_scores):
+    for bi, tbin, score in zip(all_block_idx, bins, all_scores, strict=True):
         raw_compound.setdefault((int(bi), int(tbin)), []).append(float(score))
     compound = {k: np.sort(np.array(v)) for k, v in raw_compound.items()}
 

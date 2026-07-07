@@ -18,16 +18,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-import matplotlib  # noqa: F401
-# matplotlib.use("Agg")
-
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import scipy.stats as stats
-from sklearn.metrics import roc_curve, auc as sklearn_auc
-
+import seaborn as sns
+from loguru import logger
+from sklearn.metrics import auc as sklearn_auc
+from sklearn.metrics import roc_curve
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -170,6 +168,7 @@ def cv_diagnostics(
 
     Classification (3×2): predicted probability by class, log-loss by class,
     raw residuals vs predicted, residuals histogram, ROC curve, calibration.
+    Binary targets only — multiclass CVResults raise a clear error.
 
     Regression (2×2): observed vs predicted, residuals vs fitted,
     residuals histogram, QQ plot.
@@ -180,7 +179,8 @@ def cv_diagnostics(
         save_path: Path to save figure. If None, shows the plot.
 
     Raises:
-        ValueError: If a list is passed and none of the CVResults have folds.
+        ValueError: If a list is passed and none of the CVResults have folds, or
+            if the classification CVResult holds multiclass probabilities.
     """
     from h2ml.core.base import TaskType
 
@@ -201,6 +201,14 @@ def cv_diagnostics(
 
     if task_type == TaskType.CLASSIFICATION:
         y_prob = np.concatenate([f.y_prob_test for f in all_folds])
+        # The panel's log-loss/residual/ROC/calibration math assumes 1-D
+        # positive-class probabilities with 0/1 labels; a 2-D matrix would crash
+        # deep inside roc_curve with a cryptic message.
+        if y_prob.ndim == 2:
+            raise ValueError(
+                "cv_diagnostics: the classification panel supports binary targets only, "
+                f"but got a multiclass probability matrix with {y_prob.shape[1]} classes."
+            )
         _classification_diagnostics(y_true, y_prob, main_title, save_path)
     else:
         _regression_diagnostics(y_true, y_pred, main_title, save_path)
@@ -315,7 +323,7 @@ def _regression_diagnostics(
     residuals = y_true - y_pred
 
     if np.allclose(residuals, 0):
-        print(f"All residuals are ~0 for '{title}' — skipping diagnostics.")
+        logger.info(f"All residuals are ~0 for '{title}' — skipping diagnostics.")
         return
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
@@ -493,7 +501,7 @@ def shap_dependence(
 
     fig.suptitle(title or "SHAP Dependence Plots", fontsize=12, fontweight="bold")
 
-    for ax, feat in zip(axes_flat, top_features):
+    for ax, feat in zip(axes_flat, top_features, strict=False):
         idx = feat_idx.get(feat)
         if idx is None:
             ax.set_visible(False)
@@ -530,8 +538,8 @@ def _compute_final_shap(result) -> tuple:
     if getattr(result, "_final_shap_cache", None) is not None:
         return result._final_shap_cache
 
-    from h2ml.features.shap_importance import get_shap_values
     from h2ml.core.feature_store import PipelineData
+    from h2ml.features.shap_importance import get_shap_values
     from h2ml.pipeline.final_model import build_final_model
 
     final = build_final_model(result)

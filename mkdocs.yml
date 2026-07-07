@@ -49,6 +49,7 @@ nav:
     - Overview: pipeline.md
     - Spatial CV: spatial_cv.md
   - Guides:
+    - Exploratory Data Analysis: guides/eda.md
     - Y-Transforms: guides/transforms.md
     - Conformal Prediction: guides/conformal.md
     - Geo Prediction: guides/geo_predict.md
@@ -57,6 +58,7 @@ nav:
     - Persistence: guides/persistence.md
   - API Reference:
     - Pipeline: api/pipeline.md
+    - EDA: api/eda.md
     - PipelineData: api/feature_store.md
     - Spatial CV: api/spatial_cv.md
     - Metrics: api/metrics.md

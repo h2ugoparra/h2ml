@@ -20,6 +20,10 @@ from typing import Iterator, Literal, Optional
 
 import numpy as np
 from loguru import logger
+from sklearn.model_selection import KFold, StratifiedKFold
+
+from h2ml.core.base import TaskType
+from h2ml.core.spatial_config import SpatialCVConfig
 
 SpatialMetric = Literal["euclidean", "haversine"]
 LinkageCriterion = Literal["ward", "complete", "average", "single"]
@@ -430,11 +434,12 @@ class SPCVSplitter:
         does not support haversine) and converted to a condensed form via squareform.
         ward linkage falls back to average for haversine, matching the approximate path.
         """
-        from scipy.cluster.hierarchy import linkage as ahc_linkage, fcluster
+        from scipy.cluster.hierarchy import fcluster
+        from scipy.cluster.hierarchy import linkage as ahc_linkage
 
         if self.metric == "haversine":
-            from sklearn.metrics import pairwise_distances
             from scipy.spatial.distance import squareform
+            from sklearn.metrics import pairwise_distances
 
             coords_rad = np.deg2rad(self.coords)
             D = pairwise_distances(coords_rad, metric="haversine")
@@ -567,14 +572,18 @@ class SPCVSplitter:
         rs = self.random_state
 
         # --- per-block representative values ---
-        block_coords = np.zeros((n_blocks, 2))
-        block_X = np.zeros((n_blocks, self.X.shape[1]))
-        block_y = np.zeros((n_blocks, 1))
-        for b in range(n_blocks):
-            mask = block_labels == b
-            block_coords[b] = self.coords[mask].mean(axis=0)
-            block_X[b] = self.X[mask].mean(axis=0)
-            block_y[b, 0] = self.y[mask].mean()
+        # Per-block means via bincount-with-weights: it accumulates each block's
+        # samples in ascending index order, identical to arr[mask].mean(), but in a
+        # single C pass instead of one boolean-mask reduction per block. block_labels
+        # is compacted (contiguous 0..n_blocks-1) upstream, so every block count ≥ 1.
+        counts = np.bincount(block_labels, minlength=n_blocks)
+
+        def _block_mean(col: np.ndarray) -> np.ndarray:
+            return np.bincount(block_labels, weights=col, minlength=n_blocks) / counts
+
+        block_coords = np.column_stack([_block_mean(self.coords[:, j]) for j in range(2)])
+        block_X = np.column_stack([_block_mean(self.X[:, j]) for j in range(self.X.shape[1])])
+        block_y = _block_mean(self.y)[:, None]
 
         # --- PCA on block covariates to remove redundancy before clustering ---
         from sklearn.decomposition import PCA
@@ -582,8 +591,11 @@ class SPCVSplitter:
 
         if block_X.shape[1] > 1:
             block_X_scaled = StandardScaler().fit_transform(block_X)
-            n_components = min(self.pca_components, block_X.shape[0], block_X.shape[1])
-            block_X_proj = PCA(n_components=n_components, random_state=rs).fit_transform(block_X_scaled)
+            # pca_components is a variance fraction in (0, 1); PCA picks the number of
+            # components needed to retain it, bounded internally by min(n_blocks,
+            # n_features). (The previous min() against the integer dims was a no-op — a
+            # fraction < 1 always wins.)
+            block_X_proj = PCA(n_components=self.pca_components, random_state=rs).fit_transform(block_X_scaled)
             logger.debug(
                 f"SPCVSplitter stage 2: PCA reduced {block_X.shape[1]} covariates → "
                 f"{block_X_proj.shape[1]} components ({self.pca_components} variance threshold)."
@@ -627,3 +639,72 @@ class SPCVSplitter:
         ).fit_predict(S)
 
         return fold_per_block[block_labels].astype(np.int32)
+
+
+# ---------------------------------------------------------------------------
+# Splitter factory — shared by the CV engine and the optimizer
+# ---------------------------------------------------------------------------
+
+
+def build_splitter(
+    task_type: TaskType | str,
+    n_splits: int,
+    random_state: int,
+    shuffle: bool = True,
+    coords: Optional[np.ndarray] = None,
+    X: Optional[np.ndarray] = None,
+    y: Optional[np.ndarray] = None,
+    spatial: Optional[SpatialCVConfig] = None,
+):
+    """
+    Build the CV splitter: spatial when coords are provided, otherwise
+    stratified/standard KFold.
+
+    Single construction point shared by CrossValidator and the Optuna
+    objective, so splitter selection and parameter forwarding cannot drift
+    between the two.
+
+    Args:
+        task_type:    TaskType or its string value; selects StratifiedKFold
+                      (classification) vs KFold (regression) in the non-spatial case.
+        n_splits:     Number of CV folds.
+        random_state: Seed for fold shuffling / block assignment.
+        shuffle:      Shuffle before splitting in the non-spatial case.
+        coords:       (n_samples, 2) coordinates. When None, a random
+                      (non-spatial) splitter is returned.
+        X, y:         Required by SPCVSplitter (passed through for AHC).
+        spatial:      Spatial-CV parameters (method, metric, AHC/PCA knobs).
+                      Defaults to SpatialCVConfig() when None — note this uses
+                      the engine-level "block" method, not PipelineConfig's
+                      "spcv" default.
+
+    Returns:
+        A scikit-learn-compatible splitter exposing split() and get_n_splits().
+    """
+    spatial = spatial or SpatialCVConfig()
+    if coords is not None:
+        if spatial.spatial_cv_method == "spcv":
+            assert X is not None and y is not None, "SPCVSplitter requires X and y."
+            return SPCVSplitter(
+                coords=coords,
+                X=X,
+                y=y,
+                n_splits=n_splits,
+                threshold=spatial.ahc_threshold,
+                random_state=random_state,
+                metric=spatial.spatial_cv_metric,
+                pca_components=spatial.pca_components,
+                exact_max_samples=spatial.exact_max_samples,
+                knn_neighbors=spatial.knn_neighbors,
+            )
+        return SpatialBlockSplitter(
+            coords=coords,
+            n_splits=n_splits,
+            n_blocks_per_fold=spatial.n_blocks_per_fold,
+            random_state=random_state,
+            metric=spatial.spatial_cv_metric,
+        )
+    kwargs = dict(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
+    if TaskType(task_type) == TaskType.CLASSIFICATION:
+        return StratifiedKFold(**kwargs)
+    return KFold(**kwargs)

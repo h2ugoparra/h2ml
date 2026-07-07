@@ -27,7 +27,6 @@ import numpy as np
 from scipy.optimize import curve_fit
 from scipy.spatial.distance import cdist
 
-
 # ---------------------------------------------------------------------------
 # Variogram model
 # ---------------------------------------------------------------------------
@@ -87,6 +86,8 @@ def autocorrelation_range(
     values: np.ndarray,
     n_lags: int = 15,
     max_dist: Optional[float] = None,
+    max_points: int = 3_000,
+    random_state: int = 42,
 ) -> VariogramResult:
     """
     Estimate the spatial autocorrelation range from an empirical variogram.
@@ -100,6 +101,11 @@ def autocorrelation_range(
         max_dist:  Maximum lag distance to consider. Defaults to half the maximum
                    pairwise distance (standard geostatistics convention — the
                    variogram is unreliable beyond this point).
+        max_points: Cap on the number of points used. The pairwise distance matrix
+                   is O(n²) in memory, so for larger inputs a random subsample of
+                   this size is drawn (the range estimate is stable under
+                   subsampling). Default 3 000 (~72 MB matrix).
+        random_state: Seed for the subsample draw (used only when n > max_points).
 
     Returns:
         VariogramResult with fitted parameters and practical_range.
@@ -109,6 +115,13 @@ def autocorrelation_range(
     """
     coords = np.asarray(coords, dtype=float)
     values = np.asarray(values, dtype=float)
+
+    # Subsample before the O(n²) distance matrix to bound memory on large inputs.
+    if coords.shape[0] > max_points:
+        rng = np.random.default_rng(random_state)
+        sel = rng.choice(coords.shape[0], size=max_points, replace=False)
+        coords = coords[sel]
+        values = values[sel]
 
     dists = cdist(coords, coords)  # (n, n) pairwise distances
     upper = np.triu_indices_from(dists, k=1)

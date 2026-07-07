@@ -29,7 +29,6 @@ import pytest
 
 from h2ml.features.correlation import remove_correlated_features
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

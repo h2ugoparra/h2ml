@@ -13,19 +13,18 @@ import numpy as np
 import optuna
 import pytest
 
+from h2ml.core.spatial_config import SpatialCVConfig
+from h2ml.optimization.opt_params import ModelEntry
 from h2ml.optimization.optimizer import (
+    CLF_METRICS,
+    REG_METRICS,
     _build_objective,
     _score_auc,
     _score_r2,
     _score_rmse,
-    CLF_METRICS,
-    REG_METRICS,
     optimize_all,
     run_study,
 )
-from h2ml.optimization.opt_params import ModelEntry
-from h2ml.core.spatial_config import SpatialCVConfig
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -649,6 +648,51 @@ class TestOptimizeAll:
 # ---------------------------------------------------------------------------
 
 
+class TestScoreF1:
+    """_score_f1 decides binary vs weighted from the full class set, not the
+    test fold alone (regression: a multiclass spatial fold whose test set held
+    2 of 3 classes selected average='binary' and crashed on pos_label=1)."""
+
+    def _fit_args(self, classes_train, y_test):
+        rng = np.random.default_rng(0)
+        y_train = np.array(classes_train * 10)
+        X_train = rng.standard_normal((len(y_train), 3))
+        X_test = rng.standard_normal((len(y_test), 3))
+        return X_train, X_test, y_train, np.array(y_test)
+
+    def test_multiclass_fold_with_two_test_classes(self):
+        from sklearn.ensemble import RandomForestClassifier
+
+        from h2ml.optimization.optimizer import _score_f1
+
+        X_train, X_test, y_train, y_test = self._fit_args([0, 1, 2], [0, 2, 0, 2])
+        model = RandomForestClassifier(n_estimators=5, random_state=0)
+        score = _score_f1(model, X_train, X_test, y_train, y_test)
+        assert 0.0 <= score <= 1.0
+
+    def test_binary_labels_not_zero_one(self):
+        from sklearn.ensemble import RandomForestClassifier
+
+        from h2ml.optimization.optimizer import _score_f1
+
+        X_train, X_test, y_train, y_test = self._fit_args([0, 2], [0, 2, 0, 2])
+        model = RandomForestClassifier(n_estimators=5, random_state=0)
+        score = _score_f1(model, X_train, X_test, y_train, y_test)
+        assert 0.0 <= score <= 1.0
+
+    def test_standard_binary_matches_sklearn(self):
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.metrics import f1_score
+
+        from h2ml.optimization.optimizer import _score_f1
+
+        X_train, X_test, y_train, y_test = self._fit_args([0, 1], [0, 1, 0, 1])
+        model = RandomForestClassifier(n_estimators=5, random_state=0)
+        score = _score_f1(model, X_train, X_test, y_train, y_test)
+        expected = f1_score(y_test, model.predict(X_test), average="binary", pos_label=1, zero_division=0)
+        assert score == pytest.approx(float(expected))
+
+
 class TestMetricSelection:
     def test_clf_metrics_registry_contains_expected_keys(self):
         assert set(CLF_METRICS) == {"AUC", "AUC_PR", "LogLoss", "F1", "Brier"}
@@ -887,26 +931,20 @@ class TestSpatialCV:
             )
 
     def test_random_splitter_used_when_no_coords(self, small_clf_data):
-        """When coords=None, _SPLITTER[task] is used instead of SpatialBlockSplitter."""
-        from unittest.mock import patch, MagicMock
-        import h2ml.optimization.optimizer as opt_module
+        """When coords=None, StratifiedKFold is used instead of SpatialBlockSplitter."""
+        from unittest.mock import patch
 
         X, y = small_clf_data
-        mock_cls = MagicMock()
         n_splits = 2
         indices = np.arange(self.N)
         half = self.N // 2
-        mock_cls.return_value.split.return_value = iter(
-            [
-                (indices[:half], indices[half:]),
-                (indices[half:], indices[:half]),
-            ]
-        )
-        patched_splitter = {
-            "classification": mock_cls,
-            "regression": opt_module._SPLITTER["regression"],
-        }
-        with patch.object(opt_module, "_SPLITTER", patched_splitter):
+        with patch("h2ml.features.spatial_cv.StratifiedKFold") as mock_cls:
+            mock_cls.return_value.split.return_value = iter(
+                [
+                    (indices[:half], indices[half:]),
+                    (indices[half:], indices[:half]),
+                ]
+            )
             _build_objective(
                 _fast_clf_entry(),
                 X,

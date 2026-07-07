@@ -15,7 +15,6 @@ import numpy as np
 
 from h2ml.core.base import TaskType
 
-
 # ---------------------------------------------------------------------------
 # FoldResult — raw output of a single fold
 # ---------------------------------------------------------------------------
@@ -66,9 +65,13 @@ class FoldResult:
     fit_time: float = 0.0
 
     @property
-    def task_type(self) -> str:
-        """Inferred from whether probabilities are present."""
-        return "classification" if self.y_prob_test is not None else "regression"
+    def task_type(self) -> TaskType:
+        """Inferred from whether probabilities are present.
+
+        Returns a TaskType member, matching CVResult.task_type; string
+        comparisons keep working because TaskType is a str enum.
+        """
+        return TaskType.CLASSIFICATION if self.y_prob_test is not None else TaskType.REGRESSION
 
 
 # ---------------------------------------------------------------------------

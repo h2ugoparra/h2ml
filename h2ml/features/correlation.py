@@ -20,11 +20,10 @@ What this module does NOT do:
 
 from __future__ import annotations
 
-from loguru import logger
 from typing import Literal, Optional, cast
 
 import pandas as pd
-
+from loguru import logger
 
 CorrelationMethod = Literal["pearson", "spearman", "kendall"]
 
@@ -67,8 +66,26 @@ def remove_correlated_features(
     if not 0 < corr_threshold <= 1:
         raise ValueError(f"corr_threshold must be in (0, 1], got {corr_threshold}")
 
-    # Pre-compute all correlation matrices
-    corr_matrices: dict[str, pd.DataFrame] = {method: X.corr(method=method) for method in methods}
+    # Pearson/Spearman are cheap matrix ops, so precompute them in full. Kendall's
+    # full matrix is O(p² n²) and dominates everything else, so compute it lazily
+    # per pair (O(n log n) via scipy) — only for pairs that survive the cheaper
+    # screens and are actually reached, with results cached.
+    eager_methods: list[CorrelationMethod] = [m for m in methods if m != "kendall"]
+    corr_matrices: dict[str, pd.DataFrame] = {method: X.corr(method=method) for method in eager_methods}
+    use_kendall = "kendall" in methods
+
+    kendall_cache: dict[tuple, float] = {}
+
+    def _kendall_abs(a, b) -> float:
+        key = (a, b) if a <= b else (b, a)
+        val = kendall_cache.get(key)
+        if val is None:
+            from scipy.stats import kendalltau
+
+            tau = kendalltau(X[a].to_numpy(), X[b].to_numpy())[0]
+            val = abs(cast(float, tau))
+            kendall_cache[key] = val
+        return val
 
     selected_features: list[str] = []
     removed_features: set[str] = set()
@@ -86,10 +103,14 @@ def remove_correlated_features(
             if other == feature or other in removed_features:
                 continue
 
-            # Remove if correlation exceeds threshold in any method
+            # Remove if correlation exceeds threshold in any method. Cheap methods
+            # are screened first; Kendall is only computed when they don't already
+            # flag the pair.
             correlated = any(
-                abs(cast(float, corr_matrices[method].loc[feature, other])) > corr_threshold for method in methods
+                abs(cast(float, corr_matrices[method].loc[feature, other])) > corr_threshold for method in eager_methods
             )
+            if not correlated and use_kendall:
+                correlated = _kendall_abs(feature, other) > corr_threshold
 
             if correlated:
                 removed_features.add(other)

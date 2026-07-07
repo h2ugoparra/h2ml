@@ -9,7 +9,6 @@ Each entry encodes everything needed to build, scale, and optimize a model:
     - requires_scaling: Whether StandardScaler must be applied before fitting.
     - param_fn:         Optuna trial function → hyperparameter dict (None = disabled).
     - opt_enabled:      Set False to exclude from optimization even if param_fn exists.
-    - single_njob:      Force n_jobs=1 in Optuna to avoid SQLite concurrency issues.
 
 CLASSIFIER_REGISTRY and REGRESSOR_REGISTRY are the single source of truth consumed
 by both the pipeline (build_steps) and the optimizer (get_entry via opt_params.py).
@@ -21,28 +20,27 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from sklearn.ensemble import (
-    RandomForestClassifier,
-    GradientBoostingClassifier,
     AdaBoostClassifier,
-    ExtraTreesClassifier,
-    BaggingClassifier,
-    HistGradientBoostingClassifier,
-    RandomForestRegressor,
-    GradientBoostingRegressor,
-    HistGradientBoostingRegressor,
-    ExtraTreesRegressor,
     AdaBoostRegressor,
+    BaggingClassifier,
     BaggingRegressor,
+    ExtraTreesClassifier,
+    ExtraTreesRegressor,
+    GradientBoostingClassifier,
+    GradientBoostingRegressor,
+    HistGradientBoostingClassifier,
+    HistGradientBoostingRegressor,
+    RandomForestClassifier,
+    RandomForestRegressor,
 )
-from sklearn.svm import SVR, SVC
 from sklearn.linear_model import LogisticRegression, PoissonRegressor
-from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
+from sklearn.svm import SVC, SVR
 
-from h2ml.core.step import ModelWrapper
 from h2ml.core.param_spaces import classifiers as cp
 from h2ml.core.param_spaces import regressors as rp
-
+from h2ml.core.step import ModelWrapper
 
 # ---------------------------------------------------------------------------
 # ModelEntry
@@ -61,7 +59,6 @@ class ModelEntry:
         param_fn:         Optuna trial function returning a hyperparameter dict.
                           None means optimization is disabled for this model.
         opt_enabled:      Set False to exclude from optimization even if param_fn exists.
-        single_njob:      Force n_jobs=1 in Optuna to avoid SQLite concurrency issues.
         supports_class_weight: Whether the estimator accepts class_weight="balanced".
                           When True, PipelineConfig.handle_imbalance can inject it.
     """
@@ -71,7 +68,6 @@ class ModelEntry:
     requires_scaling: bool = False
     param_fn: Optional[Callable] = None
     opt_enabled: bool = True
-    single_njob: bool = False
     supports_class_weight: bool = False
 
     def __post_init__(self) -> None:
@@ -216,7 +212,6 @@ REGRESSOR_REGISTRY: dict[str, ModelEntry] = {
         RandomForestRegressor,
         default_kwargs={"random_state": 42},
         param_fn=rp.randomforest_r_params,
-        single_njob=True,
     ),
     "GradientBoostingRegressor": ModelEntry(
         GradientBoostingRegressor,
@@ -227,7 +222,6 @@ REGRESSOR_REGISTRY: dict[str, ModelEntry] = {
         HistGradientBoostingRegressor,
         default_kwargs={"random_state": 42},
         param_fn=rp.histgradientboosting_r_params,
-        single_njob=True,
     ),
     "SVR": ModelEntry(
         SVR,
@@ -238,7 +232,6 @@ REGRESSOR_REGISTRY: dict[str, ModelEntry] = {
         ExtraTreesRegressor,
         default_kwargs={"random_state": 42},
         param_fn=rp.extratrees_r_params,
-        single_njob=True,
     ),
     "BaggingRegressor": ModelEntry(
         BaggingRegressor,

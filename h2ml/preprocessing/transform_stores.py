@@ -1,6 +1,9 @@
 from __future__ import annotations
+
 from typing import Optional
+
 import numpy as np
+
 from h2ml.core.feature_store import PipelineData
 from h2ml.preprocessing.transforms import Y_TRANSFORMS
 
@@ -11,6 +14,7 @@ def build_transform_stores(
     feature_names: list[str],
     transforms: Optional[list[str]] = None,
     coords: Optional[np.ndarray] = None,
+    times: Optional[np.ndarray] = None,
 ) -> dict[str, PipelineData]:
     """
     Build one PipelineData per y transformation.
@@ -24,6 +28,8 @@ def build_transform_stores(
                        Defaults to all registered transforms.
         coords:        Optional (n_samples, 2) coordinates copied into every store
                        to enable spatial CV.
+        times:         Optional (n_samples,) sample dates copied into every store
+                       to enable temporally-aware (compound) conformal calibration.
 
     Returns:
         Dict mapping transform name → PipelineData.
@@ -50,6 +56,7 @@ def build_transform_stores(
             y_true=y,
             y_transform=name,
             coords=coords,
+            times=times,
         )
 
     return stores

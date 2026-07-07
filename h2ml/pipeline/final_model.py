@@ -31,7 +31,6 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
 from h2ml.core.base import TaskType
-from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS
 
 # Calibration types live in evaluation/conformal.py. They are imported here both for use
 # by the factory helpers below and so that joblib pickles written before the move — which
@@ -42,6 +41,7 @@ from h2ml.evaluation.conformal import (
     _build_context,
     _time_bin,
 )
+from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS, Y_TRANSFORMS
 
 
 @dataclass
@@ -61,8 +61,9 @@ class FinalModel:
                           powers predict_interval / predict_set. None when no calibration
                           was available (e.g. partial pipeline run).
         y_transform:      Name of the y-transform applied during training (e.g. "log"),
-                          or None. Predictions/intervals are in the transformed space;
-                          the caller inverts them. See preprocessing/transforms.py.
+                          or None. predict() returns the transformed space and the
+                          caller inverts it; predict_interval() bounds are already in
+                          the original scale. See preprocessing/transforms.py.
         local_conformal:  Space-time block-local conformal calibrator. Used instead of
                           `conformal` when coords/times are passed to predict_interval/
                           predict_set, giving per-sample thresholds. None unless the run
@@ -148,8 +149,10 @@ class FinalModel:
         spatial block's residual distribution, giving wider intervals in
         high-error regions and narrower ones where the model is well calibrated.
 
-        Note: if the pipeline used a y-transform, the interval is in the
-        transformed space. Apply the inverse transform to the bounds if needed.
+        Note: bounds are always in the original y scale. q is calibrated on
+        original-scale OOF residuals, so when the pipeline used a y-transform the
+        point estimate is inverted internally before the interval is applied —
+        do not apply the inverse transform to the returned bounds.
 
         Args:
             X:      Input features (DataFrame or ndarray).
@@ -174,6 +177,13 @@ class FinalModel:
                 "Rebuild FinalModel via result.build_final_model() after a full pipeline run."
             )
         y_hat = self.predict(X)
+        # q is calibrated on original-scale OOF residuals (CV inverse-transforms
+        # predictions before storing them), so the interval must be applied in the
+        # original scale — invert the point estimate first when a transform is set.
+        if self.y_transform is not None:
+            inverse_fn = INVERSE_TRANSFORMS.get(self.y_transform)
+            if inverse_fn is not None:
+                y_hat = inverse_fn(y_hat)
         if (coords is not None or times is not None) and self.local_conformal is not None:
             q = self.local_conformal.threshold(alpha, coords=coords, times=times)
         else:
@@ -234,7 +244,7 @@ class FinalModel:
 
         sets = []
         if p.ndim == 1:
-            for pi, q in zip(p, q_arr):
+            for pi, q in zip(p, q_arr, strict=True):
                 labels = []
                 if pi <= q:
                     labels.append(classes[0])
@@ -242,7 +252,7 @@ class FinalModel:
                     labels.append(classes[1])
                 sets.append(np.array(labels))
         else:
-            for row, q in zip(p, q_arr):
+            for row, q in zip(p, q_arr, strict=True):
                 labels = [classes[k] for k in range(len(classes)) if 1 - row[k] <= q]
                 sets.append(np.array(labels))
         return sets
@@ -342,7 +352,11 @@ def _classification_scores(f: Any, classes: Optional[Any]) -> Optional[np.ndarra
     from loguru import logger
 
     if f.y_prob_test.ndim == 1:
-        return np.where(f.y_test == 1, 1.0 - f.y_prob_test, f.y_prob_test)
+        # y_prob_test holds P(classes[1]) — cv.py stores proba[:, 1]. Resolve the
+        # positive label from classes_ so non-{0,1} binary encodings (e.g. {1, 2})
+        # score correctly; fall back to 1 when classes are unavailable.
+        pos_label = classes[1] if classes is not None and len(classes) == 2 else 1
+        return np.where(f.y_test == pos_label, 1.0 - f.y_prob_test, f.y_prob_test)
 
     if classes is None:
         logger.warning(
@@ -368,6 +382,7 @@ def _build_local_conformal(
     min_compound_n: int = 5,
     classes: Optional[Any] = None,
     time_bin_resolution: str = "month",
+    oof_scores: Optional[np.ndarray] = None,
 ) -> Optional[LocalConformalCalibration]:
     """
     Build a LocalConformalCalibration from OOF residuals.
@@ -375,6 +390,12 @@ def _build_local_conformal(
     Residuals are partitioned by spatial block (from splitter.block_id_) and,
     when times are provided, additionally by time bin to form compound
     (block × time_bin) cells.
+
+    By default, per-sample nonconformity scores are derived from
+    result.best_cv_result (absolute residuals for regression, 1 - p(true) for
+    classification). Pass oof_scores to override with externally computed,
+    sample-indexed scores — e.g. the combined delta residuals from
+    _delta_oof_residuals — so the local calibrator matches the global one's scale.
 
     Requires result.splitter to have a block_id_ attribute — set by both
     SpatialBlockSplitter and SPCVSplitter. Returns None when the splitter is
@@ -412,22 +433,34 @@ def _build_local_conformal(
     block_id_all: np.ndarray = splitter.block_id_
     task_type = cv.task_type
 
-    sample_scores: dict[int, float] = {}
-    for f in cv.folds:
-        if task_type == TaskType.REGRESSION:
-            fold_scores: Optional[np.ndarray] = np.abs(f.y_test - f.y_pred_test)
-        else:
-            fold_scores = _classification_scores(f, classes)
-            if fold_scores is None:
-                return None
-        for idx, score in zip(f.test_idx, fold_scores):
-            sample_scores[int(idx)] = float(score)
+    if oof_scores is not None:
+        # Caller-supplied, sample-indexed nonconformity scores (e.g. combined delta
+        # residuals). Finite entries define the OOF set; NaNs mark uncovered samples.
+        oof_scores = np.asarray(oof_scores, dtype=float)
+        indices = np.where(np.isfinite(oof_scores))[0]
+        if indices.size == 0:
+            return None
+        scores_arr = oof_scores[indices]
+    else:
+        # OOF test folds are disjoint, so concatenating their (index, score) arrays in
+        # fold order reproduces the previous dict's insertion-ordered keys/values
+        # without the per-sample Python loop.
+        idx_parts: list[np.ndarray] = []
+        score_parts: list[np.ndarray] = []
+        for f in cv.folds:
+            if task_type == TaskType.REGRESSION:
+                fold_scores: Optional[np.ndarray] = np.abs(f.y_test - f.y_pred_test)
+            else:
+                fold_scores = _classification_scores(f, classes)
+                if fold_scores is None:
+                    return None
+            idx_parts.append(np.asarray(f.test_idx, dtype=int))
+            score_parts.append(np.asarray(fold_scores, dtype=float))
 
-    if not sample_scores:
-        return None
-
-    indices = np.array(list(sample_scores.keys()))
-    scores_arr = np.array([sample_scores[i] for i in indices])
+        indices = np.concatenate(idx_parts) if idx_parts else np.array([], dtype=int)
+        if indices.size == 0:
+            return None
+        scores_arr = np.concatenate(score_parts)
     block_ids = block_id_all[indices]
 
     unique_blocks = np.unique(block_ids)
@@ -465,7 +498,7 @@ def _build_local_conformal(
     if oof_times is not None:
         bins = _time_bin(oof_times, time_bin_resolution)
         raw_compound: dict = {}
-        for bi, tb, score in zip(oof_block_indices, bins, scores_arr):
+        for bi, tb, score in zip(oof_block_indices, bins, scores_arr, strict=True):
             raw_compound.setdefault((int(bi), int(tb)), []).append(float(score))
         compound = {k: np.sort(v) for k, v in raw_compound.items()}
         _resolution = time_bin_resolution
@@ -503,19 +536,28 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
         FinalModel instance.
 
     Raises:
-        ValueError: If best_model_name is no longer present in the registry
-            (e.g. the model was removed after the pipeline ran).
+        ValueError: If the result is incomplete (no step-1 CV result, no
+            best_model_name, or the chosen feature store is missing), or if
+            best_model_name is no longer present in the registry (e.g. the model
+            was removed after the pipeline ran).
     """
     from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
 
-    assert result.step1_cv_result is not None
+    # Explicit precondition checks (not asserts) — build_final_model is public via
+    # result.build_final_model(), so a partial result must fail with a clear message
+    # rather than an opaque error (and asserts vanish under python -O).
+    if result.step1_cv_result is None:
+        raise ValueError("Cannot build final model: result has no step-1 CV result. Run the pipeline first.")
+    if result.best_model_name is None:
+        raise ValueError("Cannot build final model: result.best_model_name is not set. Run the pipeline first.")
     task_type = result.step1_cv_result[0].task_type
 
     feature_stage = result.best_feature_stage or result.best_stage
     store = result.features_reduced if feature_stage == "reduced" else result.features
+    if store is None:
+        raise ValueError(f"Cannot build final model: the '{feature_stage}' feature store is missing from the result.")
 
     registry = CLASSIFIER_REGISTRY if task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
-    assert result.best_model_name is not None
     entry = registry.get(result.best_model_name)
     if entry is None:
         raise ValueError(
@@ -528,14 +570,26 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     else:
         estimator = entry.model_cls(**entry.default_kwargs)
 
-    assert store is not None
     X = store.X
     scaler = None
     if entry.requires_scaling:
         scaler = StandardScaler()
         X = scaler.fit_transform(X)
 
-    estimator.fit(X, store.y)
+    # The refit target must be in the same y-space the winning model was validated
+    # in. The "default" feature stage keeps the raw input store, so when a
+    # y-transform won the sweep the transform is re-applied here — otherwise the
+    # deployed model would differ from the CV winner and callers that invert
+    # predictions (DeltaFinalModel, geo_predict) would invert an already
+    # original-scale output.
+    y_fit = store.y
+    if result.y_transform and store.y_transform is None:
+        transformed = Y_TRANSFORMS[result.y_transform](store.y)
+        # win* transforms return None when y has no outliers — identity in that case
+        if transformed is not None:
+            y_fit = transformed
+
+    estimator.fit(X, y_fit)
 
     classes = getattr(estimator, "classes_", None)
 
@@ -563,8 +617,10 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
                         store.coords[valid],
                         np.abs(oof_preds[valid] - oof_labels[valid]),
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    from loguru import logger
+
+                    logger.debug(f"Variogram fit skipped (diagnostic only): {e}")
 
     return FinalModel(
         estimator=estimator,
@@ -586,16 +642,22 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
 # ---------------------------------------------------------------------------
 
 
-def _build_delta_conformal(
+def _delta_oof_residuals(
     clf_result: "PipelineResult",
     reg_result: "PipelineResult",
     reg_final: FinalModel,
     X_full: "pd.DataFrame | np.ndarray",
     y_full: np.ndarray,
     positive_indices: np.ndarray,
-) -> Optional[ConformalCalibration]:
+) -> Optional[np.ndarray]:
     """
-    Build a ConformalCalibration for the combined delta output using OOF predictions.
+    Sample-indexed combined delta OOF residuals: |y_full - (P_oof × count_hat)|.
+
+    The returned array has length len(y_full) and is indexed by original sample
+    position, with NaN where a residual is unavailable (e.g. a failed CV fold). It is
+    the shared basis for both the global (ConformalCalibration) and the space-time
+    local (LocalConformalCalibration) delta calibrators, so both are calibrated on the
+    same count-scale residuals.
 
     P_oof (all N samples) comes from clf_result.best_cv_result.
     count_oof_pos (positive samples, already inverse-transformed by CV) comes from
@@ -604,8 +666,6 @@ def _build_delta_conformal(
 
     Pass X_full as a DataFrame (with all feature column names) when the clf and reg
     were trained on different feature sets — reg_final.predict selects its own columns.
-
-    Nonconformity score: |y_full - (P_oof × count_hat)|
 
     Args:
         clf_result:       Fitted classifier PipelineResult (supplies P_oof).
@@ -618,8 +678,8 @@ def _build_delta_conformal(
         positive_indices: Indices of presence (count > 0) samples within X_full.
 
     Returns:
-        ConformalCalibration over the combined delta output, or None when the
-        required OOF predictions are unavailable (a warning is logged).
+        (N,) float residual array (NaN where unavailable), or None when the required
+        OOF predictions are unavailable (a warning is logged).
     """
     from loguru import logger
 
@@ -653,6 +713,21 @@ def _build_delta_conformal(
         logger.warning("Delta conformal calibration skipped: regressor OOF predictions unavailable.")
         return None
 
+    # count_oof_pos is indexed by position within the positive subset, but its
+    # length is max(test_idx)+1 — shorter than n_pos when a failed CV fold held
+    # the highest indices. Pad with NaN so those samples are excluded from the
+    # residuals (warned about below) instead of crashing the assignment.
+    n_pos = len(positive_indices)
+    if len(count_oof_pos) > n_pos:
+        logger.warning(
+            f"Delta conformal calibration skipped: regressor OOF length {len(count_oof_pos)} "
+            f"exceeds the {n_pos} positive samples. Pass the same positive_indices the "
+            "regressor was trained on."
+        )
+        return None
+    if len(count_oof_pos) < n_pos:
+        count_oof_pos = np.concatenate([count_oof_pos, np.full(n_pos - len(count_oof_pos), np.nan)])
+
     count_hat_full = np.full(n_full, np.nan)
     count_hat_full[positive_indices] = count_oof_pos
 
@@ -672,16 +747,41 @@ def _build_delta_conformal(
         count_hat_full[zero_indices] = zero_preds
 
     delta_oof = P_oof * count_hat_full
-    valid = np.isfinite(delta_oof)
-    n_excluded = int((~valid).sum())
+    delta_resid = np.abs(y_full - delta_oof)
+    n_excluded = int((~np.isfinite(delta_resid)).sum())
     if n_excluded:
         logger.warning(
             f"Delta conformal calibration: {n_excluded} samples excluded due to NaN (likely from failed CV folds)."
         )
+    return delta_resid
 
-    scores = np.abs(y_full[valid] - delta_oof[valid])
+
+def _build_delta_conformal(
+    clf_result: "PipelineResult",
+    reg_result: "PipelineResult",
+    reg_final: FinalModel,
+    X_full: "pd.DataFrame | np.ndarray",
+    y_full: np.ndarray,
+    positive_indices: np.ndarray,
+) -> Optional[ConformalCalibration]:
+    """
+    Build a global ConformalCalibration for the combined delta output using OOF predictions.
+
+    Nonconformity score: |y_full - (P_oof × count_hat)|, computed by
+    _delta_oof_residuals. Returns None when the required OOF predictions are
+    unavailable (a warning is logged) or when no finite residual remains.
+
+    Pass X_full as a DataFrame (with all feature column names) when the clf and reg
+    were trained on different feature sets — reg_final.predict selects its own columns.
+    """
+    delta_resid = _delta_oof_residuals(clf_result, reg_result, reg_final, X_full, y_full, positive_indices)
+    if delta_resid is None:
+        return None
+    valid = np.isfinite(delta_resid)
+    if not valid.any():
+        return None
     return ConformalCalibration(
-        scores=np.sort(scores),
+        scores=np.sort(delta_resid[valid]),
         n=int(valid.sum()),
         task_type=TaskType.REGRESSION,
     )
@@ -880,14 +980,29 @@ def build_delta_final_model(
     """
     clf_final = build_final_model(clf_result)
     reg_final = build_final_model(reg_result)
-    conformal = _build_delta_conformal(clf_result, reg_result, reg_final, X_full, y_full, positive_indices)
 
-    # Local conformal: use clf_result's splitter (covers all N samples) and
-    # build from the combined delta OOF residuals via the clf store's coords/times.
+    # Combined delta OOF residuals (count scale), sample-indexed with NaN where
+    # unavailable. Shared by the global and local calibrators so both are calibrated
+    # on the same residuals — the local one must NOT fall back to the classifier's
+    # probability-scale scores, which would miscalibrate count-scale intervals.
+    delta_resid = _delta_oof_residuals(clf_result, reg_result, reg_final, X_full, y_full, positive_indices)
+
+    conformal: Optional[ConformalCalibration] = None
+    if delta_resid is not None:
+        valid = np.isfinite(delta_resid)
+        if valid.any():
+            conformal = ConformalCalibration(
+                scores=np.sort(delta_resid[valid]),
+                n=int(valid.sum()),
+                task_type=TaskType.REGRESSION,
+            )
+
+    # Local conformal: use clf_result's splitter (covers all N samples) and the same
+    # delta residuals, partitioned by the clf store's spatial blocks / time bins.
     local_conformal: Optional[LocalConformalCalibration] = None
     _clf_stage = clf_result.best_feature_stage or clf_result.best_stage
     clf_store = clf_result.features_reduced if _clf_stage == "reduced" else clf_result.features
-    if clf_store is not None and clf_result.splitter is not None:
+    if delta_resid is not None and clf_store is not None and clf_result.splitter is not None:
         if clf_store.coords is not None or clf_store.times is not None:
             local_conformal = _build_local_conformal(
                 clf_result,
@@ -895,6 +1010,7 @@ def build_delta_final_model(
                 times=clf_store.times,
                 metric=clf_result.spatial_cv_metric,
                 time_bin_resolution=clf_result.time_bin_resolution,
+                oof_scores=delta_resid,
             )
 
     variogram = clf_final.variogram  # reuse — same spatial residual structure

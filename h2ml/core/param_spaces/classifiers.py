@@ -1,15 +1,6 @@
 """Optimization Parameters and search ranges for Classifiers"""
 
 
-def adaboost_c_params(trial):
-    """AdaBoost Optuna trials"""
-    return {
-        "n_estimators": trial.suggest_int("n_estimators", 50, 500, step=50),
-        "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.3, log=True),
-        "random_state": 42,
-    }
-
-
 def lightgbm_c_params(trial):
     """LightGBM Optuna trials"""
     return {
@@ -54,18 +45,6 @@ def histgradientboosting_c_params(trial):
     }
 
 
-def bagging_c_params(trial):
-    """Bagging Optuna trials"""
-    return {
-        "n_estimators": trial.suggest_int("n_estimators", 10, 200, step=10),
-        "max_samples": trial.suggest_float("max_samples", 0.5, 1.0),
-        "max_features": trial.suggest_float("max_features", 0.5, 1.0),
-        "bootstrap": trial.suggest_categorical("bootstrap", [True, False]),
-        "random_state": 42,
-        "n_jobs": -1,
-    }
-
-
 def svc_c_params(trial):
     """SVC Optuna trials"""
     return {
@@ -90,7 +69,7 @@ def randomforest_c_params(trial):
         "class_weight": trial.suggest_categorical("class_weight", ["balanced", None]),
         "bootstrap": trial.suggest_categorical("bootstrap", [True, False]),
         "random_state": 42,
-        "n_jobs": 1,  # cannot use all cores in parallel because gives error with sqlite db access in optuna
+        "n_jobs": 1,
     }
 
 
@@ -116,6 +95,7 @@ def gradientboosting_c_params(trial):
         "min_samples_split": trial.suggest_int("min_samples_split", 2, 20),
         "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 10),
         "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+        "random_state": 42,
     }
 
 

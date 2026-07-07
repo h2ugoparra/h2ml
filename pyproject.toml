@@ -1,6 +1,6 @@
 [project]
 name = "h2ml"
-version = "0.2.0"
+version = "0.3.0"
 description = "4-step AutoML pipeline for tabular data: model screening, SHAP feature selection, and Optuna HPO"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -85,8 +85,6 @@ commands =
     pytest tests/ -q
 """
 
-[tool.pytest.ini_options]
-pythonpath = ["h2ml"]
 
 [tool.coverage.run]
 source = ["h2ml"]
@@ -100,6 +98,6 @@ skip_covered = false
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "W", "F"]
+select = ["E", "W", "F", "I", "B"]
 ignore = ["E221", "E251", "E302", "E303", "E203", "E272"]
 

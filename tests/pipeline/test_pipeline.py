@@ -29,13 +29,12 @@ import pytest
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LogisticRegression, Ridge
 
+from h2ml.evaluation.metrics import RunMetadata
+from h2ml.features.feature_store import PipelineData
+from h2ml.features.selector import FeatureSelector
 from h2ml.pipeline.base import TaskType
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig, PipelineResult
 from h2ml.pipeline.step import make_classifier, make_regressor
-from h2ml.features.feature_store import PipelineData
-from h2ml.features.selector import FeatureSelector
-from h2ml.evaluation.metrics import RunMetadata
-
 
 # ---------------------------------------------------------------------------
 # Shared test data
@@ -347,6 +346,46 @@ class TestHandleImbalance:
             logger.remove(handler)
         assert not any("imbalance" in str(w).lower() for w in warned)
 
+    def test_fixed_class_weight_overrides_sampled_best_params(self, clf_store):
+        """Every trial runs with fixed_params overriding sampled values, so the
+        final model must too — a sampled class_weight=None in study.best_params
+        must not undo handle_imbalance in the step-4 CV or in result.best_params."""
+        models = [make_classifier(RandomForestClassifier(n_estimators=10, random_state=42))]
+        pipeline = H2MLPipeline(models=models, config=_clf_config(handle_imbalance=True))
+        with _mock_selector(["feat_0", "feat_1", "feat_2"]):
+            result = pipeline.run_step1_to_step3(clf_store)
+
+        captured = {}
+        orig_run = pipeline._cv.run
+
+        def spy_run(*args, **kwargs):
+            captured["best_params"] = kwargs.get("best_params")
+            return orig_run(*args, **kwargs)
+
+        with (
+            _mock_optimizer({"n_estimators": 10, "class_weight": None}),
+            patch.object(pipeline._cv, "run", side_effect=spy_run),
+        ):
+            result = pipeline.run_step4_only(result)
+
+        assert captured["best_params"]["class_weight"] == "balanced"
+        assert result.best_params["class_weight"] == "balanced"
+
+    def test_class_weight_kept_on_opt_disabled_skip_path(self, clf_store):
+        """LR has opt_enabled=False — the step-4 skip path must still merge
+        class_weight='balanced' into best_params, or the deployed model would
+        differ from the CV-validated one (which ran with weights injected)."""
+        from h2ml.utils.registry import CLASSIFIER_REGISTRY
+
+        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(handle_imbalance=True))
+        with _mock_selector():
+            result = pipeline.run(clf_store)
+
+        assert result.best_params["class_weight"] == "balanced"
+        # Must be a copy — assigning the registry's default_kwargs dict itself would
+        # let callers mutate the registry through result.best_params.
+        assert result.best_params is not CLASSIFIER_REGISTRY["LogisticRegression"].default_kwargs
+
 
 # ---------------------------------------------------------------------------
 # PipelineResult
@@ -599,6 +638,37 @@ class TestStep1WithTransforms:
         result_plain = reg_pipeline_2models.run_step1_only(pos_reg_store)
         # Both should have 1 entry per model in the agg_df
         assert len(result_sweep.step1_agg_df) == len(result_plain.step1_agg_df)
+
+    def test_resumed_step4_uses_winning_transform_space(self, pos_reg_store):
+        """run_step4_only with transform_stores=None must rebuild the winning
+        transform's store — result.features holds raw y, so resuming must not
+        silently optimise in the untransformed space."""
+        pipeline = H2MLPipeline(
+            models=[make_regressor(RandomForestRegressor(n_estimators=10, random_state=42))],
+            config=_reg_config(),
+        )
+        with _mock_selector():
+            result = pipeline.run_step1_to_step3(pos_reg_store, transforms=["log"])
+        assert result.y_transform == "log"
+
+        # Simulate a resume after PipelineResult.load(): the reduced-store cache
+        # is not persisted.
+        result.step3_reduced_stores = None
+
+        captured = {}
+
+        def fake_run_study(**kwargs):
+            captured["y"] = kwargs["y"]
+            captured["y_true"] = kwargs["y_true"]
+            study = MagicMock()
+            study.best_params = {"n_estimators": 10, "max_depth": 3}
+            return study
+
+        with patch("h2ml.pipeline.pipeline.run_study", side_effect=fake_run_study):
+            pipeline.run_step4_only(result)
+
+        np.testing.assert_allclose(captured["y"], np.log1p(pos_reg_store.y))
+        np.testing.assert_allclose(captured["y_true"], pos_reg_store.y)
 
 
 # ---------------------------------------------------------------------------
