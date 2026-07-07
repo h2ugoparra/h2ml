@@ -371,6 +371,21 @@ class TestHandleImbalance:
         assert captured["best_params"]["class_weight"] == "balanced"
         assert result.best_params["class_weight"] == "balanced"
 
+    def test_class_weight_kept_on_opt_disabled_skip_path(self, clf_store):
+        """LR has opt_enabled=False — the step-4 skip path must still merge
+        class_weight='balanced' into best_params, or the deployed model would
+        differ from the CV-validated one (which ran with weights injected)."""
+        from h2ml.utils.registry import CLASSIFIER_REGISTRY
+
+        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(handle_imbalance=True))
+        with _mock_selector():
+            result = pipeline.run(clf_store)
+
+        assert result.best_params["class_weight"] == "balanced"
+        # Must be a copy — assigning the registry's default_kwargs dict itself would
+        # let callers mutate the registry through result.best_params.
+        assert result.best_params is not CLASSIFIER_REGISTRY["LogisticRegression"].default_kwargs
+
 
 # ---------------------------------------------------------------------------
 # PipelineResult

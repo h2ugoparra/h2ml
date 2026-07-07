@@ -243,7 +243,7 @@ class LocalConformalCalibration:
         if self.has_times and _times is None:
             # Times expected but not provided — use spatial subspace only for k-NN.
             col_slice = slice(0, n_coord_cols)
-        elif not self.has_coords and _coords is None:
+        elif self.has_coords and _coords is None:
             # Coords expected but not provided — use temporal subspace only.
             col_slice = slice(n_coord_cols, None)
         else:

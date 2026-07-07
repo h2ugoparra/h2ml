@@ -43,15 +43,18 @@ def _predict_single(
         col_name:    Name for the prediction Series.
         alpha:       Miscoverage level for conformal intervals. When None or the
                      model has no calibration, only the point prediction is returned.
-                     Multiclass classifiers are unaffected.
         local:       If True, use LocalConformalCalibration when available to produce
                      spatially/temporally varying interval widths.
                      If False (default), always use the global conformal threshold.
 
     Returns:
-        (pred_series,) when alpha is None, uncalibrated, or multiclass classifier.
+        (pred_series,) when alpha is None or the model is uncalibrated.
         (pred_series, lower_series, upper_series) for calibrated regression or
         calibrated binary classifiers with alpha set.
+
+    Raises:
+        ValueError: For multiclass classifiers — predictions are stored as a single
+            Float32 column, which cannot hold a probability matrix.
     """
     geo_cols = [c for c in ["lon", "lat", "time"] if c in df_original.columns]
     df_clean = df_original.select(model.feature_names + ["index"] + geo_cols).drop_nulls()
@@ -64,6 +67,12 @@ def _predict_single(
 
     if model.task_type == TaskType.CLASSIFICATION:
         preds = model.predict_proba(X).astype(np.float32)
+        if preds.ndim == 2:
+            raise ValueError(
+                f"'{col_name}': multiclass classifiers are not supported — predictions are "
+                "stored as a single Float32 column, which cannot hold a probability matrix. "
+                "Use a binary (presence/absence) model."
+            )
         pred_series = pl.Series(col_name, [None] * n, dtype=pl.Float32).scatter(idx, preds)
         if alpha is not None and model.conformal is not None and preds.ndim == 1:
             # Binary only: mirror the regression formula into probability space.
@@ -202,8 +211,9 @@ def predict_for_year(
                            '{target}_{schema}_pi_lower' and '_pi_upper' columns.
                            Regression: bounds in the original scale (after y-transform
                            inversion). Binary classifiers: probability-space bands
-                           clip(p ± q, 0, 1). Multiclass and uncalibrated models
-                           are unaffected.
+                           clip(p ± q, 0, 1). Uncalibrated models are unaffected;
+                           multiclass classifiers are not supported (skipped with a
+                           warning).
         local:             If True, use LocalConformalCalibration when the model has
                            one, producing interval widths that vary by location and
                            season. If False (default), use the global threshold
