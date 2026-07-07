@@ -989,6 +989,50 @@ class TestLocalConformalCalibration:
         assert q.shape == (2,)
         assert q[1] > q[0]
 
+    def test_times_only_query_on_spatiotemporal_calibrator(self):
+        """A calibrator built with coords AND times must answer a times-only query
+        via the temporal subspace (regression: the subspace condition was inverted,
+        crashing with a broadcast error)."""
+        rng = np.random.default_rng(2)
+        n = 20
+        scores_0 = rng.uniform(0.0, 0.2, n)
+        scores_1 = rng.uniform(0.8, 1.5, n)
+        coords_0 = rng.uniform(0.0, 1.0, (n, 2))
+        coords_1 = rng.uniform(9.0, 10.0, (n, 2))
+        times_0 = np.array(["2021-01-15"] * n)
+        times_1 = np.array(["2021-07-15"] * n)
+
+        all_coords = np.vstack([coords_0, coords_1])
+        all_times = np.concatenate([times_0, times_1])
+        all_block_idx = np.array([0] * n + [1] * n)
+
+        from sklearn.preprocessing import StandardScaler
+
+        from h2ml.evaluation.conformal import _build_context
+
+        ctx = _build_context(all_coords, all_times)
+        scaler = StandardScaler().fit(ctx)
+        oof_ctx = scaler.transform(ctx)
+
+        lc_st = LocalConformalCalibration(
+            scores_by_block=[np.sort(scores_0), np.sort(scores_1)],
+            oof_context_scaled=oof_ctx,
+            oof_block_indices=all_block_idx,
+            context_mean=scaler.mean_,
+            context_std=scaler.scale_,
+            fallback_scores=np.sort(np.concatenate([scores_0, scores_1])),
+            metric="euclidean",
+            min_block_n=3,
+            has_coords=True,
+            has_times=True,
+        )
+
+        # Blocks are separated by season, so the temporal subspace alone should
+        # resolve the right block: winter → block 0 (low), summer → block 1 (high).
+        q_winter = lc_st.threshold(0.10, times=np.array(["2021-01-20"]))[0]
+        q_summer = lc_st.threshold(0.10, times=np.array(["2021-07-20"]))[0]
+        assert q_summer > q_winter
+
     def test_predict_interval_uses_local_conformal(self):
         """predict_interval with coords returns varying widths; without coords is scalar."""
         from sklearn.ensemble import RandomForestRegressor

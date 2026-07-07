@@ -882,15 +882,18 @@ class H2MLPipeline:
         best_model = self._get_model(result.best_model_name)
         estimator_name = best_model.estimator.__class__.__name__
 
-        if not self._is_opt_enabled(estimator_name):
-            self._log(f"  {estimator_name} has opt_enabled=False — skipping optimization.")
-            result.best_params = self._get_default_params(estimator_name)
-            return result
-
         # Fixed params are injected into every Optuna trial alongside searched params.
+        # Built before the opt_enabled check: the skip path must also carry them, or a
+        # deployed opt-disabled winner would silently lose class_weight="balanced"
+        # even though CV ranked it with weights injected.
         fixed_params: dict = {}
         if self.config.handle_imbalance and self._supports_class_weight(estimator_name):
             fixed_params["class_weight"] = "balanced"
+
+        if not self._is_opt_enabled(estimator_name):
+            self._log(f"  {estimator_name} has opt_enabled=False — skipping optimization.")
+            result.best_params = {**self._get_default_params(estimator_name), **fixed_params}
+            return result
 
         study = run_study(
             name=estimator_name,

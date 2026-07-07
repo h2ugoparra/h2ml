@@ -120,8 +120,14 @@ def _score_brier(model, X_train, X_test, y_train, y_test) -> float:
 def _score_f1(model, X_train, X_test, y_train, y_test) -> float:
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
-    average = "binary" if len(np.unique(y_test)) == 2 else "weighted"
-    return float(f1_score(y_test, y_pred, average=average, zero_division=0))
+    # Decide binary vs multiclass from the full class set (train ∪ test), not the
+    # test fold alone: a spatial fold whose test set holds 2 of 3 classes would
+    # otherwise select average="binary" and crash on pos_label. pos_label is the
+    # largest class so non-{0,1} binary encodings work.
+    classes = np.unique(np.concatenate([y_train, y_test]))
+    if len(classes) == 2:
+        return float(f1_score(y_test, y_pred, average="binary", pos_label=classes[-1], zero_division=0))
+    return float(f1_score(y_test, y_pred, average="weighted", zero_division=0))
 
 
 def _score_r2(
