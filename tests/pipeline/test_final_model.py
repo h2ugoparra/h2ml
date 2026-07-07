@@ -30,6 +30,7 @@ from h2ml.pipeline.final_model import (
     FinalModel,
     _build_conformal_calibration,
     _build_delta_conformal,
+    _delta_oof_residuals,
     build_delta_final_model,
 )
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig, PipelineResult
@@ -422,6 +423,30 @@ class TestConformalCalibration:
         assert cal is not None
         assert np.all(cal.scores >= 0) and np.all(cal.scores <= 1)
 
+    def test_classification_scores_use_classes_for_pos_label(self):
+        """Binary labels that are not {0, 1} (e.g. {1, 2}) must resolve the
+        positive class from classes_ (regression: y_test == 1 was hardcoded,
+        silently swapping the scores for other encodings)."""
+        fold = FoldResult(
+            fold_id=0,
+            model_name="M",
+            y_train=np.array([1.0, 2.0]),
+            y_test=np.array([2.0, 1.0]),
+            y_pred_train=np.array([1.0, 2.0]),
+            y_pred_test=np.array([2.0, 1.0]),
+            y_prob_train=np.array([0.5, 0.5]),
+            y_prob_test=np.array([0.9, 0.2]),  # P(class 2)
+        )
+        cv = CVResult(model_name="M", task_type=TaskType.CLASSIFICATION, folds=[fold])
+
+        class MockResult:
+            best_cv_result = cv
+
+        cal = _build_conformal_calibration(MockResult(), classes=np.array([1.0, 2.0]))
+        assert cal is not None
+        # y=2 (positive): score = 1 - 0.9 = 0.1; y=1 (negative): score = 0.2
+        assert np.allclose(cal.scores, [0.1, 0.2])
+
     def test_returns_none_when_no_cv_result(self):
         class MockResult:
             best_cv_result = None
@@ -794,6 +819,29 @@ class TestBuildDeltaConformal:
         X_wrong = X[:50]
         y_wrong = y[:50]
         assert _build_delta_conformal(clf_r, reg_r, reg_f, X_wrong, y_wrong, pos) is None
+
+    def test_truncated_regressor_oof_pads_instead_of_crashing(self):
+        """oof_predictions has length max(test_idx)+1, so a failed fold holding
+        the highest positive indices makes it shorter than n_pos (regression:
+        the assignment crashed with a broadcast ValueError). The uncovered
+        positives must be excluded as NaN instead."""
+        clf_r, _, reg_f, X, y, pos = self._setup(n=60)
+        truncated_cv = _make_indexed_cv_result(TaskType.REGRESSION, len(pos) - 5, seed=3)
+        reg_r = MockResult(cv=truncated_cv)
+
+        resid = _delta_oof_residuals(clf_r, reg_r, reg_f, X, y, pos)
+        assert resid is not None
+        assert len(resid) == 60
+        assert np.isnan(resid[pos[-5:]]).all()
+        assert np.isfinite(resid).sum() == 60 - 5
+
+    def test_oversized_regressor_oof_returns_none(self):
+        """A regressor OOF longer than the positive subset means the inputs are
+        inconsistent — skip calibration with a warning rather than mis-align."""
+        clf_r, _, reg_f, X, y, pos = self._setup(n=60)
+        oversized_cv = _make_indexed_cv_result(TaskType.REGRESSION, len(pos) + 5, seed=3)
+        reg_r = MockResult(cv=oversized_cv)
+        assert _delta_oof_residuals(clf_r, reg_r, reg_f, X, y, pos) is None
 
 
 class TestBuildDeltaFinalModel:
