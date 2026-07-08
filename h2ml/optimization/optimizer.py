@@ -137,6 +137,10 @@ def _score_r2(
     y_pred = model.predict(X_test)
     if inverse_fn is not None:
         y_pred = inverse_fn(y_pred)
+        if not np.all(np.isfinite(y_pred)):
+            # Diverged model (e.g. sigmoid SVR whose expm1 inverse overflows):
+            # discard the trial instead of crashing the study.
+            raise optuna.TrialPruned()
         assert y_true_test is not None
         y_test = y_true_test
     return float(r2_score(y_test, y_pred))
@@ -150,6 +154,10 @@ def _score_mae(
     y_pred = model.predict(X_test)
     if inverse_fn is not None:
         y_pred = inverse_fn(y_pred)
+        if not np.all(np.isfinite(y_pred)):
+            # Diverged model (e.g. sigmoid SVR whose expm1 inverse overflows):
+            # discard the trial instead of crashing the study.
+            raise optuna.TrialPruned()
         assert y_true_test is not None
         y_test = y_true_test
     return float(-mean_absolute_error(y_test, y_pred))
@@ -163,6 +171,10 @@ def _score_rmse(
     y_pred = model.predict(X_test)
     if inverse_fn is not None:
         y_pred = inverse_fn(y_pred)
+        if not np.all(np.isfinite(y_pred)):
+            # Diverged model (e.g. sigmoid SVR whose expm1 inverse overflows):
+            # discard the trial instead of crashing the study.
+            raise optuna.TrialPruned()
         assert y_true_test is not None
         y_test = y_true_test
     return float(-np.sqrt(mean_squared_error(y_test, y_pred)))
@@ -480,6 +492,9 @@ def run_study(
                 show_progress_bar=False,
                 n_jobs=1,
                 callbacks=callbacks,
+                # Backstop: mark trials that still blow up numerically as FAILED
+                # instead of aborting the whole study.
+                catch=(ValueError,),
             )
         finally:
             if pbar is not None:
