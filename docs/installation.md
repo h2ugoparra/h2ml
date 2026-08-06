@@ -34,7 +34,7 @@ uv add h2ml
 pip install h2ml
 ```
 
-The `[geo]` extra is retained for backward compatibility. It lists `h2mare`, `cartopy` and `polars`, all of which the base install already provides, so `h2ml[geo]` resolves to the same environment as plain `h2ml`.
+The `[geo]` extra was removed in 0.3.1. It listed `h2mare`, `cartopy` and `polars`, all of which the base install already provides, so it never installed anything beyond the base package. If you have `h2ml[geo]` pinned somewhere, drop the suffix — installers warn about an unknown extra and fall back to the base package, so nothing breaks either way.
 
 ## Development setup
 

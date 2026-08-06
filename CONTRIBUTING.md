@@ -10,7 +10,7 @@ uv sync
 
 `uv sync` installs everything the test suite needs, including the spatial inference path: `h2mare` and `polars` are core dependencies, and `h2mare` pulls in `cartopy`.
 
-The `[geo]` extra is retained for backward compatibility but currently resolves to packages the base install already provides, so `uv sync --extra geo` is equivalent to `uv sync`.
+There is no `[geo]` extra — it was removed in 0.3.1 because every package it listed was already a core dependency.
 
 ## Running tests
 

@@ -1,8 +1,8 @@
 """
 Geo-spatial prediction utilities bridging h2ml FinalModels and h2mare ParquetIndexer.
 
-Requires the [geo] optional dependencies:
-    uv pip install h2ml[geo]
+No optional extra is required — h2mare is a core dependency and brings in cartopy
+and polars.
 """
 
 from __future__ import annotations
@@ -224,13 +224,16 @@ def predict_for_year(
         prediction column per succeeded target (and interval columns when alpha is set).
 
     Raises:
-        ImportError: If the [geo] extras are not installed.
+        ImportError: If h2mare is unavailable (indicates a broken install).
         ValueError: If root_dir or input_parquet_dir does not exist.
     """
     try:
         from h2mare.storage import ParquetIndexer
     except ImportError as e:
-        raise ImportError("predict_for_year requires the [geo] extras. Install with: uv pip install h2ml[geo]") from e
+        raise ImportError(
+            "predict_for_year requires h2mare, a core dependency of h2ml. "
+            "Your install looks incomplete — reinstall with: uv add h2ml"
+        ) from e
 
     logger.info(f"Starting predictions for year {year}")
 
@@ -316,14 +319,15 @@ def predict_for_year_delta(
         interval columns per succeeded target.
 
     Raises:
-        ImportError: If the [geo] extras are not installed.
+        ImportError: If h2mare is unavailable (indicates a broken install).
         ValueError: If root_dir or input_parquet_dir does not exist.
     """
     try:
         from h2mare.storage import ParquetIndexer
     except ImportError as e:
         raise ImportError(
-            "predict_for_year_delta requires the [geo] extras. Install with: uv pip install h2ml[geo]"
+            "predict_for_year_delta requires h2mare, a core dependency of h2ml. "
+            "Your install looks incomplete — reinstall with: uv add h2ml"
         ) from e
 
     from h2ml.pipeline.final_model import DeltaFinalModel
@@ -397,13 +401,16 @@ def predict_map(
         save_path:  Path to save the plot; if None, calls plt.show().
 
     Raises:
-        ImportError: If the [geo] extras are not installed.
+        ImportError: If h2mare is unavailable (indicates a broken install).
     """
     try:
         from h2mare.storage import aggregate_by_space_time
         from h2mare.utils.plot import plot_maps
     except ImportError as e:
-        raise ImportError("predict_map requires the [geo] extras. Install with: uv pip install h2ml[geo]") from e
+        raise ImportError(
+            "predict_map requires h2mare (and the cartopy it pulls in), a core "
+            "dependency of h2ml. Your install looks incomplete — reinstall with: uv add h2ml"
+        ) from e
 
     df_orig = indexer.scan(dates=dates, bbox=bbox, columns=model.feature_names).with_row_index().collect()
 
