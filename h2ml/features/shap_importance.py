@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional
 
 import numpy as np
@@ -60,6 +61,89 @@ _GENERIC_EXPLAINER_MODELS: dict[TaskType, set[str]] = {
 
 _LINEAR_SVM_CLASSES: set[str] = {"SVC", "SVR"}
 
+# TabPFN needs shapiq's TabPFNExplainer, which removes features by re-contextualising the
+# in-context training set instead of refitting per coalition like KernelSHAP.
+_TABPFN_MODELS: set[str] = {"TabPFNClassifier", "TabPFNRegressor"}
+
+# Rows of labelled context handed to TabPFN when explaining. Distinct from max_background:
+# shap's background can be kmeans centroids, but TabPFN's context needs real labelled rows.
+_TABPFN_MAX_CONTEXT: int = 1_000
+
+
+class _TabPFNExplainerAdapter:
+    """
+    Present shapiq's TabPFNExplainer through the shap explainer call protocol.
+
+    Calling the instance with a DataFrame returns an object exposing `.values` shaped
+    (n_samples, n_features) or (n_samples, n_features, n_classes), so _extract_shap_array
+    and every downstream caller treat TabPFN exactly like any other model.
+
+    Multiclass note: shapiq explains one class per explainer, so with class_index=None and
+    more than two classes we build one explainer per class and stack them on the last axis.
+    That reproduces h2ml's mean-absolute-across-classes convention at k times the cost.
+    """
+
+    def __init__(
+        self,
+        model: Any,
+        task_type: TaskType,
+        X_background: pd.DataFrame,
+        y_background: np.ndarray,
+        class_index: Optional[int] = None,
+        max_context: int = _TABPFN_MAX_CONTEXT,
+        random_state: int = 42,
+    ) -> None:
+        self.model = model
+        self.task_type = task_type
+        self.class_index = class_index
+        self.random_state = random_state
+
+        ctx_X = np.asarray(X_background)
+        ctx_y = np.asarray(y_background)
+
+        # The context is TabPFN's training set for every coalition it evaluates, so its size
+        # drives the cost of the whole explanation. Subsample rather than summarise: kmeans
+        # centroids have no labels and cannot serve as context.
+        if len(ctx_X) > max_context:
+            rng = np.random.default_rng(random_state)
+            keep = rng.choice(len(ctx_X), size=max_context, replace=False)
+            ctx_X, ctx_y = ctx_X[keep], ctx_y[keep]
+
+        self._ctx_X = ctx_X
+        self._ctx_y = ctx_y
+
+        if task_type != TaskType.CLASSIFICATION:
+            self._class_indices: list[Optional[int]] = [None]
+        elif class_index is not None:
+            self._class_indices = [class_index]
+        else:
+            n_classes = len(np.unique(ctx_y))
+            # Binary: class 1, matching _extract_shap_array's positive-class convention.
+            self._class_indices = [1] if n_classes <= 2 else list(range(n_classes))
+
+    def _explain_one_class(self, X: np.ndarray, class_index: Optional[int]) -> np.ndarray:
+        import shapiq
+
+        explainer = shapiq.TabPFNExplainer(
+            model=self.model,
+            data=self._ctx_X,
+            labels=self._ctx_y,
+            index="SV",
+            max_order=1,
+            x_test=X,
+            class_index=class_index,
+        )
+        # n_jobs=1: this may already run inside an outer joblib pool, and TabPFN is memory-heavy.
+        values = explainer.explain_X(X, n_jobs=1, random_state=self.random_state)
+        return np.vstack([iv.get_n_order_values(1) for iv in values])
+
+    def __call__(self, X: Any) -> SimpleNamespace:
+        X_arr = np.asarray(X)
+        per_class = [self._explain_one_class(X_arr, ci) for ci in self._class_indices]
+        if len(per_class) == 1:
+            return SimpleNamespace(values=per_class[0])
+        return SimpleNamespace(values=np.stack(per_class, axis=-1))
+
 
 def _summarize_background(
     background: pd.DataFrame,
@@ -88,12 +172,19 @@ def _select_explainer(
     X: pd.DataFrame,
     X_background: Optional[pd.DataFrame] = None,
     max_background: int = 100,
-) -> shap.Explainer:
+    y_background: Optional[np.ndarray] = None,
+    class_index: Optional[int] = None,
+    random_state: int = 42,
+) -> Any:
     """
     Route to the correct SHAP explainer.
 
+    Returns a shap.Explainer, or for TabPFN a _TabPFNExplainerAdapter that satisfies the
+    same call protocol (callable with a DataFrame → object exposing .values).
+
     Tree-based models use TreeExplainer (faster, exact).
     Linear SVMs use LinearExplainer (exact, avoids KernelSHAP entirely).
+    TabPFN uses shapiq's TabPFNExplainer, wrapped to look like a shap explainer.
     Other distance/kernel models use generic Explainer (KernelSHAP) with a
     summarized background to cap compute cost.
 
@@ -105,9 +196,31 @@ def _select_explainer(
         max_background: Maximum background rows passed to KernelSHAP.
                         Larger backgrounds are replaced with shap.kmeans
                         centroids of this size (default 100).
+        y_background:   Labels aligned to X_background. Required for TabPFN —
+                        shapiq needs them as in-context training labels.
+        class_index:    TabPFN only. shapiq explains one class per explainer, so the
+                        choice has to be made here rather than left to
+                        _extract_shap_array. Other explainers return every class and
+                        are sliced afterwards. Same semantics either way.
+        random_state:   Seed for TabPFN context subsampling.
     """
     model_name = model.__class__.__name__
     generic_models = _GENERIC_EXPLAINER_MODELS.get(task_type, set())
+
+    if model_name in _TABPFN_MODELS:
+        if y_background is None:
+            raise ValueError(
+                f"{model_name} SHAP requires y_background — shapiq's TabPFNExplainer needs "
+                "in-context training labels alongside X_background."
+            )
+        return _TabPFNExplainerAdapter(
+            model,
+            task_type,
+            X_background if X_background is not None else X,
+            y_background,
+            class_index=class_index,
+            random_state=random_state,
+        )
 
     if model_name in generic_models:
         background = X_background if X_background is not None else X
@@ -222,7 +335,14 @@ def get_shap_values(
     # SHAP needs a DataFrame for column names — convert locally
     X_frame = store.to_frame()
 
-    explainer = _select_explainer(model, task_type, X_frame, max_background=max_background)
+    explainer = _select_explainer(
+        model,
+        task_type,
+        X_frame,
+        max_background=max_background,
+        y_background=store.y,
+        class_index=class_index,
+    )
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message=".*does not have valid feature names.*")
         shap_output = explainer(X_frame)
@@ -325,6 +445,9 @@ def get_oof_shap_values(
             X_test_frame,
             X_background=X_train_frame,
             max_background=max_background,
+            y_background=y_train,
+            class_index=class_index,
+            random_state=random_state,
         )
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message=".*does not have valid feature names.*")

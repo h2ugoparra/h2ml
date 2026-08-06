@@ -6,7 +6,7 @@ A 4-step AutoML pipeline wrapping sklearn-compatible estimators.
 
 ## Tech Stack
 
-Python 3.11+ (pinned to 3.13 locally via `.python-version`). Key libraries: `scikit-learn`, `optuna` (HPO), `shap` (feature selection), `joblib` (parallel CV), `lightgbm`/`xgboost`/`catboost` (`[boosting]` extra), `h2mare` (core dep, brings in `cartopy` and `polars`; there is no `[geo]` extra — removed in 0.3.1). Dev: `uv`, `ruff`, `pytest`, `tox`, `mkdocs`.
+Python 3.11+ (pinned to 3.13 locally via `.python-version`). Key libraries: `scikit-learn`, `optuna` (HPO), `shap` (feature selection), `joblib` (parallel CV), `lightgbm`/`xgboost`/`catboost` (`[boosting]` extra), `tabpfn`/`shapiq` (`[tabpfn]` extra, Python 3.12+ only), `h2mare` (core dep, brings in `cartopy` and `polars`; there is no `[geo]` extra — removed in 0.3.1). Dev: `uv`, `ruff`, `pytest`, `tox`, `mkdocs`.
 
 ## Commands
 
@@ -69,6 +69,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 |-----------|---------|--------|
 | `metric` | `"AUC"` | Model selection and HPO metric. Classification: `"AUC"`, `"AUC_PR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. |
 | `n_splits` | `5` | CV folds for model screening (steps 1 and 3) |
+| `n_jobs` | `-1` | Worker processes for parallel CV in steps 1 and 3. Lower for memory-heavy models (TabPFN). Must be non-zero |
 | `corr_threshold` | `0.7` | Drop feature if it exceeds this in any of Pearson, Spearman, or Kendall with a retained feature |
 | `min_features` | `1` | Minimum features retained after correlation filter |
 | `n_trials` | `50` | Optuna trials in step 4 |
@@ -105,10 +106,11 @@ compare_results(results, labels, metric, n_folds)  # sort direction auto-derived
 
 - **Logging** — use `loguru` (`from loguru import logger`), not stdlib `logging`
 - **CatBoost** uses `random_seed` (not `random_state`) and `thread_count` (not `n_jobs`)
-- **SHAP routing**: tree models → `TreeExplainer`; linear SVM (`kernel="linear"`, `probability=False`) → `LinearExplainer`; all others → KernelSHAP with `shap.kmeans` background (capped at `max_background=100`)
+- **SHAP routing**: tree models → `TreeExplainer`; linear SVM (`kernel="linear"`, `probability=False`) → `LinearExplainer`; TabPFN → `shapiq.TabPFNExplainer` via `_TabPFNExplainerAdapter`; all others → KernelSHAP with `shap.kmeans` background (capped at `max_background=100`). Unrecognised models fall through to `TreeExplainer` — add non-tree models to `_GENERIC_EXPLAINER_MODELS` or they break step 2
 - **y-transform names**: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`, `"winlog"`, `"winsqrt"`; winsorize variants silently skipped when no outliers
 - **`n_jobs=1`** in optimizer always — parallel Optuna trials cause resource-tracker warnings on Windows
 - **Boosting extras** require `uv sync --extra boosting`
+- **TabPFN** is double-gated: `uv sync --extra tabpfn` **and** `H2ML_ENABLE_TABPFN=1`. Never tuned (`opt_enabled=False`); needs PriorLabs auth on first fit (`TABPFN_TOKEN` when headless); loads a torch checkpoint per CV worker, so lower `PipelineConfig.n_jobs`. Not in tox extras — CI has no credentials
 
 ## h2mare dependency
 

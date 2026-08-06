@@ -16,9 +16,11 @@ by both the pipeline (build_steps) and the optimizer (get_entry via opt_params.p
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from loguru import logger
 from sklearn.ensemble import (
     AdaBoostClassifier,
     AdaBoostRegressor,
@@ -280,6 +282,62 @@ try:
     )
 except ImportError:
     pass
+
+
+# ---------------------------------------------------------------------------
+# TabPFN (opt-in)
+# ---------------------------------------------------------------------------
+
+
+def _warn_if_tabpfn_cpu() -> None:
+    """
+    Warn when TabPFN will fall back to CPU inference.
+
+    TabPFN's device="auto" resolves in the order: CUDA GPUs → mps → cpu. We mirror
+    that priority so the warning only fires when it will genuinely run on CPU, where
+    inference is slow enough that ~5 000 samples is a practical ceiling.
+    """
+    try:
+        import torch  # type: ignore[import-not-found]
+    except ImportError:  # pragma: no cover - tabpfn depends on torch
+        return
+
+    mps = getattr(torch.backends, "mps", None)
+    if torch.cuda.is_available() or (mps is not None and mps.is_available()):
+        return
+
+    logger.warning(
+        "TabPFN registered but no CUDA/mps device is visible — inference will run on CPU. "
+        "Expect it to be slow; ~5 000 samples is a practical ceiling. Larger inputs raise "
+        "TabPFN's own pretraining-limit error, which the CV engine reports as a skipped model."
+    )
+
+
+# Opt-in via H2ML_ENABLE_TABPFN=1: the checkpoint is large, CPU inference is slow, and the
+# first fit needs PriorLabs authentication (browser login, or TABPFN_TOKEN when headless).
+# Gating on an env var keeps installing the extra from silently changing every pipeline run.
+if os.environ.get("H2ML_ENABLE_TABPFN") == "1":
+    try:
+        from tabpfn import TabPFNClassifier, TabPFNRegressor  # type: ignore[import-not-found]
+
+        # No device kwarg: TabPFN's default device="auto" already picks CUDA → mps → cpu.
+        # opt_enabled=False — TabPFN is pretrained; its knobs are inference-time settings,
+        # not a search space, so it must never reach the step-4 Optuna study.
+        CLASSIFIER_REGISTRY["TabPFNClassifier"] = ModelEntry(
+            TabPFNClassifier,
+            default_kwargs={"random_state": 42},
+            param_fn=None,
+            opt_enabled=False,
+        )
+        REGRESSOR_REGISTRY["TabPFNRegressor"] = ModelEntry(
+            TabPFNRegressor,
+            default_kwargs={"random_state": 42},
+            param_fn=None,
+            opt_enabled=False,
+        )
+        _warn_if_tabpfn_cpu()
+    except ImportError:
+        logger.warning("H2ML_ENABLE_TABPFN=1 but tabpfn is not installed — run: uv sync --extra tabpfn")
 
 
 # ---------------------------------------------------------------------------

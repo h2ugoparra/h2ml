@@ -106,7 +106,7 @@ result = pipeline.run_step4_only(result)
 | 3 | K-fold CV all models on reduced features (winning transform only); compare vs step 1 | `best_stage` (`"default"` or `"reduced"`), `best_feature_stage` |
 | 4 | Optuna HPO on the winning (model, stage, transform) | `best_params`, `step4_agg_df` |
 
-Step 4 is skipped when the winning model has `opt_enabled=False` in the registry (e.g. LogisticRegression, GaussianNB, KNeighborsClassifier).
+Step 4 is skipped when the winning model has `opt_enabled=False` in the registry (e.g. LogisticRegression, GaussianNB, KNeighborsClassifier, TabPFN).
 
 ## `PipelineConfig` reference
 
@@ -115,6 +115,7 @@ Step 4 is skipped when the winning model has `opt_enabled=False` in the registry
 | `task_type` | `"classification"` | `"classification"` or `"regression"` (case-insensitive); a `TaskType` member is also accepted |
 | `metric` | `"AUC"` | Short metric name for model selection and HPO. Minimisation direction is derived automatically. Classification: `"AUC"`, `"AUC_PR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. |
 | `n_splits` | `5` | Folds for steps 1 and 3 |
+| `n_jobs` | `-1` | Parallel workers for CV in steps 1 and 3; must be non-zero |
 | `opt_n_splits` | `3` | Folds used inside Optuna (fewer = faster) |
 | `corr_threshold` | `0.7` | Correlation threshold for dropping features in step 2. A feature is dropped if it exceeds this value in any of Pearson, Spearman, or Kendall correlation with a higher-ranked feature. |
 | `n_trials` | `50` | Optuna trials in step 4 |
@@ -140,11 +141,13 @@ Set `store.coords` to an `(n_samples, 2)` array of spatial coordinates to activa
 
 ## Supported models
 
-**Classifiers** — LogisticRegression, GaussianNB, KNeighborsClassifier, RandomForestClassifier, GradientBoostingClassifier, HistGradientBoostingClassifier, SVC, ExtraTreesClassifier, BaggingClassifier, AdaBoostClassifier, LGBMClassifier\*, CatBoostClassifier\*, XGBClassifier\*
+**Classifiers** — LogisticRegression, GaussianNB, KNeighborsClassifier, RandomForestClassifier, GradientBoostingClassifier, HistGradientBoostingClassifier, SVC, ExtraTreesClassifier, BaggingClassifier, AdaBoostClassifier, LGBMClassifier\*, CatBoostClassifier\*, XGBClassifier\*, TabPFNClassifier†
 
-**Regressors** — PoissonRegressor, KNeighborsRegressor, RandomForestRegressor, GradientBoostingRegressor, HistGradientBoostingRegressor, SVR, ExtraTreesRegressor, BaggingRegressor, AdaBoostRegressor, LGBMRegressor\*, CatBoostRegressor\*, XGBRegressor\*
+**Regressors** — PoissonRegressor, KNeighborsRegressor, RandomForestRegressor, GradientBoostingRegressor, HistGradientBoostingRegressor, SVR, ExtraTreesRegressor, BaggingRegressor, AdaBoostRegressor, LGBMRegressor\*, CatBoostRegressor\*, XGBRegressor\*, TabPFNRegressor†
 
 \* Registered only when the package is installed. Custom models can be injected by passing a `models` list directly to `H2MLPipeline`.
+
+† Registered only when `tabpfn` is installed **and** `H2ML_ENABLE_TABPFN=1` is set. Never tuned; SHAP via `shapiq.TabPFNExplainer`. See the installation docs.
 
 ## `PipelineResult`
 

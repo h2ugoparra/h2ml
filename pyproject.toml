@@ -62,6 +62,14 @@ boosting = [
     "lightgbm>=4.6.0",
     "xgboost>=3.2.0",
 ]
+# Opt-in at runtime too: set H2ML_ENABLE_TABPFN=1 to register the models.
+# Not added to tox extras — TabPFN's first fit needs PriorLabs credentials.
+# Markers: shapiq >= 1.5 requires Python >= 3.12, so the extra is unavailable on 3.11.
+# The registry gate degrades to a warning there rather than failing the import.
+tabpfn = [
+    "tabpfn>=8,<9; python_version >= '3.12'",
+    "shapiq>=1.5; python_version >= '3.12'",
+]
 
 [build-system]
 requires = ["hatchling"]

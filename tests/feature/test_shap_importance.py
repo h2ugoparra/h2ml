@@ -20,6 +20,7 @@ from h2ml.features.feature_store import PipelineData
 from h2ml.features.shap_importance import (
     _extract_shap_array,
     _select_explainer,
+    _TabPFNExplainerAdapter,
     get_oof_shap_values,
     get_shap_values,
 )
@@ -441,3 +442,149 @@ class TestSvcShapValues:
         )
         assert shap_arr.shape == (N, len(FEATURE_NAMES))
         assert set(importance.index) == set(FEATURE_NAMES)
+
+
+# ---------------------------------------------------------------------------
+# TabPFN routing (shapiq)
+# ---------------------------------------------------------------------------
+
+
+class _FakeInteractionValues:
+    """Stands in for shapiq.InteractionValues — only get_n_order_values is used."""
+
+    def __init__(self, values: np.ndarray):
+        self._values = values
+
+    def get_n_order_values(self, order: int) -> np.ndarray:
+        assert order == 1, "adapter must request first-order (Shapley) values"
+        return self._values
+
+
+class _FakeTabPFNExplainer:
+    """Records constructor kwargs so tests can assert on what the adapter passed."""
+
+    calls: list[dict] = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        _FakeTabPFNExplainer.calls.append(kwargs)
+
+    def explain_X(self, X, n_jobs=None, random_state=None, verbose=False):
+        n_features = np.asarray(self.kwargs["data"]).shape[1]
+        rng = np.random.default_rng(0)
+        return [_FakeInteractionValues(rng.standard_normal(n_features)) for _ in range(len(X))]
+
+
+class TabPFNClassifier:  # noqa: N801 - name drives explainer routing
+    """Local stand-in: _select_explainer routes on class name, not on identity."""
+
+
+class TabPFNRegressor:  # noqa: N801 - name drives explainer routing
+    pass
+
+
+@pytest.fixture
+def fake_shapiq(monkeypatch):
+    """Install a stub shapiq module so these tests run without tabpfn/shapiq installed."""
+    import sys
+    import types
+
+    _FakeTabPFNExplainer.calls = []
+    module = types.ModuleType("shapiq")
+    module.TabPFNExplainer = _FakeTabPFNExplainer  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "shapiq", module)
+    return _FakeTabPFNExplainer
+
+
+class TestTabPFNExplainerRouting:
+    def test_missing_y_background_raises(self, clf_store):
+        """shapiq needs in-context labels; failing loudly beats a confusing shapiq error."""
+        with pytest.raises(ValueError, match="y_background"):
+            _select_explainer(
+                TabPFNClassifier(),
+                TaskType.CLASSIFICATION,
+                clf_store.to_frame(),
+            )
+
+    def test_routes_to_adapter(self, clf_store, fake_shapiq):
+        explainer = _select_explainer(
+            TabPFNClassifier(),
+            TaskType.CLASSIFICATION,
+            clf_store.to_frame(),
+            y_background=clf_store.y,
+        )
+        assert isinstance(explainer, _TabPFNExplainerAdapter)
+
+    def test_binary_uses_positive_class_and_is_2d(self, clf_store, fake_shapiq):
+        explainer = _select_explainer(
+            TabPFNClassifier(),
+            TaskType.CLASSIFICATION,
+            clf_store.to_frame(),
+            y_background=clf_store.y,
+        )
+        out = explainer(clf_store.to_frame())
+        assert out.values.shape == (N, len(FEATURE_NAMES))
+        # Binary defaults to class 1, matching _extract_shap_array's convention.
+        assert [c["class_index"] for c in fake_shapiq.calls] == [1]
+
+    def test_multiclass_stacks_one_explainer_per_class(self, fake_shapiq):
+        rng = np.random.default_rng(42)
+        store = PipelineData(
+            X=rng.standard_normal((N, len(FEATURE_NAMES))),
+            feature_names=FEATURE_NAMES,
+            y=rng.integers(0, 3, N),
+        )
+        explainer = _select_explainer(
+            TabPFNClassifier(),
+            TaskType.CLASSIFICATION,
+            store.to_frame(),
+            y_background=store.y,
+        )
+        out = explainer(store.to_frame())
+
+        assert [c["class_index"] for c in fake_shapiq.calls] == [0, 1, 2]
+        assert out.values.shape == (N, len(FEATURE_NAMES), 3)
+        # _extract_shap_array collapses it exactly as it does for any other model.
+        assert _extract_shap_array(out).shape == (N, len(FEATURE_NAMES))
+
+    def test_explicit_class_index_is_honoured(self, clf_store, fake_shapiq):
+        """
+        shapiq explains one class per explainer, so class_index must reach the adapter.
+        Other explainers return all classes and are sliced by _extract_shap_array; if the
+        adapter ignored class_index, binary would silently return class 1 regardless.
+        """
+        explainer = _select_explainer(
+            TabPFNClassifier(),
+            TaskType.CLASSIFICATION,
+            clf_store.to_frame(),
+            y_background=clf_store.y,
+            class_index=0,
+        )
+        out = explainer(clf_store.to_frame())
+        assert out.values.shape == (N, len(FEATURE_NAMES))
+        assert [c["class_index"] for c in fake_shapiq.calls] == [0]
+
+    def test_regression_is_2d_with_no_class_index(self, reg_store, fake_shapiq):
+        explainer = _select_explainer(
+            TabPFNRegressor(),
+            TaskType.REGRESSION,
+            reg_store.to_frame(),
+            y_background=reg_store.y,
+        )
+        out = explainer(reg_store.to_frame())
+        assert out.values.shape == (N, len(FEATURE_NAMES))
+        assert [c["class_index"] for c in fake_shapiq.calls] == [None]
+
+    def test_context_is_subsampled(self, clf_store, fake_shapiq):
+        """The context is TabPFN's training set for every coalition — it must be capped."""
+        explainer = _TabPFNExplainerAdapter(
+            TabPFNClassifier(),
+            TaskType.CLASSIFICATION,
+            clf_store.to_frame(),
+            clf_store.y,
+            max_context=10,
+        )
+        explainer(clf_store.to_frame())
+        call = fake_shapiq.calls[0]
+        assert len(call["data"]) == 10
+        assert len(call["labels"]) == 10

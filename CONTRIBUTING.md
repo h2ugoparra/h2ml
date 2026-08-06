@@ -65,9 +65,11 @@ def elasticnet_r_params(trial) -> dict:
     }
 ```
 
-The registry is the single source of truth — no other files need changing for the model to be picked up by `build_models()`, the CV engine, and the optimizer.
+The registry is the single source of truth for `build_models()`, the CV engine, and the optimizer — those three need no other changes.
 
-For optional heavy dependencies (LightGBM, XGBoost, CatBoost), wrap the import in `try/except ImportError` as the existing entries do.
+**SHAP routing is the exception.** `_select_explainer` in `h2ml/features/shap_importance.py` falls through to `shap.TreeExplainer` for any model it does not recognise, so a non-tree model that is only added to the registry will fail in step 2. Add its class name to `_GENERIC_EXPLAINER_MODELS` (KernelSHAP via `predict`/`predict_proba`) under the right `TaskType`, or add a dedicated branch if it needs a specific explainer — `_TABPFN_MODELS` routing to `shapiq.TabPFNExplainer` is the worked example.
+
+For optional heavy dependencies (LightGBM, XGBoost, CatBoost), wrap the import in `try/except ImportError` as the existing entries do. Dependencies that are heavy *and* need credentials or change runtime characteristics (TabPFN) go a step further: gate registration on an environment variable so installing the extra never silently changes a run.
 
 ## Adding a y-transform
 

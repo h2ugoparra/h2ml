@@ -9,7 +9,7 @@
 | 3 | K-fold CV all models on reduced features; compare vs step 1 | `best_stage`, `step3_agg_df` |
 | 4 | Optuna HPO on winning (model, stage, transform) | `best_params`, `step4_agg_df` |
 
-Step 4 is skipped when the winning model has `opt_enabled=False` (LogisticRegression, GaussianNB, KNeighborsClassifier, AdaBoost, Bagging — and their regressor equivalents). `best_params` is set to registry defaults in that case.
+Step 4 is skipped when the winning model has `opt_enabled=False` (LogisticRegression, GaussianNB, KNeighborsClassifier, AdaBoost, Bagging, TabPFN — and their regressor equivalents). `best_params` is set to registry defaults in that case.
 
 If step 4 runs but does not improve on the step 3 baseline, `best_stage` stays at `"default"` or `"reduced"` and `best_params` is set to defaults — no HPO benefit was found.
 
@@ -24,6 +24,7 @@ Full parameter reference:
 | `task_type` | `"classification"` | `"classification"` or `"regression"` (case-insensitive); a `TaskType` member is also accepted |
 | `metric` | `"AUC"` | Optimisation target. Classification: `"AUC"`, `"AUC_PR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. Minimisation direction is derived automatically. |
 | `n_splits` | `5` | CV folds for steps 1 and 3 |
+| `n_jobs` | `-1` | Worker processes used to CV models in parallel (steps 1 and 3). `-1` uses all cores; must be non-zero. Lower it for memory-heavy models such as TabPFN, which loads a torch checkpoint per worker |
 | `opt_n_splits` | `3` | CV folds inside each Optuna trial (fewer = faster) |
 | `corr_threshold` | `0.7` | Feature drop threshold. A feature is removed if it exceeds this value in **any** of Pearson, Spearman, or Kendall correlation with a higher-ranked feature. |
 | `min_features` | `1` | Hard lower bound on retained features after the correlation filter |
@@ -105,8 +106,10 @@ See [Persistence](guides/persistence.md) and [Conformal Prediction](guides/confo
 
 ## Supported models
 
-**Classifiers** — LogisticRegression, GaussianNB, KNeighborsClassifier, RandomForestClassifier, GradientBoostingClassifier, HistGradientBoostingClassifier, SVC, ExtraTreesClassifier, BaggingClassifier, AdaBoostClassifier, LGBMClassifier\*, CatBoostClassifier\*, XGBClassifier\*
+**Classifiers** — LogisticRegression, GaussianNB, KNeighborsClassifier, RandomForestClassifier, GradientBoostingClassifier, HistGradientBoostingClassifier, SVC, ExtraTreesClassifier, BaggingClassifier, AdaBoostClassifier, LGBMClassifier\*, CatBoostClassifier\*, XGBClassifier\*, TabPFNClassifier†
 
-**Regressors** — PoissonRegressor, KNeighborsRegressor, RandomForestRegressor, GradientBoostingRegressor, HistGradientBoostingRegressor, SVR, ExtraTreesRegressor, BaggingRegressor, AdaBoostRegressor, LGBMRegressor\*, CatBoostRegressor\*, XGBRegressor\*
+**Regressors** — PoissonRegressor, KNeighborsRegressor, RandomForestRegressor, GradientBoostingRegressor, HistGradientBoostingRegressor, SVR, ExtraTreesRegressor, BaggingRegressor, AdaBoostRegressor, LGBMRegressor\*, CatBoostRegressor\*, XGBRegressor\*, TabPFNRegressor†
 
 \* Registered only when the package is installed (`uv sync --extra boosting`). Custom models can be injected via the `models` argument to `H2MLPipeline`.
+
+† Registered only when `tabpfn` is installed **and** `H2ML_ENABLE_TABPFN=1` is set — see [Installation](installation.md#tabpfn-optional). TabPFN is a pretrained transformer: it is never tuned (`opt_enabled=False`), its SHAP values come from `shapiq.TabPFNExplainer` rather than the usual shap explainers, and it loads a torch checkpoint per CV worker. Lower `n_jobs` when enabling it.

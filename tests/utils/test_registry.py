@@ -6,6 +6,8 @@ Tests for ModelEntry, CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY, and build_models(
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -175,3 +177,73 @@ class TestBuildModels:
         clf_names = {m.name for m in build_models("classification")}
         reg_names = {m.name for m in build_models("regression")}
         assert clf_names != reg_names
+
+
+# ---------------------------------------------------------------------------
+# TabPFN (opt-in via H2ML_ENABLE_TABPFN=1)
+# ---------------------------------------------------------------------------
+
+
+def _reload_registry(monkeypatch, enabled: str | None):
+    """Re-import the registry module with H2ML_ENABLE_TABPFN set or unset."""
+    import importlib
+
+    import h2ml.utils.registry as registry_module
+
+    if enabled is None:
+        monkeypatch.delenv("H2ML_ENABLE_TABPFN", raising=False)
+    else:
+        monkeypatch.setenv("H2ML_ENABLE_TABPFN", enabled)
+    return importlib.reload(registry_module)
+
+
+class TestTabPFNRegistration:
+    """
+    TabPFN must stay invisible unless explicitly enabled — installing the extra
+    should never silently change an existing pipeline's model set or runtime.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _restore_registry(self, monkeypatch):
+        # These reloads rebind module-level dicts that other tests import directly,
+        # so restore the ambient environment's version afterwards.
+        original = os.environ.get("H2ML_ENABLE_TABPFN")
+        yield
+        _reload_registry(monkeypatch, original)
+
+    def test_absent_when_env_var_unset(self, monkeypatch):
+        mod = _reload_registry(monkeypatch, None)
+        assert "TabPFNClassifier" not in mod.CLASSIFIER_REGISTRY
+        assert "TabPFNRegressor" not in mod.REGRESSOR_REGISTRY
+
+    def test_absent_when_env_var_is_not_one(self, monkeypatch):
+        mod = _reload_registry(monkeypatch, "0")
+        assert "TabPFNClassifier" not in mod.CLASSIFIER_REGISTRY
+
+    def test_enabled_without_tabpfn_installed_does_not_raise(self, monkeypatch):
+        """A missing tabpfn is a warning, not an ImportError that breaks every h2ml import."""
+        try:
+            import tabpfn  # type: ignore[import-not-found]  # noqa: F401
+        except ImportError:
+            pass
+        else:
+            pytest.skip("tabpfn is installed; this test covers the missing-dependency path")
+
+        mod = _reload_registry(monkeypatch, "1")
+        assert "TabPFNClassifier" not in mod.CLASSIFIER_REGISTRY
+
+    def test_entries_registered_when_enabled(self, monkeypatch):
+        pytest.importorskip("tabpfn", reason="tabpfn not installed (install the [tabpfn] extra)")
+
+        mod = _reload_registry(monkeypatch, "1")
+        for registry, key in (
+            (mod.CLASSIFIER_REGISTRY, "TabPFNClassifier"),
+            (mod.REGRESSOR_REGISTRY, "TabPFNRegressor"),
+        ):
+            entry = registry[key]
+            # opt_enabled=False is what makes step 4 skip HPO for TabPFN.
+            assert entry.opt_enabled is False
+            assert entry.param_fn is None
+            # TabPFN preprocesses internally; an external scaler would be redundant.
+            assert entry.requires_scaling is False
+            assert entry.supports_class_weight is False
