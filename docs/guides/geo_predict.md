@@ -4,10 +4,12 @@
 
 The `h2ml.geo` module bridges trained `FinalModel`s and hive-partitioned parquet feature stores (via `h2mare.ParquetIndexer`) to generate spatial predictions at scale.
 
-Requires the `[geo]` optional dependencies:
+No extra install is required — `h2mare` is a core dependency and brings in `cartopy` and `polars`:
 
 ```bash
-uv pip install h2ml[geo]
+uv add h2ml
+# or
+pip install h2ml
 ```
 
 ## predict_for_year
