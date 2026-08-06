@@ -6,7 +6,7 @@ A 4-step AutoML pipeline wrapping sklearn-compatible estimators.
 
 ## Tech Stack
 
-Python 3.11+ (pinned to 3.13 locally via `.python-version`). Key libraries: `scikit-learn`, `optuna` (HPO), `shap` (feature selection), `joblib` (parallel CV), `lightgbm`/`xgboost`/`catboost` (`[boosting]` extra), `h2mare` (core dep; `polars` is also core; `[geo]` extra adds `cartopy` for `predict_map`). Dev: `uv`, `ruff`, `pytest`, `tox`, `mkdocs`.
+Python 3.11+ (pinned to 3.13 locally via `.python-version`). Key libraries: `scikit-learn`, `optuna` (HPO), `shap` (feature selection), `joblib` (parallel CV), `lightgbm`/`xgboost`/`catboost` (`[boosting]` extra), `h2mare` (core dep, brings in `cartopy` and `polars`; there is no `[geo]` extra — removed in 0.3.1). Dev: `uv`, `ruff`, `pytest`, `tox`, `mkdocs`.
 
 ## Commands
 
@@ -112,7 +112,7 @@ compare_results(results, labels, metric, n_folds)  # sort direction auto-derived
 
 ## h2mare dependency
 
-`h2mare` (PyPI, core dependency) — geospatial storage (`ParquetIndexer`), aggregation, map plotting. Import paths in `h2ml/geo/geo_predict.py` use `h2mare.*`. The `[geo]` extra adds `cartopy`, required only for `predict_map` (`polars` is a core dependency).
+`h2mare` (PyPI, core dependency) — geospatial storage (`ParquetIndexer`), aggregation, map plotting. Import paths in `h2ml/geo/geo_predict.py` use `h2mare.*`. It declares `cartopy>=0.23.0` itself, so `cartopy` (like `polars`) arrives with the base install; there is no `[geo]` extra.
 
 ## Git workflow
 

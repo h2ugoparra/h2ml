@@ -28,7 +28,8 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        # The [geo] extra (h2mare, cartopy, polars) is not needed for the core test suite.
+        # h2mare, cartopy and polars are core dependencies, so a plain sync covers
+        # the geo tests too. There is no [geo] extra (removed in 0.3.1).
         run: uv sync --python ${{ matrix.python-version }}
 
       - name: Run tests

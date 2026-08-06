@@ -24,13 +24,7 @@ uv add h2ml[boosting]
 pip install h2ml[boosting]
 ```
 
-Spatial map inference via `h2ml.geo.geo_predict` needs no extra — `h2mare` is a core dependency and pulls in `cartopy` and `polars`. The `[geo]` extra is retained for backward compatibility and resolves to the same environment as the plain install:
-
-```bash
-uv add h2ml[geo]
-# or
-pip install h2ml[geo]
-```
+Spatial map inference via `h2ml.geo.geo_predict` needs no extra — `h2mare` is a core dependency and pulls in `cartopy` and `polars`. (The `[geo]` extra was removed in 0.3.1; it only ever listed packages the base install already provided.)
 
 A runnable example using public sklearn datasets is in [`examples/quickstart.ipynb`](examples/quickstart.ipynb).
 

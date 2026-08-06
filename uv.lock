@@ -1189,7 +1189,7 @@ wheels = [
 
 [[package]]
 name = "h2ml"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "h2mare" },
@@ -1216,11 +1216,6 @@ boosting = [
     { name = "lightgbm" },
     { name = "xgboost" },
 ]
-geo = [
-    { name = "cartopy" },
-    { name = "h2mare" },
-    { name = "polars" },
-]
 
 [package.dev-dependencies]
 dev = [
@@ -1237,10 +1232,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cartopy", marker = "extra == 'geo'", specifier = ">=0.25.0" },
     { name = "catboost", marker = "extra == 'boosting'", specifier = ">=1.2.10" },
     { name = "h2mare", specifier = ">=0.1.1" },
-    { name = "h2mare", marker = "extra == 'geo'", specifier = ">=0.1.1" },
     { name = "joblib", specifier = ">=1.5.3" },
     { name = "lightgbm", marker = "extra == 'boosting'", specifier = ">=4.6.0" },
     { name = "loguru", specifier = ">=0.7.3" },
@@ -1249,7 +1242,6 @@ requires-dist = [
     { name = "optuna", specifier = ">=4.7.0" },
     { name = "pandas", specifier = ">=3.0.1" },
     { name = "polars", specifier = ">=1.38.1" },
-    { name = "polars", marker = "extra == 'geo'", specifier = ">=1.38.1" },
     { name = "pyarrow", specifier = ">=23.0.1" },
     { name = "scikit-learn", specifier = ">=1.5.0" },
     { name = "scipy", specifier = ">=1.13.0" },
@@ -1259,7 +1251,7 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.66.0" },
     { name = "xgboost", marker = "extra == 'boosting'", specifier = ">=3.2.0" },
 ]
-provides-extras = ["boosting", "geo"]
+provides-extras = ["boosting"]
 
 [package.metadata.requires-dev]
 dev = [
