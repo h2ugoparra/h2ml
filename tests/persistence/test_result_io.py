@@ -14,12 +14,19 @@ Covers:
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from h2ml.features.feature_store import PipelineData
-from h2ml.persistence.result_io import load_result, save_result
+from h2ml.persistence.result_io import (
+    _SAVED_FIELDS,
+    _UNSAVED_FIELDS,
+    load_result,
+    save_result,
+)
 from h2ml.pipeline.pipeline import PipelineResult
 
 # ---------------------------------------------------------------------------
@@ -371,3 +378,49 @@ class TestEdgeCases:
         loaded = load_result(tmp_path / "run")
         assert loaded.best_params["n_estimators"] == 100
         assert abs(loaded.best_params["learning_rate"] - 0.1) < 1e-5
+
+
+# ---------------------------------------------------------------------------
+# Field registry drift
+# ---------------------------------------------------------------------------
+
+
+class TestFieldRegistryDrift:
+    """save_result() only warns about unclassified fields, and the warning fires
+    at runtime where nobody reads it. These assert the registries stay in sync
+    with PipelineResult at test time instead."""
+
+    def test_every_field_is_classified(self):
+        """A new PipelineResult field must be added to _SAVED_FIELDS or
+        _UNSAVED_FIELDS — otherwise it is silently dropped on reload."""
+        fields = {f.name for f in dataclasses.fields(PipelineResult)}
+        unaccounted = fields - _SAVED_FIELDS - _UNSAVED_FIELDS
+        assert not unaccounted, (
+            f"PipelineResult fields {sorted(unaccounted)} are in neither registry "
+            "and will be lost on reload — classify them in result_io.py"
+        )
+
+    def test_no_stale_registry_entries(self):
+        """The reverse direction, which the runtime guard does not cover: a
+        renamed or removed field leaves a dead entry behind."""
+        fields = {f.name for f in dataclasses.fields(PipelineResult)}
+        stale = (_SAVED_FIELDS | _UNSAVED_FIELDS) - fields
+        assert not stale, (
+            f"result_io.py registries name {sorted(stale)}, which are not "
+            "PipelineResult fields — drop them or fix the spelling"
+        )
+
+    def test_registries_are_disjoint(self):
+        """A field in both registries makes the save path ambiguous."""
+        overlap = _SAVED_FIELDS & _UNSAVED_FIELDS
+        assert not overlap, f"fields classified as both saved and unsaved: {sorted(overlap)}"
+
+    def test_unsaved_fields_are_none_after_load(self, tmp_path):
+        """The documented contract for the excluded fields: they come back None,
+        rather than carrying a stale value from the saving session."""
+        result = _full_result()
+        save_result(result, tmp_path / "run")
+        loaded = load_result(tmp_path / "run")
+
+        for name in _UNSAVED_FIELDS:
+            assert getattr(loaded, name) is None, f"{name} should be None after load"
