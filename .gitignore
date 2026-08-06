@@ -51,6 +51,9 @@ data/external/*
 # Docs build output
 site/
 
+# graphify knowledge-graph output (regenerable via /graphify)
+graphify-out/
+
 # Jupyter
 .ipynb_checkpoints/
 
