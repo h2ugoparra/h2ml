@@ -15,8 +15,8 @@ uv run pytest                    # all tests
 uv run pytest tests/feature/     # module tests
 uv run pytest path::Class::test  # single test
 uv run tox                       # across Python versions
-uv run ruff check h2ml/          # lint
-uv run ruff format h2ml/         # format
+uv run ruff check h2ml/ tests/   # lint (same scope as CI)
+uv run ruff format h2ml/ tests/  # format (CI uses --check and fails on drift)
 uv run mkdocs serve              # docs preview
 uv run mkdocs build              # docs build
 ```

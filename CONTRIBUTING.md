@@ -87,5 +87,5 @@ If the transform can legitimately return `None` (e.g. winsorize when there are n
 
 - Open an issue first for non-trivial changes so we can align on the approach.
 - Keep PRs focused on a single concern.
-- Include or update tests for any changed behaviour. Run `uv run pytest` before pushing.
+- Include or update tests for any changed behaviour. Run `uv run pytest` and both `ruff` commands (see [Linting](#linting)) before pushing.
 - The CI matrix tests Python 3.11, 3.12 and 3.13 (`tox` uses the same three). The supported floor is 3.11 — avoid features not available there. Note that `.python-version` pins **3.13** locally, so a syntax or stdlib feature that works on your machine can still fail the 3.11 leg; run `uv run tox` to check all three before pushing.
