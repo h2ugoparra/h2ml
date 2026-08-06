@@ -26,13 +26,13 @@ Without this extra, the pipeline runs all sklearn models only. The registry dete
 
 ## With spatial inference
 
-The geo module (`h2ml.geo.geo_predict`) depends on [h2mare](https://github.com/h2ugoparra/h2mare), available on PyPI via the `[geo]` extra:
+The geo module (`h2ml.geo.geo_predict`) depends on [h2mare](https://github.com/h2ugoparra/h2mare), which is a **core** dependency — it is installed by the base install, along with the `cartopy` and `polars` it requires. Nothing extra is needed:
 
 ```bash
-uv pip install h2ml[geo]
-# or
-pip install h2ml[geo]
+pip install h2ml
 ```
+
+The `[geo]` extra is retained for backward compatibility. It lists `h2mare`, `cartopy` and `polars`, all of which the base install already provides, so `pip install h2ml[geo]` resolves to the same environment as `pip install h2ml`.
 
 ## Development setup
 

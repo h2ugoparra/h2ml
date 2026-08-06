@@ -14,7 +14,7 @@ pip install h2ml
 uv add h2ml
 ```
 
-The [`h2mare`](https://github.com/h2ugoparra/h2mare) companion package is included with the base install.
+The [`h2mare`](https://github.com/h2ugoparra/h2mare) companion package and `polars` are core dependencies, included with the base install.
 
 For boosting libraries (LightGBM, XGBoost, CatBoost):
 
@@ -24,12 +24,10 @@ pip install h2ml[boosting]
 uv add h2ml[boosting]
 ```
 
-For spatial map inference via `h2ml.geo.geo_predict` (adds `cartopy` and `polars` for `predict_map`):
+Spatial map inference via `h2ml.geo.geo_predict` needs no extra — `h2mare` is a core dependency and pulls in `cartopy` and `polars`. The `[geo]` extra is retained for backward compatibility but currently installs nothing beyond the base install:
 
 ```bash
-pip install h2ml[geo]
-# or
-uv add h2ml[geo]
+pip install h2ml[geo]   # equivalent to `pip install h2ml`
 ```
 
 A runnable example using public sklearn datasets is in [`examples/quickstart.ipynb`](examples/quickstart.ipynb).
@@ -291,7 +289,7 @@ All functions accept an optional `save_path`; omit it to call `plt.show()` inste
 
 ## Spatial inference (h2mare integration)
 
-`h2ml.geo.geo_predict` provides functions for spatial-temporal prediction on gridded data via the `h2mare` package. Requires the `[geo]` extra (`cartopy` and `polars`).
+`h2ml.geo.geo_predict` provides functions for spatial-temporal prediction on gridded data via the `h2mare` package, which is a core dependency — no extra is required.
 
 ```python
 from h2ml.geo.geo_predict import predict_map
