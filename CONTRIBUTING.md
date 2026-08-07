@@ -65,7 +65,9 @@ def elasticnet_r_params(trial) -> dict:
     }
 ```
 
-The registry is the single source of truth — no other files need changing for the model to be picked up by `build_models()`, the CV engine, and the optimizer.
+The registry is the single source of truth for `build_models()`, the CV engine, and the optimizer — those three need no other changes.
+
+**SHAP routing is the exception.** `_select_explainer` in `h2ml/features/shap_importance.py` falls through to `shap.TreeExplainer` for any model it does not recognise, so a **non-tree** model that is only added to the registry will fail in step 2. Add its class name to `_GENERIC_EXPLAINER_MODELS` under the right `TaskType` to route it through KernelSHAP (`predict` / `predict_proba` based) instead.
 
 For optional heavy dependencies (LightGBM, XGBoost, CatBoost), wrap the import in `try/except ImportError` as the existing entries do.
 

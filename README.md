@@ -115,6 +115,7 @@ Step 4 is skipped when the winning model has `opt_enabled=False` in the registry
 | `task_type` | `"classification"` | `"classification"` or `"regression"` (case-insensitive); a `TaskType` member is also accepted |
 | `metric` | `"AUC"` | Short metric name for model selection and HPO. Minimisation direction is derived automatically. Classification: `"AUC"`, `"AUC_PR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. |
 | `n_splits` | `5` | Folds for steps 1 and 3 |
+| `n_jobs` | `-1` | Parallel workers for CV in steps 1 and 3; must be non-zero |
 | `opt_n_splits` | `3` | Folds used inside Optuna (fewer = faster) |
 | `corr_threshold` | `0.7` | Correlation threshold for dropping features in step 2. A feature is dropped if it exceeds this value in any of Pearson, Spearman, or Kendall correlation with a higher-ranked feature. |
 | `n_trials` | `50` | Optuna trials in step 4 |
