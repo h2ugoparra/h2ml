@@ -69,6 +69,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 |-----------|---------|--------|
 | `metric` | `"AUC"` | Model selection and HPO metric. Classification: `"AUC"`, `"AUC_PR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. |
 | `n_splits` | `5` | CV folds for model screening (steps 1 and 3) |
+| `n_jobs` | `-1` | Worker processes for parallel CV in steps 1 and 3; must be non-zero |
 | `corr_threshold` | `0.7` | Drop feature if it exceeds this in any of Pearson, Spearman, or Kendall with a retained feature |
 | `min_features` | `1` | Minimum features retained after correlation filter |
 | `n_trials` | `50` | Optuna trials in step 4 |

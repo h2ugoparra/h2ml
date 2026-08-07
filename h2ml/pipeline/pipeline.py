@@ -61,6 +61,11 @@ class PipelineConfig:
                              cost. Default: 5.
         random_state:        Seed for fold splitting and model initialisation. Default: 42.
         verbose:             Log step-by-step progress. Default: False.
+        n_jobs:              Worker processes used to CV models in parallel (steps 1 and 3).
+                             -1 uses all cores. Lower it when memory is the constraint
+                             rather than CPU — each worker holds its own copy of the
+                             model being fitted — or to leave headroom on a shared
+                             machine. Must not be 0. Default: -1.
 
         corr_threshold:      (Step 2) Drop a feature when its correlation with any
                              already-retained feature exceeds this value in Pearson,
@@ -124,6 +129,7 @@ class PipelineConfig:
     n_trials: int = 50
     random_state: int = 42
     verbose: bool = False
+    n_jobs: int = -1
     min_features: int = 1
     n_hpo_repeats: int = 1
     n_blocks_per_fold: int = 5
@@ -170,6 +176,8 @@ class PipelineConfig:
             raise ValueError(f"n_hpo_repeats must be >= 1, got {self.n_hpo_repeats}")
         if self.n_blocks_per_fold < 1:
             raise ValueError(f"n_blocks_per_fold must be >= 1, got {self.n_blocks_per_fold}")
+        if self.n_jobs == 0:
+            raise ValueError("n_jobs must be non-zero (-1 uses all cores), got 0")
         if self.spatial_cv_method not in ("block", "spcv"):
             raise ValueError(f"spatial_cv_method must be 'block' or 'spcv', got {self.spatial_cv_method!r}")
 
@@ -719,7 +727,7 @@ class H2MLPipeline:
 
         raw = cast(
             list[tuple[str, CVResult]],
-            Parallel(n_jobs=-1, backend="loky")(
+            Parallel(n_jobs=self.config.n_jobs, backend="loky")(
                 delayed(_run_one)(tn, st, m) for tn, st in stores.items() for m in self.models
             ),
         )
@@ -825,6 +833,7 @@ class H2MLPipeline:
             inverse_fn=inverse_fn,
             coords=reduced_store.coords,
             spatial=self.config.spatial_cv,
+            n_jobs=self.config.n_jobs,
             _splitter=result.splitter,
         )
         result.step3_reduced_stores = {transform_name: reduced_store}

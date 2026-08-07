@@ -24,6 +24,7 @@ Full parameter reference:
 | `task_type` | `"classification"` | `"classification"` or `"regression"` (case-insensitive); a `TaskType` member is also accepted |
 | `metric` | `"AUC"` | Optimisation target. Classification: `"AUC"`, `"AUC_PR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. Minimisation direction is derived automatically. |
 | `n_splits` | `5` | CV folds for steps 1 and 3 |
+| `n_jobs` | `-1` | Worker processes used to CV models in parallel (steps 1 and 3). `-1` uses all cores; must be non-zero. Lower it when memory rather than CPU is the constraint, or to leave headroom on a shared machine. |
 | `opt_n_splits` | `3` | CV folds inside each Optuna trial (fewer = faster) |
 | `corr_threshold` | `0.7` | Feature drop threshold. A feature is removed if it exceeds this value in **any** of Pearson, Spearman, or Kendall correlation with a higher-ranked feature. |
 | `min_features` | `1` | Hard lower bound on retained features after the correlation filter |
