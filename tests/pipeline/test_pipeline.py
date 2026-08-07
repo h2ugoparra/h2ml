@@ -220,6 +220,22 @@ class TestPipelineConfig:
         with pytest.raises(ValueError, match="opt_n_splits"):
             PipelineConfig(opt_n_splits=1)
 
+    def test_n_jobs_defaults_to_all_cores(self):
+        assert PipelineConfig().n_jobs == -1
+
+    def test_n_jobs_zero_raises(self):
+        """0 is joblib's one meaningless value — catch it at config time, not mid-run."""
+        with pytest.raises(ValueError, match="n_jobs"):
+            PipelineConfig(n_jobs=0)
+
+    def test_n_jobs_serial_matches_parallel(self, clf_store):
+        """n_jobs only changes how work is distributed, never the results."""
+        parallel = H2MLPipeline(models=_clf_steps(), config=_clf_config()).run_step1_only(clf_store)
+        serial = H2MLPipeline(models=_clf_steps(), config=_clf_config(n_jobs=1)).run_step1_only(clf_store)
+
+        assert serial.best_model_name == parallel.best_model_name
+        assert serial.best_model_value == pytest.approx(parallel.best_model_value)
+
     def test_opt_n_splits_below_half_n_splits_warns(self):
         """opt_n_splits < n_splits // 2 should emit a loguru warning."""
         from loguru import logger
@@ -1068,7 +1084,9 @@ class TestCVWarnings:
         call_count = [0]
 
         def patched_run_all(steps, X, y, **kwargs):
-            results = original_run_all(steps, X, y, n_jobs=1, **kwargs)
+            # Force serial regardless of what config.n_jobs the pipeline passed.
+            kwargs["n_jobs"] = 1
+            results = original_run_all(steps, X, y, **kwargs)
             # Inject a fake failed fold into the first result
             if call_count[0] == 0:
                 results[0].failed_folds = [0, 1]
@@ -1135,7 +1153,9 @@ class TestSpatialCVPipeline:
 
         def spy_run_all(steps, X, y, **kwargs):
             coords_seen.append(kwargs.get("coords"))
-            return original_run_all(steps, X, y, n_jobs=1, **kwargs)
+            # Force serial regardless of what config.n_jobs the pipeline passed.
+            kwargs["n_jobs"] = 1
+            return original_run_all(steps, X, y, **kwargs)
 
         with (
             _mock_selector(),
