@@ -14,8 +14,6 @@ uv add h2ml
 pip install h2ml
 ```
 
-The [`h2mare`](https://github.com/h2ugoparra/h2mare) companion package and `polars` are core dependencies, included with the base install.
-
 For boosting libraries (LightGBM, XGBoost, CatBoost):
 
 ```bash
@@ -23,8 +21,6 @@ uv add h2ml[boosting]
 # or
 pip install h2ml[boosting]
 ```
-
-Spatial map inference via `h2ml.geo.geo_predict` needs no extra — `h2mare` is a core dependency and pulls in `cartopy` and `polars`. (The `[geo]` extra was removed in 0.3.1; it only ever listed packages the base install already provided.)
 
 A runnable example using public sklearn datasets is in [`examples/quickstart.ipynb`](examples/quickstart.ipynb).
 
