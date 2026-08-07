@@ -147,7 +147,7 @@ Set `store.coords` to an `(n_samples, 2)` array of spatial coordinates to activa
 
 \* Registered only when the package is installed. Custom models can be injected by passing a `models` list directly to `H2MLPipeline`.
 
-† Registered only when `tabpfn` is installed **and** `H2ML_ENABLE_TABPFN=1` is set. Never tuned; SHAP via `shapiq.TabPFNExplainer`. See the installation docs.
+† Registered only when `tabpfn` is installed **and** `H2ML_ENABLE_TABPFN=1` is set. Never tuned; SHAP via `shapiq.TabPFNExplainer`. Its weights are vendor-hosted and **not pinned by `uv.lock`**, so treat it as an exploration tool rather than part of a reproducible run — `result.model_provenance` records the version used. See the installation docs.
 
 ## `PipelineResult`
 
@@ -161,6 +161,7 @@ result.best_feature_stage         # "default" | "reduced" — feature store used
 result.y_transform                # winning y-transform (regression only)
 result.cv_type                    # "spatial" | "random" — set from store.coords
 result.cv_warnings                # list of warning strings for models with failed folds
+result.model_provenance           # {model: version} for models not pinned by uv.lock (TabPFN)
 result.step1_agg_df               # per-model mean/std metrics from step 1
 result.features_reduced           # PipelineData after feature selection
 result.selector.importance_summary()  # SHAP importances as a DataFrame

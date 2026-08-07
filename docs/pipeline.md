@@ -61,6 +61,7 @@ result.cv_type                # "spatial" | "random"
 result.spatial_cv_metric      # "euclidean" | "haversine" — forwarded from config
 result.time_bin_resolution    # "month" | "season" — forwarded from config
 result.cv_warnings            # list[str] — models with failed CV folds
+result.model_provenance       # dict[str, str] — versions for models not pinned by uv.lock (TabPFN)
 result.metric                 # short metric name, e.g. "AUC"
 ```
 
@@ -113,3 +114,5 @@ See [Persistence](guides/persistence.md) and [Conformal Prediction](guides/confo
 \* Registered only when the package is installed (`uv sync --extra boosting`). Custom models can be injected via the `models` argument to `H2MLPipeline`.
 
 † Registered only when `tabpfn` is installed **and** `H2ML_ENABLE_TABPFN=1` is set — see [Installation](installation.md#tabpfn-optional). TabPFN is a pretrained transformer: it is never tuned (`opt_enabled=False`), its SHAP values come from `shapiq.TabPFNExplainer` rather than the usual shap explainers, and it loads a torch checkpoint per CV worker. Lower `n_jobs` when enabling it.
+
+Unlike every other model here, TabPFN's weights are **not pinned by `uv.lock`** — they are downloaded from a vendor-controlled repo, so identical code can rank models differently on another machine or at a later date. Use it to explore whether a foundation model beats your tuned baselines, not as part of a run you need to reproduce exactly. `result.model_provenance` records the version it used.

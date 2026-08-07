@@ -215,6 +215,16 @@ class TestTabPFNRegistration:
         mod = _reload_registry(monkeypatch, None)
         assert "TabPFNClassifier" not in mod.CLASSIFIER_REGISTRY
         assert "TabPFNRegressor" not in mod.REGRESSOR_REGISTRY
+        assert mod.MODEL_PROVENANCE == {}
+
+    def test_collect_model_provenance_filters_by_name(self, monkeypatch):
+        """Runs made only of lockfile-pinned models carry no provenance entries."""
+        mod = _reload_registry(monkeypatch, None)
+        mod.MODEL_PROVENANCE["TabPFNClassifier"] = "tabpfn==9.9.9"
+        assert mod.collect_model_provenance(["RandomForestClassifier"]) == {}
+        assert mod.collect_model_provenance(["RandomForestClassifier", "TabPFNClassifier"]) == {
+            "TabPFNClassifier": "tabpfn==9.9.9"
+        }
 
     def test_absent_when_env_var_is_not_one(self, monkeypatch):
         mod = _reload_registry(monkeypatch, "0")
@@ -231,6 +241,18 @@ class TestTabPFNRegistration:
 
         mod = _reload_registry(monkeypatch, "1")
         assert "TabPFNClassifier" not in mod.CLASSIFIER_REGISTRY
+
+    def test_provenance_recorded_when_enabled(self, monkeypatch):
+        """
+        TabPFN's weights aren't pinned by uv.lock, so a run is only auditable if we
+        record which ones it used.
+        """
+        pytest.importorskip("tabpfn", reason="tabpfn not installed (install the [tabpfn] extra)")
+
+        mod = _reload_registry(monkeypatch, "1")
+        info = mod.MODEL_PROVENANCE["TabPFNClassifier"]
+        assert "tabpfn==" in info
+        assert mod.MODEL_PROVENANCE["TabPFNRegressor"] == info
 
     def test_entries_registered_when_enabled(self, monkeypatch):
         pytest.importorskip("tabpfn", reason="tabpfn not installed (install the [tabpfn] extra)")

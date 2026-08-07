@@ -187,6 +187,20 @@ class TestScalarRoundTrip:
         loaded = load_result(tmp_path / "run")
         assert loaded.cv_warnings == []
 
+    def test_model_provenance_preserved(self, tmp_path):
+        """Provenance is the audit trail for weights uv.lock can't pin — it must survive reload."""
+        result = _full_result()
+        result.model_provenance = {"TabPFNClassifier": "tabpfn==8.2.0, model_version=v3"}
+        save_result(result, tmp_path / "run")
+        loaded = load_result(tmp_path / "run")
+        assert loaded.model_provenance == {"TabPFNClassifier": "tabpfn==8.2.0, model_version=v3"}
+
+    def test_model_provenance_defaults_to_empty(self, tmp_path):
+        result = _full_result()
+        save_result(result, tmp_path / "run")
+        loaded = load_result(tmp_path / "run")
+        assert loaded.model_provenance == {}
+
     def test_metric_preserved(self, tmp_path):
         result = _full_result()
         result.metric = "AUC"

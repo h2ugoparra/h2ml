@@ -87,7 +87,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 
 ## PipelineResult
 
-Key fields: `best_model_name`, `best_stage`, `best_feature_stage`, `best_params`, `y_transform`, `metric`, `cv_type`, `cv_warnings`, `splitter`, `step3_reduced_stores`. Note: `splitter` and `step3_reduced_stores` are not persisted — both are `None` after `PipelineResult.load()`.
+Key fields: `best_model_name`, `best_stage`, `best_feature_stage`, `best_params`, `y_transform`, `metric`, `cv_type`, `cv_warnings`, `model_provenance`, `splitter`, `step3_reduced_stores`. Note: `splitter` and `step3_reduced_stores` are not persisted — both are `None` after `PipelineResult.load()`.
 
 ```python
 result.summary(metric=None, ascending=False)   # combined agg DataFrame across all stages
@@ -110,7 +110,7 @@ compare_results(results, labels, metric, n_folds)  # sort direction auto-derived
 - **y-transform names**: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`, `"winlog"`, `"winsqrt"`; winsorize variants silently skipped when no outliers
 - **`n_jobs=1`** in optimizer always — parallel Optuna trials cause resource-tracker warnings on Windows
 - **Boosting extras** require `uv sync --extra boosting`
-- **TabPFN** is double-gated: `uv sync --extra tabpfn` **and** `H2ML_ENABLE_TABPFN=1`. Never tuned (`opt_enabled=False`); needs PriorLabs auth on first fit (`TABPFN_TOKEN` when headless); loads a torch checkpoint per CV worker, so lower `PipelineConfig.n_jobs`. Not in tox extras — CI has no credentials
+- **TabPFN** is double-gated: `uv sync --extra tabpfn` **and** `H2ML_ENABLE_TABPFN=1`. Never tuned (`opt_enabled=False`); needs PriorLabs auth on first fit (`TABPFN_TOKEN` when headless); loads a torch checkpoint per CV worker, so lower `PipelineConfig.n_jobs`. Not in tox extras — CI has no credentials. Its weights are vendor-hosted and **not pinned by `uv.lock`** — an exploration tool, not for reproducible runs; `result.model_provenance` records the version. Pulls `lightgbm` transitively, so the LGBM models register too
 
 ## h2mare dependency
 

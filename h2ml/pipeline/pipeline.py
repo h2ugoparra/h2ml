@@ -39,7 +39,7 @@ from h2ml.features.selector import FeatureSelector
 from h2ml.optimization.optimizer import run_study
 from h2ml.pipeline.cv import CrossValidator, CVResult
 from h2ml.preprocessing.transform_stores import build_transform_stores
-from h2ml.utils.registry import build_models
+from h2ml.utils.registry import build_models, collect_model_provenance
 
 
 @dataclass
@@ -242,6 +242,11 @@ class PipelineResult:
                               build_final_model to build LocalConformalCalibration.
         time_bin_resolution:  Temporal bin resolution forwarded from PipelineConfig.
         cv_warnings:          Warnings for models with ≥1 failed CV fold (steps 1 & 3).
+        model_provenance:     Model name → version string, for models not pinned by
+                              uv.lock alone (currently only TabPFN, which runs
+                              vendor-hosted pretrained weights). Empty for runs made
+                              up entirely of models whose behaviour the lockfile fixes.
+                              Record it alongside results you intend to reproduce.
         metric:               Short selection metric name, e.g. "AUC" or "R2".
         splitter:             Splitter built once in step 1 and reused in steps 3-4.
                               Not persisted.
@@ -285,6 +290,9 @@ class PipelineResult:
     time_bin_resolution: str = "month"
     # Models that had at least one failed CV fold — populated by step 1 and step 3
     cv_warnings: list[str] = field(default_factory=list)
+    # Version info for models whose weights are not pinned by uv.lock (TabPFN) —
+    # populated by step 1 so a completed run stays auditable
+    model_provenance: dict[str, str] = field(default_factory=dict)
     # Short metric name used for model selection, e.g. "AUC" or "R2" (from PipelineConfig)
     metric: Optional[str] = None
     # Splitter built once in step 1 and reused in steps 3 and 4 (not persisted)
@@ -744,6 +752,7 @@ class H2MLPipeline:
             all_cv_results.extend(cv_results)
             all_fold_dfs.append(compute_metrics_all(cv_results, metadata=metadata))
 
+        result.model_provenance = collect_model_provenance(m.name for m in self.models)
         result.step1_cv_result = all_cv_results
         result.step1_fold_df = pd.concat(all_fold_dfs, ignore_index=True)
         result.step1_agg_df = aggregate_metrics(result.step1_fold_df)
@@ -1210,6 +1219,14 @@ class H2MLPipeline:
         if result.cv_warnings:
             for w in result.cv_warnings:
                 logger.warning(f"[CV] {w}")
+        if result.best_model_name in result.model_provenance:
+            # Warn, not info: the winning model's weights are not pinned by uv.lock,
+            # so this line is the only record of what actually produced the result.
+            logger.warning(
+                f"[provenance] {result.best_model_name} runs vendor-hosted pretrained weights "
+                f"({result.model_provenance[result.best_model_name]}). This run is not reproducible "
+                "from the lockfile alone — record this alongside the result."
+            )
         if not self.config.verbose:
             return
         logger.info("=" * 60)

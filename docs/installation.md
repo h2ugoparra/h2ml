@@ -56,13 +56,44 @@ configuration is needed. On CPU it is slow; treat ~5 000 samples as a practical 
 TabPFN's pretraining limits it raises, and the CV engine reports the model as skipped in
 `result.cv_warnings` rather than failing the run.
 
+Note that **`pip`/`uv` install a CPU-only `torch` wheel on Windows**, so an NVIDIA GPU sits unused
+even though it is present — h2ml warns about this at registration. To use the GPU, install a CUDA
+build explicitly, matching your driver:
+
+```bash
+uv pip install torch --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
+```
+
+Verify with `python -c "import torch; print(torch.cuda.is_available())"`. This is deliberately not
+pinned in `pyproject.toml`, since the right CUDA build depends on your machine.
+
 **Parallelism.** Each CV worker loads its own checkpoint, and `device="auto"` claims *every*
 visible CUDA GPU. Lower `PipelineConfig(n_jobs=...)` — or set `CUDA_VISIBLE_DEVICES` — when
 running TabPFN, or you can exhaust RAM or VRAM.
 
-**Side effect worth knowing.** `tabpfn` depends on `lightgbm`, so installing this extra also makes
-`LGBMClassifier`/`LGBMRegressor` available even without `[boosting]`. The registry picks them up
-automatically, which slightly widens the default model set.
+**Reproducibility — read this before using TabPFN for anything you intend to publish.** Every
+other model in the registry is deterministic local computation, pinned by `uv.lock`. TabPFN is
+not: it runs pretrained weights downloaded from a repo PriorLabs controls, and `model_path="auto"`
+resolves to whichever checkpoint the installed package treats as current. Two machines, or the
+same machine months apart, can produce different step-1 rankings with no change to h2ml or its
+lockfile. It also needs `api.priorlabs.ai` reachable to verify your token, so a run is not
+reproducible offline the way the rest of the pipeline is.
+
+Treat TabPFN as an **exploration tool** — good for finding out whether a foundation model beats
+your tuned baselines — rather than as part of a pipeline whose results you need to reproduce
+exactly later. When it participates, h2ml records what it used in
+`result.model_provenance` (e.g. `{"TabPFNClassifier": "tabpfn==8.2.0, model_version=v3"}`), which
+is persisted with the result and logged as a warning when TabPFN wins. Keep that alongside any
+result you report.
+
+**Side effects worth knowing.** `tabpfn` depends on `lightgbm`, so installing this extra also
+makes `LGBMClassifier`/`LGBMRegressor` available even without `[boosting]`; the registry picks
+them up automatically. Note also that `uv sync --extra tabpfn` *replaces* your environment — if
+you want the boosting models too, ask for both:
+
+```bash
+uv sync --extra boosting --extra tabpfn
+```
 
 ## With spatial inference
 

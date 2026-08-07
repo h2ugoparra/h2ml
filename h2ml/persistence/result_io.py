@@ -64,6 +64,7 @@ _SAVED_FIELDS = frozenset(
         "spatial_cv_metric",
         "time_bin_resolution",
         "cv_warnings",
+        "model_provenance",
         "metric",
         # parquet
         "step1_fold_df",
@@ -132,6 +133,7 @@ def save_result(result, path: str | Path) -> None:
             "spatial_cv_metric": result.spatial_cv_metric,
             "time_bin_resolution": result.time_bin_resolution,
             "cv_warnings": result.cv_warnings,
+            "model_provenance": result.model_provenance,
             "metric": result.metric,
         },
         root / "metadata.json",
@@ -227,6 +229,7 @@ def load_result(path: str | Path):
         spatial_cv_metric=meta.get("spatial_cv_metric", "euclidean"),
         time_bin_resolution=meta.get("time_bin_resolution", "month"),
         cv_warnings=meta.get("cv_warnings", []),
+        model_provenance=meta.get("model_provenance", {}),
         metric=meta.get("metric"),
         step3_reduced_stores=None,
         **dfs,

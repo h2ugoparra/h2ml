@@ -285,8 +285,54 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
+# Provenance
+# ---------------------------------------------------------------------------
+
+# Maps model name → a human-readable provenance string, for models whose behaviour
+# is not pinned by this repo's lockfile alone. Every sklearn/boosting model is fully
+# determined by its pinned package version, so they are absent here. TabPFN is not:
+# it runs pretrained weights downloaded from a repo the vendor controls, so a run is
+# only reproducible if you also know which weights it used.
+MODEL_PROVENANCE: dict[str, str] = {}
+
+
+def collect_model_provenance(model_names) -> dict[str, str]:
+    """Return provenance entries for the given model names (empty when none apply)."""
+    names = set(model_names)
+    return {name: info for name, info in MODEL_PROVENANCE.items() if name in names}
+
+
+# ---------------------------------------------------------------------------
 # TabPFN (opt-in)
 # ---------------------------------------------------------------------------
+
+
+def _record_tabpfn_provenance() -> None:
+    """
+    Record which TabPFN weights a run will use, into MODEL_PROVENANCE.
+
+    Unlike every other registry model, TabPFN's predictions are not pinned by
+    uv.lock: `model_path="auto"` resolves to a checkpoint downloaded from a repo
+    PriorLabs controls. The package version fixes which filename "auto" selects
+    (the lists are hardcoded in tabpfn.model_loading), and model_version fixes the
+    generation, so the pair is what makes a run auditable after the fact.
+
+    Best-effort: this reads a vendor setting, so any change there degrades to a
+    partial record rather than breaking registration.
+    """
+    import tabpfn  # type: ignore[import-not-found]
+
+    info = f"tabpfn=={getattr(tabpfn, '__version__', 'unknown')}"
+    try:
+        from tabpfn.settings import settings  # type: ignore[import-not-found]
+
+        version = settings.tabpfn.model_version
+        info += f", model_version={getattr(version, 'value', version)}"
+    except Exception:  # pragma: no cover - vendor internals may move
+        info += ", model_version=unknown"
+
+    MODEL_PROVENANCE["TabPFNClassifier"] = info
+    MODEL_PROVENANCE["TabPFNRegressor"] = info
 
 
 def _warn_if_tabpfn_cpu() -> None:
@@ -306,10 +352,20 @@ def _warn_if_tabpfn_cpu() -> None:
     if torch.cuda.is_available() or (mps is not None and mps.is_available()):
         return
 
+    build = getattr(torch, "__version__", "")
+    hint = ""
+    if "+cpu" in build or torch.version.cuda is None:
+        # The default PyPI wheel is CPU-only on Windows even with an NVIDIA card present;
+        # CUDA builds come from download.pytorch.org. Say so, or users hunt a driver bug.
+        hint = (
+            f" torch is a CPU-only build ({build}) — an installed NVIDIA GPU will not be used "
+            "unless you install a CUDA wheel from https://download.pytorch.org/whl."
+        )
+
     logger.warning(
         "TabPFN registered but no CUDA/mps device is visible — inference will run on CPU. "
         "Expect it to be slow; ~5 000 samples is a practical ceiling. Larger inputs raise "
-        "TabPFN's own pretraining-limit error, which the CV engine reports as a skipped model."
+        "TabPFN's own pretraining-limit error, which the CV engine reports as a skipped model." + hint
     )
 
 
@@ -335,6 +391,7 @@ if os.environ.get("H2ML_ENABLE_TABPFN") == "1":
             param_fn=None,
             opt_enabled=False,
         )
+        _record_tabpfn_provenance()
         _warn_if_tabpfn_cpu()
     except ImportError:
         logger.warning("H2ML_ENABLE_TABPFN=1 but tabpfn is not installed — run: uv sync --extra tabpfn")
