@@ -61,6 +61,7 @@ from h2ml.features.feature_store import PipelineData
 from h2ml.features.selector import FeatureSelector
 from h2ml.pipeline.base import TaskType
 from h2ml.pipeline.step import make_classifier, make_regressor
+from h2ml.preprocessing.transforms import clip_upper_outliers
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -223,6 +224,35 @@ class TestFit:
         with patch_shap as mock_full, patch_corr:
             selector.fit(store)
         assert mock_full.called
+
+    def test_fit_forwards_train_target_fn_to_oof_shap(self, clf_step, store):
+        """The per-fold target step must reach the OOF SHAP pass."""
+        selector = FeatureSelector(clf_step, TaskType.CLASSIFICATION, train_target_fn=clip_upper_outliers)
+        patch_shap, patch_corr = _mock_shap(use_oof=True)
+        with patch_shap as mock_oof, patch_corr:
+            selector.fit(store)
+        assert mock_oof.call_args.kwargs["train_target_fn"] is clip_upper_outliers
+
+    def test_fit_use_oof_false_fits_on_train_target_fn_output(self):
+        """The full-dataset SHAP model must fit on targets passed through train_target_fn."""
+        fitted_targets = []
+
+        class RecordingRF(RandomForestRegressor):
+            def fit(self, X, y, **kw):
+                fitted_targets.append(np.asarray(y).copy())
+                return super().fit(X, y, **kw)
+
+        rng = np.random.default_rng(0)
+        y = rng.uniform(0, 10, size=100)
+        y[:5] = [60.0, 80.0, 100.0, 120.0, 140.0]
+        store = PipelineData(X=rng.standard_normal((100, len(FEATURE_NAMES))), feature_names=FEATURE_NAMES, y=y)
+        step = make_regressor(RecordingRF(n_estimators=5, random_state=42))
+        selector = FeatureSelector(step, TaskType.REGRESSION, use_oof=False, train_target_fn=clip_upper_outliers)
+        patch_shap, patch_corr = _mock_shap(use_oof=False)
+        with patch_shap, patch_corr:
+            selector.fit(store)
+        assert len(fitted_targets) == 1
+        np.testing.assert_array_equal(fitted_targets[0], clip_upper_outliers(y))
 
 
 # ---------------------------------------------------------------------------

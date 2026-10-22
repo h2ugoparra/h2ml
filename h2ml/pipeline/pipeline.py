@@ -39,6 +39,7 @@ from h2ml.features.selector import FeatureSelector
 from h2ml.optimization.optimizer import run_study
 from h2ml.pipeline.cv import CrossValidator, CVResult
 from h2ml.preprocessing.transform_stores import build_transform_stores
+from h2ml.preprocessing.transforms import get_train_target_fn
 from h2ml.utils.registry import build_models
 
 
@@ -721,6 +722,7 @@ class H2MLPipeline:
                 inverse_fn=inv,
                 coords=store.coords,
                 spatial=self.config.spatial_cv,
+                train_target_fn=get_train_target_fn(store.y_transform),
                 _splitter=splitter,
                 _scaled_folds=sf,
             )
@@ -795,6 +797,7 @@ class H2MLPipeline:
             n_splits=self.config.n_splits,
             random_state=self.config.random_state,
             verbose=self.config.verbose,
+            train_target_fn=get_train_target_fn(fit_store.y_transform),
             _splitter=result.splitter,
         )
         result.selector = selector
@@ -834,6 +837,7 @@ class H2MLPipeline:
             coords=reduced_store.coords,
             spatial=self.config.spatial_cv,
             n_jobs=self.config.n_jobs,
+            train_target_fn=get_train_target_fn(reduced_store.y_transform),
             _splitter=result.splitter,
         )
         result.step3_reduced_stores = {transform_name: reduced_store}
@@ -887,6 +891,7 @@ class H2MLPipeline:
         y = store_for_opt.y
         y_true = store_for_opt.y_true
         inverse_fn = self._get_inverse_fn(store_for_opt)
+        train_target_fn = get_train_target_fn(store_for_opt.y_transform)
 
         best_model = self._get_model(result.best_model_name)
         estimator_name = best_model.estimator.__class__.__name__
@@ -919,6 +924,7 @@ class H2MLPipeline:
             fixed_params=fixed_params,
             y_true=y_true,
             inverse_fn=inverse_fn,
+            train_target_fn=train_target_fn,
             _splitter=result.splitter if store_for_opt.coords is not None else None,
         )
 
@@ -944,6 +950,7 @@ class H2MLPipeline:
             inverse_fn=inverse_fn,
             coords=store_for_opt.coords,
             spatial=self.config.spatial_cv,
+            train_target_fn=train_target_fn,
             _splitter=result.splitter,
         )
         result.step4_cv_result = cv_result

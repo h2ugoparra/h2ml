@@ -33,6 +33,7 @@ from h2ml.core.spatial_config import SpatialCVConfig
 from h2ml.pipeline.base import TaskType
 from h2ml.pipeline.cv import CrossValidator, CVResult, FoldResult
 from h2ml.pipeline.step import make_classifier, make_regressor
+from h2ml.preprocessing.transforms import clip_upper_outliers
 
 try:
     from lightgbm import LGBMClassifier
@@ -750,3 +751,45 @@ class TestScaledFolds:
         with patch.object(cv, "_maybe_scale", wraps=cv._maybe_scale) as mock:
             cv.run(svc_step, X, y)
         assert mock.call_count == cv.n_splits
+
+
+# ---------------------------------------------------------------------------
+# train_target_fn — per-fold fitted target step (winsorize clipping)
+# ---------------------------------------------------------------------------
+
+
+class TestTrainTargetFn:
+    @pytest.fixture
+    def outlier_regression(self):
+        rng = np.random.default_rng(0)
+        X = rng.standard_normal((100, 3))
+        y = rng.uniform(0, 10, 100)
+        y[:8] = [60.0, 80.0, 100.0, 120.0, 140.0, 160.0, 180.0, 200.0]
+        return X, y
+
+    def test_each_fold_fits_on_its_own_training_limit(self, cv, outlier_regression):
+        """The winsorize limit must be fitted on the training rows only — never on test rows."""
+        X, y = outlier_regression
+        fitted_targets = []
+
+        class RecordingRidge(Ridge):
+            def fit(self, X, y, **kw):
+                fitted_targets.append(np.asarray(y).copy())
+                return super().fit(X, y, **kw)
+
+        result = cv.run(make_regressor(RecordingRidge()), X, y, train_target_fn=clip_upper_outliers)
+
+        # Guard: per-fold and full-data limits must differ here, or the test proves nothing
+        assert any(
+            not np.array_equal(clip_upper_outliers(y[f.train_idx]), clip_upper_outliers(y)[f.train_idx])
+            for f in result.folds
+        )
+        assert len(fitted_targets) == cv.n_splits
+        for fold, fitted in zip(result.folds, fitted_targets, strict=True):
+            np.testing.assert_array_equal(fitted, clip_upper_outliers(y[fold.train_idx]))
+
+    def test_test_targets_are_not_clipped(self, cv, outlier_regression):
+        X, y = outlier_regression
+        result = cv.run(make_regressor(Ridge()), X, y, train_target_fn=clip_upper_outliers)
+        for fold in result.folds:
+            np.testing.assert_array_equal(fold.y_test, y[fold.test_idx])

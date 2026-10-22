@@ -107,7 +107,7 @@ compare_results(results, labels, metric, n_folds)  # sort direction auto-derived
 - **Logging** — use `loguru` (`from loguru import logger`), not stdlib `logging`
 - **CatBoost** uses `random_seed` (not `random_state`) and `thread_count` (not `n_jobs`)
 - **SHAP routing**: tree models → `TreeExplainer`; linear SVM (`kernel="linear"`, `probability=False`) → `LinearExplainer`; all others → KernelSHAP with `shap.kmeans` background (capped at `max_background=100`)
-- **y-transform names**: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`, `"winlog"`, `"winsqrt"`; winsorize variants silently skipped when no outliers
+- **y-transform names**: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`, `"winlog"`, `"winsqrt"`; winsorize variants silently skipped when no outliers; their stores hold pre-clip y and the IQR limit is fitted per training fold via `get_train_target_fn()` (never on the full y before splitting)
 - **`n_jobs=1`** in optimizer always — parallel Optuna trials cause resource-tracker warnings on Windows
 - **Boosting extras** require `uv sync --extra boosting`
 

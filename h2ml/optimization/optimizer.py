@@ -224,6 +224,7 @@ def _build_objective(
     fixed_params: Optional[dict] = None,
     y_true: Optional[np.ndarray] = None,
     inverse_fn: Optional[Callable] = None,
+    train_target_fn: Optional[Callable] = None,
     _splitter: Any = None,
 ):
     """
@@ -242,6 +243,9 @@ def _build_objective(
     _splitter: pre-built spatial splitter (already cloned with correct n_splits and
                random_state for this repeat). When provided, splitter construction
                is skipped entirely — avoiding redundant AHC in SPCVSplitter.
+
+    train_target_fn: fitted on and applied to each training fold's targets (e.g.
+               winsorize clipping), so its statistics never see test rows.
 
     Returns:
         objective(trial) -> float closure. The closure raises ValueError if the
@@ -321,6 +325,8 @@ def _build_objective(
             else:
                 X_train, X_test = X[train_idx], X[test_idx]
             y_train, y_test = y[train_idx], y[test_idx]
+            if train_target_fn is not None:
+                y_train = train_target_fn(y_train)
 
             if task == "regression" and inverse_fn is not None:
                 assert y_true_folds is not None
@@ -369,6 +375,7 @@ def run_study(
     fixed_params: Optional[dict] = None,
     y_true: Optional[np.ndarray] = None,
     inverse_fn: Optional[Callable] = None,
+    train_target_fn: Optional[Callable] = None,
     _splitter: Any = None,
 ) -> optuna.Study:
     """
@@ -459,6 +466,7 @@ def run_study(
             fixed_params=fixed_params,
             y_true=y_true,
             inverse_fn=inverse_fn,
+            train_target_fn=train_target_fn,
             _splitter=repeat_splitter,
         )
 

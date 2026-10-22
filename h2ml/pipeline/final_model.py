@@ -41,7 +41,7 @@ from h2ml.evaluation.conformal import (
     _build_context,
     _time_bin,
 )
-from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS, Y_TRANSFORMS
+from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS, Y_TRANSFORMS, get_train_target_fn
 
 
 @dataclass
@@ -588,6 +588,12 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
         # win* transforms return None when y has no outliers — identity in that case
         if transformed is not None:
             y_fit = transformed
+    else:
+        # Winsorize-based transform stores hold y before clipping (the limit is fitted
+        # per CV fold) — clip here with the limit fitted on the full training set.
+        fit_target = get_train_target_fn(store.y_transform)
+        if fit_target is not None:
+            y_fit = fit_target(store.y)
 
     estimator.fit(X, y_fit)
 

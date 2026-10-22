@@ -24,6 +24,10 @@ Only supported for regression (`task_type="regression"`).
 
 Winsorize-based transforms return `None` when no upper outliers are found and are **silently skipped** by `build_transform_stores`. If all winsorized variants are skipped, only non-winsorized transforms are evaluated.
 
+### Winsorize limits are fitted per training fold
+
+The IQR upper limit is a statistic of the data, so computing it on the full `y` before splitting would let test-fold targets shape the training targets. To avoid that leak, the stores for winsorize-based transforms hold `y` **before clipping** (`y`, `log1p(y)`, or `sqrt(y)`), and every cross-validation fit — steps 1 and 3, the OOF SHAP pass in step 2, and the Optuna trials and final CV in step 4 — clips its training targets with a limit computed from that training fold only. Test-fold targets are never clipped. The final model (`result.build_final_model()`) is refit on `y` clipped with the limit from the full training set.
+
 ## Metrics in transformed space
 
 CV metrics in steps 1 and 3 are computed in the **original scale** when `y_true` is provided — the inverse transform is applied to predictions before metric computation. This ensures `R2`, `MAE`, and `RMSE` are comparable across transforms.

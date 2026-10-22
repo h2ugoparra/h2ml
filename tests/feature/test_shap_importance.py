@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import KFold
 from sklearn.svm import SVC, SVR
 
 from h2ml.features.feature_store import PipelineData
@@ -25,6 +26,7 @@ from h2ml.features.shap_importance import (
 )
 from h2ml.pipeline.base import TaskType
 from h2ml.pipeline.step import make_classifier, make_regressor
+from h2ml.preprocessing.transforms import clip_upper_outliers
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -330,6 +332,28 @@ class TestGetOofShapValues:
     def test_regression_shape(self, reg_step, reg_store):
         shap_arr, _ = get_oof_shap_values(reg_step, reg_store, TaskType.REGRESSION, n_splits=3)
         assert shap_arr.shape == (N, len(FEATURE_NAMES))
+
+    def test_train_target_fn_fitted_per_training_fold(self, reg_store):
+        """Each OOF SHAP model must fit on targets clipped with its training fold's own limit."""
+        fitted_targets = []
+
+        class RecordingRF(RandomForestRegressor):
+            def fit(self, X, y, **kw):
+                fitted_targets.append(np.asarray(y).copy())
+                return super().fit(X, y, **kw)
+
+        y = reg_store.y.copy()
+        y[:5] = [20.0, 30.0, 40.0, 50.0, 60.0]
+        store = PipelineData(X=reg_store.X, feature_names=FEATURE_NAMES, y=y)
+        splitter = KFold(n_splits=3, shuffle=True, random_state=0)
+        step = make_regressor(RecordingRF(n_estimators=5, random_state=42))
+
+        get_oof_shap_values(step, store, TaskType.REGRESSION, train_target_fn=clip_upper_outliers, _splitter=splitter)
+
+        folds = list(splitter.split(store.X, y))
+        assert len(fitted_targets) == len(folds)
+        for (train_idx, _), fitted in zip(folds, fitted_targets, strict=True):
+            np.testing.assert_array_equal(fitted, clip_upper_outliers(y[train_idx]))
 
     def test_save_path_creates_file(self, clf_step, clf_store, tmp_path):
         out = tmp_path / "oof_shap.npy"
