@@ -248,6 +248,19 @@ class TestPipelineConfig:
             logger.remove(handler_id)
         assert any("opt_n_splits" in str(w) for w in warned)
 
+    def test_deprecated_auc_pr_metric_mapped_with_warning(self):
+        from loguru import logger
+
+        warned = []
+        handler_id = logger.add(lambda msg: warned.append(msg), level="WARNING")
+        try:
+            cfg = PipelineConfig(metric="AUC_PR")
+        finally:
+            logger.remove(handler_id)
+        assert cfg.metric == "AUCPR"
+        assert cfg.metric_col == "AUCPR_Test_Mean"
+        assert any("deprecated" in str(w) for w in warned)
+
     def test_opt_n_splits_at_half_n_splits_no_warn(self):
         """opt_n_splits == n_splits // 2 should NOT warn."""
         from loguru import logger

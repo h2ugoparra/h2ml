@@ -55,6 +55,8 @@ from h2ml.evaluation.metrics import (
     aggregate_metrics,
     compute_metrics,
     compute_metrics_all,
+    rename_deprecated_columns,
+    resolve_metric,
     select_best,
 )
 from h2ml.pipeline.base import TaskType
@@ -176,8 +178,8 @@ class TestComputeMetricsClassification:
             "Fold",
             "AUC_Test",
             "AUC_Train",
-            "AUC_PR_Test",
-            "AUC_PR_Train",
+            "AUCPR_Test",
+            "AUCPR_Train",
             "LogLoss_Test",
             "LogLoss_Train",
             "F1_Test",
@@ -205,7 +207,7 @@ class TestComputeMetricsClassification:
 
     def test_gap_columns_added(self, clf_cv_result):
         df = compute_metrics(clf_cv_result)
-        for col in ("AUC_Gap", "AUC_PR_Gap", "F1_Gap", "LogLoss_Gap", "Brier_Gap"):
+        for col in ("AUC_Gap", "AUCPR_Gap", "F1_Gap", "LogLoss_Gap", "Brier_Gap"):
             assert col in df.columns, f"Missing gap column: {col}"
 
     def test_score_gap_is_train_minus_test(self, clf_cv_result):
@@ -433,6 +435,20 @@ class TestComputeMetricsAll:
 # ---------------------------------------------------------------------------
 
 
+class TestMetricAliases:
+    def test_resolve_metric_maps_deprecated_name(self):
+        assert resolve_metric("AUC_PR") == "AUCPR"
+
+    def test_resolve_metric_passes_through_current_name(self):
+        assert resolve_metric("AUCPR") == "AUCPR"
+        assert resolve_metric("AUC") == "AUC"
+
+    def test_rename_deprecated_columns(self):
+        df = pd.DataFrame(columns=["Model", "AUC_Test_Mean", "AUC_PR_Test_Mean", "AUC_PR_Train", "AUC_PR_Gap"])
+        out = rename_deprecated_columns(df)
+        assert list(out.columns) == ["Model", "AUC_Test_Mean", "AUCPR_Test_Mean", "AUCPR_Train", "AUCPR_Gap"]
+
+
 class TestAggregateMetrics:
     def test_returns_one_row_per_model(self):
         results = [
@@ -646,8 +662,8 @@ class TestMulticlassClassificationMetrics:
             "Fold",
             "AUC_Test",
             "AUC_Train",
-            "AUC_PR_Test",
-            "AUC_PR_Train",
+            "AUCPR_Test",
+            "AUCPR_Train",
             "LogLoss_Test",
             "LogLoss_Train",
             "F1_Test",

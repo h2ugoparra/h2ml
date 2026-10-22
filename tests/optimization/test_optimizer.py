@@ -695,7 +695,7 @@ class TestScoreF1:
 
 class TestMetricSelection:
     def test_clf_metrics_registry_contains_expected_keys(self):
-        assert set(CLF_METRICS) == {"AUC", "AUC_PR", "LogLoss", "F1", "Brier"}
+        assert set(CLF_METRICS) == {"AUC", "AUCPR", "LogLoss", "F1", "Brier"}
 
     def test_reg_metrics_registry_contains_expected_keys(self):
         assert set(REG_METRICS) == {"R2", "MAE", "RMSE"}
@@ -743,11 +743,24 @@ class TestMetricSelection:
             X,
             y,
             task="classification",
-            metric="AUC_PR",
+            metric="AUCPR",
             n_trials=3,
             n_splits=2,
         )
         assert isinstance(study, optuna.Study)
+        assert 0.0 <= study.best_value <= 1.0
+
+    def test_clf_deprecated_auc_pr_alias_accepted(self, clf_data):
+        X, y = clf_data
+        study = run_study(
+            "RandomForestClassifier",
+            X,
+            y,
+            task="classification",
+            metric="AUC_PR",
+            n_trials=1,
+            n_splits=2,
+        )
         assert 0.0 <= study.best_value <= 1.0
 
     def test_clf_f1_returns_study(self, clf_data):
