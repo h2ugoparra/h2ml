@@ -14,6 +14,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+from loguru import logger
 from sklearn.metrics import (
     # Classification
     average_precision_score,
@@ -34,11 +35,13 @@ from h2ml.core.cv_result import CVResult, FoldResult
 # Metric metadata — shared by PipelineConfig (selection/HPO) and compare_results
 # ---------------------------------------------------------------------------
 
-# Short metric name → full aggregated-DataFrame column name
+# Short metric name → full aggregated-DataFrame column name.
+# "_Test" is the held-out fold of each CV split; "_Test_Mean" is the mean of the
+# per-fold scores, not a single score on pooled out-of-fold predictions.
 METRIC_COL: dict[str, str] = {
     # Classification
     "AUC": "AUC_Test_Mean",
-    "AUC_PR": "AUC_PR_Test_Mean",
+    "AUCPR": "AUCPR_Test_Mean",
     "LogLoss": "LogLoss_Test_Mean",
     "F1": "F1_Test_Mean",
     "Brier": "Brier_Test_Mean",
@@ -51,7 +54,7 @@ METRIC_COL: dict[str, str] = {
 # Whether each metric should be minimised (True) or maximised (False)
 METRIC_MINIMIZE: dict[str, bool] = {
     "AUC": False,
-    "AUC_PR": False,
+    "AUCPR": False,
     "F1": False,
     "Brier": True,
     "LogLoss": True,
@@ -59,6 +62,32 @@ METRIC_MINIMIZE: dict[str, bool] = {
     "MAE": True,
     "RMSE": True,
 }
+
+# Deprecated short metric name → current name. Accepted with a warning for one release.
+METRIC_ALIASES: dict[str, str] = {
+    "AUC_PR": "AUCPR",
+}
+
+
+def resolve_metric(metric: str) -> str:
+    """Map a deprecated metric name to its current name, logging a deprecation warning."""
+    if metric in METRIC_ALIASES:
+        new = METRIC_ALIASES[metric]
+        logger.warning(f"metric {metric!r} is deprecated and will be removed in a future release; use {new!r}.")
+        return new
+    return metric
+
+
+def rename_deprecated_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename metric columns written under a deprecated name (e.g. AUC_PR_Test_Mean → AUCPR_Test_Mean)."""
+    mapping = {
+        col: new + col[len(old) :]
+        for col in df.columns
+        for old, new in METRIC_ALIASES.items()
+        if isinstance(col, str) and col.startswith(f"{old}_")
+    }
+    return df.rename(columns=mapping) if mapping else df
+
 
 # ---------------------------------------------------------------------------
 # Metadata container — replaces PipelineSpecs fields in results
@@ -171,8 +200,8 @@ def _classification_metrics(fold: FoldResult) -> dict:
     return {
         "AUC_Test": auc_test,
         "AUC_Train": auc_train,
-        "AUC_PR_Test": auc_pr_test,
-        "AUC_PR_Train": auc_pr_train,
+        "AUCPR_Test": auc_pr_test,
+        "AUCPR_Train": auc_pr_train,
         "LogLoss_Test": logloss_test,
         "LogLoss_Train": logloss_train,
         "F1_Test": f1_test,
@@ -216,7 +245,7 @@ _METRIC_FN = {
 _OVERFIT_PAIRS = {
     TaskType.CLASSIFICATION: [
         ("AUC_Test", "AUC_Train", False),
-        ("AUC_PR_Test", "AUC_PR_Train", False),
+        ("AUCPR_Test", "AUCPR_Train", False),
         ("F1_Test", "F1_Train", False),
         ("LogLoss_Test", "LogLoss_Train", True),
         ("Brier_Test", "Brier_Train", True),
@@ -317,6 +346,9 @@ def aggregate_metrics(fold_df: pd.DataFrame, group_by_stage: bool = True) -> pd.
 
     Returns:
         DataFrame with one row per model, columns suffixed _Mean and _Std.
+        ``<metric>_Test_Mean`` is the mean of the per-fold held-out scores; it
+        generally differs from one score computed on pooled out-of-fold
+        predictions (see ``CVResult.oof_predictions``).
     """
     # Columns to group by — model name + any metadata fields present in the df
     group_cols = ["Model"]

@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- The precision–recall metric is renamed from `"AUC_PR"` to `"AUCPR"`, in line
+  with `LogLoss` and XGBoost's `aucpr`. Its result columns follow suit
+  (`AUC_PR_Test_Mean` → `AUCPR_Test_Mean`, and likewise for `_Train` and `_Gap`).
+  Code that reads the old column names directly must be updated.
+
+### Deprecated
+
+- `metric="AUC_PR"` in `PipelineConfig` and `run_study`. It still works, maps to
+  `"AUCPR"` and logs a warning. Results saved under the old name load with the
+  metric and columns renamed.
+
+### Documentation
+
+- `<metric>_Test_Mean` columns are now documented as the mean of the per-fold
+  held-out scores, as distinct from a single score on the pooled OOF predictions.
+
 ## [0.3.1] - 2026-08-06
 
 ### Removed

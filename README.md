@@ -109,7 +109,7 @@ Step 4 is skipped when the winning model has `opt_enabled=False` in the registry
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `task_type` | `"classification"` | `"classification"` or `"regression"` (case-insensitive); a `TaskType` member is also accepted |
-| `metric` | `"AUC"` | Short metric name for model selection and HPO. Minimisation direction is derived automatically. Classification: `"AUC"`, `"AUC_PR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. |
+| `metric` | `"AUC"` | Short metric name for model selection and HPO. Minimisation direction is derived automatically. Classification: `"AUC"`, `"AUCPR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. `"AUC_PR"` is a deprecated alias for `"AUCPR"`. |
 | `n_splits` | `5` | Folds for steps 1 and 3 |
 | `n_jobs` | `-1` | Parallel workers for CV in steps 1 and 3; must be non-zero |
 | `opt_n_splits` | `3` | Folds used inside Optuna (fewer = faster) |
@@ -147,7 +147,7 @@ Set `store.coords` to an `(n_samples, 2)` array of spatial coordinates to activa
 
 ```python
 result.summary()                  # combined agg DataFrame across all completed stages
-result.summary("AUC_Test_Mean")   # sorted by metric
+result.summary("AUC_Test_Mean")   # sorted by metric; "_Test_Mean" = mean of per-fold held-out scores
 result.completed_steps            # e.g. [1, 2, 3, 4]
 result.best_model_name            # winning model
 result.best_stage                 # "default" | "reduced" | "optimized"
