@@ -25,6 +25,7 @@ from h2ml.optimization.optimizer import (
     optimize_all,
     run_study,
 )
+from h2ml.preprocessing.transforms import clip_upper_outliers
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -462,6 +463,46 @@ class TestBuildObjective:
             n_trials=n_trials,
         )
         assert sum(fit_calls) == n_splits * n_trials
+
+    def test_train_target_fn_fitted_per_training_fold(self, reg_data):
+        """Each trial fold must fit on targets clipped with that training fold's own limit."""
+        from sklearn.ensemble import RandomForestRegressor
+        from sklearn.model_selection import KFold
+
+        X, y = reg_data
+        y = y.copy()
+        y[:6] = [20.0, 30.0, 40.0, 50.0, 60.0, 70.0]
+        fitted_targets = []
+
+        class RecordingRF(RandomForestRegressor):
+            def fit(self, X, y, **kw):
+                fitted_targets.append(np.asarray(y).copy())
+                return super().fit(X, y, **kw)
+
+        entry = ModelEntry(
+            model_cls=RecordingRF,
+            requires_scaling=False,
+            param_fn=lambda trial: {"n_estimators": 5, "max_depth": 2, "random_state": 42},
+            opt_enabled=True,
+        )
+        splitter = KFold(n_splits=3, shuffle=True, random_state=0)
+        objective = _build_objective(
+            entry,
+            X,
+            y,
+            "regression",
+            n_splits=3,
+            random_state=42,
+            score_fn=_score_r2,
+            train_target_fn=clip_upper_outliers,
+            _splitter=splitter,
+        )
+        optuna.create_study(direction="maximize").optimize(objective, n_trials=1)
+
+        folds = list(splitter.split(X, y))
+        assert len(fitted_targets) == len(folds)
+        for (train_idx, _), fitted in zip(folds, fitted_targets, strict=True):
+            np.testing.assert_array_equal(fitted, clip_upper_outliers(y[train_idx]))
 
     def test_scaling_applied_to_x_train_when_required(self, clf_data):
         """When requires_scaling=True, the X_train seen by the model should be standardised."""

@@ -13,7 +13,7 @@ step 4 (CV on reduced features):
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -59,6 +59,9 @@ class FeatureSelector(BasePreprocessor):
                         training folds are summarised with shap.kmeans to this size.
                         Default 100 — increase for more accurate SHAP at cost of speed.
         verbose:        Log selected/removed feature counts.
+        train_target_fn: Step fitted on and applied to the targets each SHAP model is
+                        trained on (e.g. winsorize clipping) — per training fold in OOF
+                        mode, so its statistics never see held-out rows.
         _splitter:      Internal — a pre-built spatial splitter reused for the OOF
                         SHAP pass so it matches the pipeline's CV folds. Leave None
                         for non-spatial use; the pipeline injects it when relevant.
@@ -81,6 +84,7 @@ class FeatureSelector(BasePreprocessor):
         shap_save_path: Optional[Path] = None,
         max_background: int = 100,
         verbose: bool = False,
+        train_target_fn: Optional[Callable] = None,
         _splitter: Any = None,
     ):
         if min_features < 1:
@@ -95,6 +99,7 @@ class FeatureSelector(BasePreprocessor):
         self.random_state = random_state
         self.shap_save_path = shap_save_path
         self.max_background = max_background
+        self.train_target_fn = train_target_fn
         self._splitter = _splitter
 
         # Set after fit
@@ -130,6 +135,7 @@ class FeatureSelector(BasePreprocessor):
                 random_state=self.random_state,
                 save_path=self.shap_save_path,
                 max_background=self.max_background,
+                train_target_fn=self.train_target_fn,
                 _splitter=self._splitter,
             )
         else:
@@ -143,8 +149,9 @@ class FeatureSelector(BasePreprocessor):
             X_train = store.X
             if getattr(self.step, "requires_scaling", False):
                 X_train = StandardScaler().fit_transform(X_train)
+            y_train = store.y if self.train_target_fn is None else self.train_target_fn(store.y)
             model = estimator_cls(**estimator_params)
-            model.fit(X_train, store.y)
+            model.fit(X_train, y_train)
             self.shap_values_, self.feature_importance_ = get_shap_values(
                 model=model,
                 store=store,

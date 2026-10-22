@@ -35,6 +35,7 @@ from h2ml.features.selector import FeatureSelector
 from h2ml.pipeline.base import TaskType
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig, PipelineResult
 from h2ml.pipeline.step import make_classifier, make_regressor
+from h2ml.preprocessing.transforms import clip_upper_outliers
 
 # ---------------------------------------------------------------------------
 # Shared test data
@@ -69,6 +70,18 @@ def _make_positive_reg_store(seed: int = 7) -> PipelineData:
         X=rng.standard_normal((N_SAMPLES, len(FEATURE_NAMES))),
         feature_names=FEATURE_NAMES,
         y=rng.uniform(0.5, 5.0, size=N_SAMPLES),
+    )
+
+
+def _make_outlier_reg_store(seed: int = 11) -> PipelineData:
+    """Positive regression store with upper outliers — required for winsorize transforms."""
+    rng = np.random.default_rng(seed)
+    y = rng.uniform(0.5, 5.0, size=N_SAMPLES)
+    y[:10] = rng.uniform(30.0, 100.0, size=10)
+    return PipelineData(
+        X=rng.standard_normal((N_SAMPLES, len(FEATURE_NAMES))),
+        feature_names=FEATURE_NAMES,
+        y=y,
     )
 
 
@@ -698,6 +711,59 @@ class TestStep1WithTransforms:
 
         np.testing.assert_allclose(captured["y"], np.log1p(pos_reg_store.y))
         np.testing.assert_allclose(captured["y_true"], pos_reg_store.y)
+
+    def test_winsorize_limit_fitted_per_training_fold(self):
+        """Steps 1 and 3 must clip each training fold with its own IQR limit, and step 2's
+        selector must receive the per-fold clip step — a limit fitted on the full y would
+        leak test-fold targets into training."""
+        store = _make_outlier_reg_store()
+        fitted_targets = []
+
+        class RecordingRidge(Ridge):
+            def fit(self, X, y, **kw):
+                fitted_targets.append(np.asarray(y).copy())
+                return super().fit(X, y, **kw)
+
+        # n_jobs=1 keeps CV in-process so the recording closure sees every fit
+        pipeline = H2MLPipeline(models=[make_regressor(RecordingRidge(), name="Ridge")], config=_reg_config(n_jobs=1))
+        with _mock_selector() as selector_cls:
+            result = pipeline.run_step1_to_step3(store, transforms=["wincount"])
+
+        assert selector_cls.call_args.kwargs["train_target_fn"] is clip_upper_outliers
+        folds = list(result.splitter.split(store.X, store.y))
+        per_fold = [clip_upper_outliers(store.y[tr]) for tr, _ in folds]
+        # Guard: per-fold and full-data limits must differ here, or the test proves nothing
+        assert any(
+            not np.array_equal(clipped, clip_upper_outliers(store.y)[tr])
+            for clipped, (tr, _) in zip(per_fold, folds, strict=True)
+        )
+        assert len(fitted_targets) == 2 * len(folds)  # step 1 + step 3
+        for i, fitted in enumerate(fitted_targets):
+            np.testing.assert_array_equal(fitted, per_fold[i % len(folds)])
+
+    def test_step4_optimises_pre_clip_y_with_per_fold_winsorize(self):
+        """Step 4 must hand Optuna the pre-clip y plus the per-fold clip step."""
+        store = _make_outlier_reg_store()
+        pipeline = H2MLPipeline(
+            models=[make_regressor(RandomForestRegressor(n_estimators=10, random_state=42))],
+            config=_reg_config(),
+        )
+        with _mock_selector():
+            result = pipeline.run_step1_to_step3(store, transforms=["wincount"])
+
+        captured = {}
+
+        def fake_run_study(**kwargs):
+            captured.update(kwargs)
+            study = MagicMock()
+            study.best_params = {"n_estimators": 10, "max_depth": 3}
+            return study
+
+        with patch("h2ml.pipeline.pipeline.run_study", side_effect=fake_run_study):
+            pipeline.run_step4_only(result)
+
+        assert captured["train_target_fn"] is clip_upper_outliers
+        np.testing.assert_array_equal(captured["y"], store.y)
 
 
 # ---------------------------------------------------------------------------

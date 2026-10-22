@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -248,6 +248,7 @@ def get_oof_shap_values(
     save_path: Optional[Path] = None,
     class_index: Optional[int] = None,
     max_background: int = 100,
+    train_target_fn: Optional[Callable] = None,
     _splitter: Any = None,
 ) -> tuple[np.ndarray, pd.Series]:
     """
@@ -273,6 +274,9 @@ def get_oof_shap_values(
                         Training folds larger than this are summarised with
                         shap.kmeans, giving a significant speedup for SVC/SVR
                         with non-linear kernels. Default 100.
+        train_target_fn: Fitted on and applied to each training fold's targets
+                        (e.g. winsorize clipping), so its statistics never see
+                        held-out rows.
 
     Returns:
         oof_shap:           np.ndarray of shape (n_samples, n_features).
@@ -307,6 +311,8 @@ def get_oof_shap_values(
     for train_idx, test_idx in splitter.split(X, y):
         X_train, X_test = X[train_idx], X[test_idx]
         y_train = y[train_idx]
+        if train_target_fn is not None:
+            y_train = train_target_fn(y_train)
 
         if requires_scaling:
             scaler = StandardScaler()

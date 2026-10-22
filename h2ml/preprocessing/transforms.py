@@ -14,6 +14,12 @@ INVERSE_TRANSFORMS: dict[name → callable(y_pred) -> ndarray]
 
 Available names: count, log, sqrt, wincount, winlog, winsqrt.
 Winsorize-based transforms replace upper outliers with the IQR upper limit.
+
+PRE_CLIP_TRANSFORMS: dict[win* name → stateless part of the transform]
+                    The IQR limit is fitted on the data, so in CV it must come from
+                    the training rows only. Transform stores for win* names hold y
+                    before clipping; get_train_target_fn() returns the clipping step
+                    that each training fold (and the final refit) applies to itself.
 """
 
 from __future__ import annotations
@@ -47,6 +53,12 @@ def winsorize(y: np.ndarray) -> Optional[np.ndarray]:
     return np.where(y > upper_limit, upper_limit, y)
 
 
+def clip_upper_outliers(y: np.ndarray) -> np.ndarray:
+    """Winsorize y with a limit fitted on y itself; y is returned unchanged when it has no outliers."""
+    clipped = winsorize(y)
+    return y if clipped is None else clipped
+
+
 # Transform registry — extend freely
 Y_TRANSFORMS = {
     "count": lambda y: y,
@@ -67,3 +79,16 @@ INVERSE_TRANSFORMS: dict[str, Callable] = {
     "winlog": np.expm1,
     "winsqrt": np.square,
 }
+
+# Stateless part of each winsorize-based transform — safe to apply before splitting.
+# Y_TRANSFORMS[name](y) == clip_upper_outliers(PRE_CLIP_TRANSFORMS[name](y)) when y has outliers.
+PRE_CLIP_TRANSFORMS: dict[str, Callable] = {
+    "wincount": lambda y: y,
+    "winlog": log_transform,
+    "winsqrt": sqrt_transform,
+}
+
+
+def get_train_target_fn(y_transform: Optional[str]) -> Optional[Callable[[np.ndarray], np.ndarray]]:
+    """Return the step fitted on and applied to training targets for y_transform, or None if stateless."""
+    return clip_upper_outliers if y_transform in PRE_CLIP_TRANSFORMS else None

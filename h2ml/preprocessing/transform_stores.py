@@ -5,7 +5,7 @@ from typing import Optional
 import numpy as np
 
 from h2ml.core.feature_store import PipelineData
-from h2ml.preprocessing.transforms import Y_TRANSFORMS
+from h2ml.preprocessing.transforms import PRE_CLIP_TRANSFORMS, Y_TRANSFORMS
 
 
 def build_transform_stores(
@@ -19,6 +19,8 @@ def build_transform_stores(
     """
     Build one PipelineData per y transformation.
     Transforms returning None (e.g. winsorize with no outliers) are skipped.
+    Winsorize-based stores hold y before clipping: the IQR limit is fitted per
+    training fold (see get_train_target_fn) so it never sees test rows.
 
     Args:
         X:             Feature matrix.
@@ -48,6 +50,8 @@ def build_transform_stores(
 
         if y_transformed is None:
             continue
+        if name in PRE_CLIP_TRANSFORMS:
+            y_transformed = PRE_CLIP_TRANSFORMS[name](y)
 
         stores[name] = PipelineData(
             X=X,

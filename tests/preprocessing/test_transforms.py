@@ -36,6 +36,11 @@ Coverage:
         - wincount clips outliers when present
         - winlog applies log then winsorize
         - winsqrt applies sqrt then winsorize
+
+    Per-fold winsorize:
+        - clip_upper_outliers matches winsorize, identity without outliers
+        - clipping the PRE_CLIP_TRANSFORMS output reproduces Y_TRANSFORMS
+        - get_train_target_fn returns the clip step only for winsorize-based names
         - Unknown transform key raises KeyError when accessed
 """
 
@@ -45,7 +50,10 @@ import numpy as np
 import pytest
 
 from h2ml.preprocessing.transforms import (
+    PRE_CLIP_TRANSFORMS,
     Y_TRANSFORMS,
+    clip_upper_outliers,
+    get_train_target_fn,
     log_transform,
     sqrt_transform,
     winsorize,
@@ -289,3 +297,31 @@ class TestYTransformsRegistry:
     def test_all_transforms_callable(self):
         for name, fn in Y_TRANSFORMS.items():
             assert callable(fn), f"Transform '{name}' is not callable"
+
+
+# ---------------------------------------------------------------------------
+# Per-fold winsorize (PRE_CLIP_TRANSFORMS + get_train_target_fn)
+# ---------------------------------------------------------------------------
+
+
+class TestPerFoldWinsorize:
+    def test_clip_upper_outliers_matches_winsorize(self, outlier_y):
+        np.testing.assert_array_equal(clip_upper_outliers(outlier_y), winsorize(outlier_y))
+
+    def test_clip_upper_outliers_identity_without_outliers(self, clean_y):
+        np.testing.assert_array_equal(clip_upper_outliers(clean_y), clean_y)
+
+    @pytest.mark.parametrize("name", ["wincount", "winlog", "winsqrt"])
+    def test_pre_clip_then_clip_equals_full_transform(self, name, single_outlier_y):
+        np.testing.assert_array_almost_equal(
+            clip_upper_outliers(PRE_CLIP_TRANSFORMS[name](single_outlier_y)),
+            Y_TRANSFORMS[name](single_outlier_y),
+        )
+
+    @pytest.mark.parametrize("name", ["wincount", "winlog", "winsqrt"])
+    def test_train_target_fn_for_winsorize_transforms(self, name):
+        assert get_train_target_fn(name) is clip_upper_outliers
+
+    @pytest.mark.parametrize("name", ["count", "log", "sqrt", None])
+    def test_no_train_target_fn_for_stateless_transforms(self, name):
+        assert get_train_target_fn(name) is None

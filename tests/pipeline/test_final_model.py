@@ -35,6 +35,7 @@ from h2ml.pipeline.final_model import (
 )
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig, PipelineResult
 from h2ml.pipeline.step import make_classifier
+from h2ml.preprocessing.transforms import clip_upper_outliers
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -312,6 +313,30 @@ class TestTransformScale:
         result, X, y = self._result_with_log_transform("reduced")
         final = result.build_final_model()
         np.testing.assert_allclose(final.predict(X), np.log1p(y), rtol=1e-6)
+
+    @pytest.mark.parametrize("stage", ["default", "reduced"])
+    def test_winsorize_refit_clips_with_full_training_limit(self, stage):
+        """Winsorize-based transform stores hold y before clipping (the limit is fitted
+        per CV fold) — the refit must clip with the limit fitted on the full training
+        set, whichever feature stage won."""
+        rng = np.random.default_rng(5)
+        X = rng.standard_normal((60, 3))
+        y = rng.uniform(0.5, 5.0, size=60)
+        y[:4] = [40.0, 60.0, 80.0, 100.0]
+        result = PipelineResult(
+            features=PipelineData(X=X, feature_names=["a", "b", "c"], y=y),
+            step1_cv_result=[CVResult(model_name="KNeighborsRegressor", task_type=TaskType.REGRESSION)],
+            best_model_name="KNeighborsRegressor",
+            best_stage=stage,
+            best_feature_stage=stage,
+            y_transform="winlog",
+        )
+        if stage == "reduced":
+            result.features_reduced = PipelineData(
+                X=X, feature_names=["a", "b", "c"], y=np.log1p(y), y_true=y, y_transform="winlog"
+            )
+        final = result.build_final_model()
+        np.testing.assert_allclose(final.predict(X), clip_upper_outliers(np.log1p(y)), rtol=1e-6)
 
     def test_predict_interval_bounds_in_original_scale(self):
         """q is calibrated on original-scale OOF residuals, so the bounds must be

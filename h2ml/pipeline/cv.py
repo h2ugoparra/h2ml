@@ -62,6 +62,7 @@ class CrossValidator:
         inverse_fn: Optional[Callable] = None,
         coords: Optional[np.ndarray] = None,
         spatial: Optional[SpatialCVConfig] = None,
+        train_target_fn: Optional[Callable] = None,
         _splitter=None,
         _scaled_folds: Optional[list] = None,
     ) -> CVResult:
@@ -81,6 +82,8 @@ class CrossValidator:
             spatial:     Spatial-CV parameters used to build the splitter when coords
                          are given and no pre-built _splitter is supplied. Defaults to
                          SpatialCVConfig() (block splitter, euclidean).
+            train_target_fn: Fitted on and applied to each training fold's targets before
+                         fit (e.g. winsorize clipping), so its statistics never see test rows.
             _splitter:   Pre-built splitter to reuse across models (internal, set by run_all).
 
         Returns:
@@ -114,6 +117,9 @@ class CrossValidator:
             # Ground truth for metrics — original scale if y_true provided, else y
             y_train_true = y_true[train_idx] if y_true is not None else y_train
             y_test_true = y_true[test_idx] if y_true is not None else y_test
+
+            if train_target_fn is not None:
+                y_train = train_target_fn(y_train)
 
             # Use pre-computed scaled arrays when available; otherwise fit scaler here.
             if _scaled_folds is not None:
@@ -161,6 +167,7 @@ class CrossValidator:
         inverse_fn: Optional[Callable] = None,
         coords: Optional[np.ndarray] = None,
         spatial: Optional[SpatialCVConfig] = None,
+        train_target_fn: Optional[Callable] = None,
         _splitter: Any = None,
     ) -> list[CVResult]:
         """
@@ -174,6 +181,7 @@ class CrossValidator:
             n_jobs:      Number of parallel workers. -1 = one thread per CPU.
             y_true:      Original-scale target array for back-transformed metrics.
             inverse_fn:  Callable to back-transform predictions before metric computation.
+            train_target_fn: Per-fold training-target step forwarded to run().
             _splitter:   Pre-built splitter to reuse across pipeline steps. When provided,
                          splitter construction is skipped entirely.
         """
@@ -219,6 +227,7 @@ class CrossValidator:
                 inverse_fn=inverse_fn,
                 coords=coords,
                 spatial=spatial,
+                train_target_fn=train_target_fn,
                 _splitter=prebuilt_splitter,
                 _scaled_folds=sf,
             )

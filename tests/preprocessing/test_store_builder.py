@@ -19,7 +19,7 @@ Coverage:
         - log store y equals log1p(y)
         - sqrt store y equals sqrt(y)
         - wincount store is skipped when no outliers
-        - wincount store y has clipped outliers when present
+        - winsorize-based stores hold y before clipping (limit is fitted per CV fold)
         - winlog store is skipped when log(y) has no outliers
         - winsqrt store is skipped when sqrt(y) has no outliers
 
@@ -177,17 +177,17 @@ class TestYTransformationsOutlier:
         result = build_transformed_stores(X_outlier, outlier_y, FEATURE_NAMES)
         assert "wincount" in result
 
-    def test_wincount_y_clips_outliers(self, X_outlier, outlier_y):
+    def test_wincount_y_is_not_clipped(self, X_outlier, outlier_y):
+        """The IQR limit is fitted per training fold, so the store keeps y before clipping —
+        a limit fitted on the full y would leak test-fold targets into training."""
         result = build_transformed_stores(X_outlier, outlier_y, FEATURE_NAMES)
-        Q1, Q3 = np.percentile(outlier_y, [25, 75])
-        upper_limit = Q3 + 1.5 * (Q3 - Q1)
-        assert (result["wincount"].y <= upper_limit + 1e-9).all()
+        np.testing.assert_array_equal(result["wincount"].y, outlier_y)
+        np.testing.assert_array_equal(result["wincount"].y_true, outlier_y)
 
-    def test_wincount_max_equals_upper_limit(self, X_outlier, outlier_y):
+    def test_winlog_winsqrt_y_hold_pre_clip_transform(self, X_outlier, outlier_y):
         result = build_transformed_stores(X_outlier, outlier_y, FEATURE_NAMES)
-        Q1, Q3 = np.percentile(outlier_y, [25, 75])
-        upper_limit = Q3 + 1.5 * (Q3 - Q1)
-        assert result["wincount"].y.max() == pytest.approx(upper_limit, rel=1e-6)
+        np.testing.assert_array_almost_equal(result["winlog"].y, log_transform(outlier_y))
+        np.testing.assert_array_almost_equal(result["winsqrt"].y, sqrt_transform(outlier_y))
 
     def test_winlog_present_when_outliers_survive_log(self, X_outlier, outlier_y):
         log_y = log_transform(outlier_y)
