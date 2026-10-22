@@ -242,6 +242,16 @@ class TestDataFrameRoundTrip:
         loaded = load_result(tmp_path / "run")
         pd.testing.assert_frame_equal(loaded.step1_agg_df, result.step1_agg_df)
 
+    def test_deprecated_auc_pr_renamed_on_load(self, tmp_path):
+        """Results saved before the AUC_PR → AUCPR rename load under the new names."""
+        result = _full_result()
+        result.metric = "AUC_PR"
+        result.step1_agg_df = pd.DataFrame({"Model": ["LR"], "AUC_PR_Test_Mean": [0.7], "AUC_PR_Gap_Mean": [0.1]})
+        save_result(result, tmp_path / "run")
+        loaded = load_result(tmp_path / "run")
+        assert loaded.metric == "AUCPR"
+        assert list(loaded.step1_agg_df.columns) == ["Model", "AUCPR_Test_Mean", "AUCPR_Gap_Mean"]
+
 
 # ---------------------------------------------------------------------------
 # PipelineData

@@ -22,7 +22,7 @@ Full parameter reference:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `task_type` | `"classification"` | `"classification"` or `"regression"` (case-insensitive); a `TaskType` member is also accepted |
-| `metric` | `"AUC"` | Optimisation target. Classification: `"AUC"`, `"AUC_PR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. Minimisation direction is derived automatically. |
+| `metric` | `"AUC"` | Optimisation target. Classification: `"AUC"`, `"AUCPR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. Minimisation direction is derived automatically. `"AUC_PR"` is a deprecated alias for `"AUCPR"`. |
 | `n_splits` | `5` | CV folds for steps 1 and 3 |
 | `n_jobs` | `-1` | Worker processes used to CV models in parallel (steps 1 and 3). `-1` uses all cores; must be non-zero. Lower it when memory rather than CPU is the constraint, or to leave headroom on a shared machine. |
 | `opt_n_splits` | `3` | CV folds inside each Optuna trial (fewer = faster) |
@@ -49,6 +49,9 @@ All artifacts produced by a run. Fields are populated progressively — check `c
 result.completed_steps        # e.g. [1, 2, 3, 4]
 result.summary()              # combined agg DataFrame across all stages
 result.summary("AUC_Test_Mean", ascending=False)
+# Column names are <Metric>_<Test|Train|Gap>_<Mean|Std>. "Test" is the held-out
+# fold of each CV split, so AUC_Test_Mean is the mean of per-fold held-out scores,
+# not one score on the pooled OOF predictions (result.oof_predictions).
 
 result.best_model_name        # winning model class name
 result.best_model_value       # best CV score (maximised internally)

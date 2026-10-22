@@ -33,6 +33,7 @@ from h2ml.evaluation.metrics import (
     RunMetadata,
     aggregate_metrics,
     compute_metrics_all,
+    resolve_metric,
     select_best,
 )
 from h2ml.features.selector import FeatureSelector
@@ -54,7 +55,7 @@ class PipelineConfig:
         metric:              Short metric name used for model selection (steps 1–3) and
                              HPO (step 4). Minimisation direction and sort order are
                              derived automatically — no need to set a separate flag.
-                             Classification: "AUC" (default), "AUC_PR", "F1", "LogLoss",
+                             Classification: "AUC" (default), "AUCPR", "F1", "LogLoss",
                              "Brier". Regression: "R2" (default), "MAE", "RMSE".
         n_splits:            CV folds used in steps 1–3 for model screening and feature
                              selection. More folds = more reliable estimates, higher
@@ -153,6 +154,7 @@ class PipelineConfig:
                 ) from None
         if self.task_type not in (TaskType.CLASSIFICATION, TaskType.REGRESSION):
             raise ValueError(f'task_type must be "classification" or "regression", got "{self.task_type.value}"')
+        self.metric = resolve_metric(self.metric)
         if self.metric not in METRIC_COL:
             raise ValueError(f"metric must be one of {list(METRIC_COL)}, got {self.metric!r}")
         if self.n_splits < 2:

@@ -39,7 +39,7 @@ from sklearn.metrics import (
 from sklearn.preprocessing import LabelBinarizer, StandardScaler
 
 from h2ml.core.spatial_config import SpatialCVConfig
-from h2ml.evaluation.metrics import METRIC_MINIMIZE
+from h2ml.evaluation.metrics import METRIC_MINIMIZE, resolve_metric
 from h2ml.optimization.opt_params import ModelEntry, get_entry
 
 # Silence Optuna's default verbose logging — pipeline controls verbosity
@@ -184,7 +184,7 @@ def _score_rmse(
 # All entries return higher-is-better values — study direction stays 'maximize'.
 CLF_METRICS: dict[str, Callable] = {
     "AUC": _score_auc,
-    "AUC_PR": _score_auc_pr,
+    "AUCPR": _score_auc_pr,
     "LogLoss": _score_logloss,
     "F1": _score_f1,
     "Brier": _score_brier,
@@ -416,7 +416,7 @@ def run_study(
         raise ValueError(f"task must be 'classification' or 'regression', got '{task}'")
 
     available = _TASK_METRICS[task]
-    resolved_metric = metric or _DEFAULT_METRIC[task]
+    resolved_metric = resolve_metric(metric or _DEFAULT_METRIC[task])
     if resolved_metric not in available:
         raise ValueError(f"metric '{resolved_metric}' is not valid for task '{task}'. Available: {list(available)}")
     score_fn = available[resolved_metric]

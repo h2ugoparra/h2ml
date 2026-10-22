@@ -36,6 +36,7 @@ import pandas as pd
 from loguru import logger
 
 from h2ml.core.feature_store import PipelineData
+from h2ml.evaluation.metrics import rename_deprecated_columns, resolve_metric
 
 # ---------------------------------------------------------------------------
 # Field registry — keep in sync with PipelineResult
@@ -208,6 +209,9 @@ def load_result(path: str | Path):
         "step4_fold_df": _load_parquet(root / "step4_fold.parquet"),
         "step4_agg_df": _load_parquet(root / "step4_agg.parquet"),
     }
+    # Results saved before a metric rename keep the old column names on disk.
+    dfs = {k: None if df is None else rename_deprecated_columns(df) for k, df in dfs.items()}
+    metric = meta.get("metric")
 
     return PipelineResult(
         features=_load_feature_store(root / "features"),
@@ -227,7 +231,7 @@ def load_result(path: str | Path):
         spatial_cv_metric=meta.get("spatial_cv_metric", "euclidean"),
         time_bin_resolution=meta.get("time_bin_resolution", "month"),
         cv_warnings=meta.get("cv_warnings", []),
-        metric=meta.get("metric"),
+        metric=None if metric is None else resolve_metric(metric),
         step3_reduced_stores=None,
         **dfs,
     )
