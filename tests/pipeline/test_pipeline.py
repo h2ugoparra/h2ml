@@ -593,6 +593,46 @@ class TestMetricSuitability:
         assert any("optimistic" in w for w in result.cv_warnings)
 
 
+class TestRankingRobustness:
+    def _twin_lr(self) -> list:
+        """Two identical models — a guaranteed paired-fold tie."""
+        return [
+            make_classifier(LogisticRegression(max_iter=200, random_state=42), name="LR_a"),
+            make_classifier(LogisticRegression(max_iter=200, random_state=42), name="LR_b"),
+        ]
+
+    def test_step1_tie_lands_in_cv_warnings(self, clf_store):
+        result = H2MLPipeline(models=self._twin_lr(), config=_clf_config()).run_step1_only(clf_store)
+        assert any(w.startswith("step 1:") and "within one corrected SE" in w for w in result.cv_warnings)
+
+    def test_step3_checks_both_stages(self, clf_store):
+        with _mock_selector():
+            result = H2MLPipeline(models=self._twin_lr(), config=_clf_config()).run_step1_to_step3(clf_store)
+        assert any(w.startswith("step 3:") for w in result.cv_warnings)
+
+    def test_result_method_defaults_to_latest_step(self, clf_store):
+        pipeline = H2MLPipeline(models=_clf_steps(), config=_clf_config())
+        result = pipeline.run_step1_only(clf_store)
+        assert set(result.ranking_robustness()["Model"]) == {"LR", "RF"}
+        with _mock_selector():
+            result = pipeline.run_step1_to_step3(clf_store)
+        assert set(result.ranking_robustness()["Stage"]) == {"default", "reduced"}
+        assert result.ranking_robustness(step=1)["Stage"].unique().tolist() == ["default"]
+
+    def test_result_method_winner_matches_pipeline(self, clf_store):
+        with _mock_selector():
+            result = H2MLPipeline(models=_clf_steps(), config=_clf_config()).run_step1_to_step3(clf_store)
+        winner = result.ranking_robustness().query("Is_Winner").iloc[0]
+        assert (winner["Model"], winner["Stage"]) == (result.best_model_name, result.best_stage)
+
+    def test_result_method_rejects_missing_or_invalid_step(self, clf_store):
+        result = H2MLPipeline(models=_clf_steps(), config=_clf_config()).run_step1_only(clf_store)
+        with pytest.raises(ValueError, match="Step 3 has not run"):
+            result.ranking_robustness(step=3)
+        with pytest.raises(ValueError, match="step must be 1 or 3"):
+            result.ranking_robustness(step=4)
+
+
 # ---------------------------------------------------------------------------
 # PipelineResult
 # ---------------------------------------------------------------------------

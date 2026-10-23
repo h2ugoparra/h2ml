@@ -36,6 +36,7 @@ from h2ml.evaluation.metrics import (
     resolve_metric,
     select_best,
 )
+from h2ml.evaluation.ranking import ranking_robustness, ranking_warnings
 from h2ml.features.selector import FeatureSelector
 from h2ml.optimization.optimizer import run_study
 from h2ml.pipeline.cv import CrossValidator, CVResult
@@ -272,7 +273,8 @@ class PipelineResult:
         time_bin_resolution:  Temporal bin resolution forwarded from PipelineConfig.
         cv_warnings:          Warnings for models with ≥1 failed CV fold (steps 1 & 3), plus
                               data conditions that make the selection metric unreliable
-                              (checked in step 1; advisory — the metric is never changed).
+                              (checked in step 1), and ranking-robustness flags (steps 1
+                              & 3). All advisory — metric and selection are never changed.
         class_weight_balanced: True when CV ran with class_weight="balanced" injected
                               (handle_imbalance resolved active); build_final_model
                               re-applies it when step 4 did not produce best_params.
@@ -320,7 +322,7 @@ class PipelineResult:
     spatial_cv_metric: str = "euclidean"
     # Temporal bin resolution forwarded from PipelineConfig
     time_bin_resolution: str = "month"
-    # Models with failed CV folds (steps 1 & 3) and metric-suitability warnings (step 1)
+    # Failed CV folds (steps 1 & 3), metric-suitability (step 1), ranking robustness (steps 1 & 3)
     cv_warnings: list[str] = field(default_factory=list)
     # Whether CV ran with class_weight="balanced" (resolved handle_imbalance)
     class_weight_balanced: bool = False
@@ -416,6 +418,35 @@ class PipelineResult:
             df = df.sort_values(metric, ascending=ascending).reset_index(drop=True)
 
         return df
+
+    def ranking_robustness(self, step: Optional[int] = None) -> pd.DataFrame:
+        """
+        Paired-fold and cross-metric robustness of the step-1 or step-3 selection.
+
+        See h2ml.evaluation.ranking.ranking_robustness for the columns. Works on
+        loaded results — fold DataFrames and metric are persisted.
+
+        Args:
+            step: 1 (models × transforms on all features) or 3 (default and reduced
+                  candidates together, as step 3 selects among both). None → 3 when
+                  step 3 has run, else 1.
+
+        Returns:
+            One row per candidate, sorted by rank under result.metric.
+
+        Raises:
+            ValueError: If step is not 1/3 or that step has not run.
+        """
+        if step is None:
+            step = 3 if self.step3_fold_df is not None else 1
+        if step not in (1, 3):
+            raise ValueError(f"step must be 1 or 3, got {step!r}")
+        if self.metric is None or self.step1_fold_df is None or (step == 3 and self.step3_fold_df is None):
+            raise ValueError(f"Step {step} has not run on this result.")
+        fold_df = self.step1_fold_df
+        if step == 3:
+            fold_df = pd.concat([self.step1_fold_df, self.step3_fold_df], ignore_index=True)
+        return ranking_robustness(fold_df, self.metric)
 
     def build_final_model(self) -> "FinalModel":
         """
@@ -818,6 +849,7 @@ class H2MLPipeline:
         result.y_transform = best["row"].get("Y_transform")
         self._record_best_estimator(result)
         result.metric = self.config.metric
+        result.cv_warnings.extend(self._check_ranking_robustness(result.step1_fold_df, step=1))
 
         self._log(
             f"  Best: {result.best_model_name}"
@@ -915,6 +947,9 @@ class H2MLPipeline:
         result.best_model_std = float(best["row"].get(std_col, float("nan")))
         result.best_stage = str(best["row"]["Stage"])
         result.best_feature_stage = result.best_stage  # preserved — never overwritten by "optimized"
+        assert result.step1_fold_df is not None and result.step3_fold_df is not None
+        both_stages_fold_df = pd.concat([result.step1_fold_df, result.step3_fold_df], ignore_index=True)
+        result.cv_warnings.extend(self._check_ranking_robustness(both_stages_fold_df, step=3))
         result.y_transform = best["row"].get("Y_transform")
         self._record_best_estimator(result)
 
@@ -1283,6 +1318,17 @@ class H2MLPipeline:
 
         for m in msgs:
             logger.warning(f"[metric] {m}")
+        return msgs
+
+    def _check_ranking_robustness(self, fold_df: pd.DataFrame, step: int) -> list[str]:
+        """Warn when the winner is a paired-fold tie or loses on the counterpart-family metric.
+
+        Advisory only — see h2ml.evaluation.ranking. The selection is never changed.
+        """
+        robust_df = ranking_robustness(fold_df, self.config.metric, n_folds=self.config.n_splits)
+        msgs = [f"step {step}: {m}" for m in ranking_warnings(robust_df, self.config.metric)]
+        for m in msgs:
+            logger.warning(f"[ranking] {m}")
         return msgs
 
     def _get_inverse_fn(self, store: PipelineData):

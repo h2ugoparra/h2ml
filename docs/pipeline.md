@@ -65,9 +65,23 @@ result.y_transform            # winning y-transform (regression only, or None)
 result.cv_type                # "spatial" | "random"
 result.spatial_cv_metric      # "euclidean" | "haversine" — forwarded from config
 result.time_bin_resolution    # "month" | "season" — forwarded from config
-result.cv_warnings            # list[str] — models with failed CV folds
+result.cv_warnings            # list[str] — failed CV folds, metric-suitability and
+                              # ranking-robustness flags (advisory; never change selection)
 result.metric                 # short metric name, e.g. "AUC"
 ```
+
+### Selection robustness
+
+```python
+result.ranking_robustness()        # step 3 if run, else step 1
+result.ranking_robustness(step=1)  # models × transforms on all features
+```
+
+One row per candidate. `Winner_Gap` is the mean per-fold difference to the winner
+(positive = winner better), paired on shared folds so fold difficulty cancels;
+`Gap_SE` is its Nadeau–Bengio corrected standard error. `Indistinguishable` marks
+candidates within one SE of the winner — a heuristic tie, not a significance test.
+`Rank_<metric>` columns show where each candidate ranks under every metric.
 
 ### Per-step data
 

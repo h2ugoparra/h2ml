@@ -380,6 +380,20 @@ def aggregate_metrics(fold_df: pd.DataFrame, group_by_stage: bool = True) -> pd.
     return agg_df[ordered_cols]
 
 
+def selection_score(
+    agg_df: pd.DataFrame,
+    metric: str,
+    minimize: bool = False,
+    n_folds: Optional[int] = None,
+) -> pd.Series:
+    """Per-row score select_best() ranks by: the confidence bound when n_folds is given, else the mean."""
+    std_col = metric.replace("_Mean", "_Std")
+    if n_folds is not None and std_col in agg_df.columns:
+        penalty = agg_df[std_col] / np.sqrt(n_folds)
+        return agg_df[metric] + penalty if minimize else agg_df[metric] - penalty
+    return agg_df[metric]
+
+
 def select_best(
     agg_df: pd.DataFrame,
     metric: str = "AUC_Test_Mean",
@@ -417,12 +431,7 @@ def select_best(
     if metric not in agg_df.columns:
         raise ValueError(f"Metric '{metric}' not found. Available: {list(agg_df.columns)}")
 
-    std_col = metric.replace("_Mean", "_Std")
-    if n_folds is not None and std_col in agg_df.columns:
-        penalty = agg_df[std_col] / np.sqrt(n_folds)
-        score = agg_df[metric] + penalty if minimize else agg_df[metric] - penalty
-    else:
-        score = agg_df[metric]
+    score = selection_score(agg_df, metric, minimize, n_folds)
 
     if score.isna().all():
         raise RuntimeError(
