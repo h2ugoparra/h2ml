@@ -56,8 +56,10 @@ class FinalModel:
         task_type:        TaskType.CLASSIFICATION or TaskType.REGRESSION.
         requires_scaling: Whether StandardScaler was applied before fitting.
         scaler:           Fitted StandardScaler (None when requires_scaling is False).
-        best_model_name:  Name of the model as registered in the h2ml registry.
-        best_params:      Hyperparameters used for the final fit (None = defaults).
+        best_model_name:  Display name of the winning model (registry name or custom).
+        best_params:      Step-4 overrides set on top of the winning estimator for the
+                          final fit; {} or None when there were none. The full
+                          configuration is estimator.get_params().
         conformal:        Global conformal calibrator built from out-of-fold residuals;
                           powers predict_interval / predict_set. None when no calibration
                           was available (e.g. partial pipeline run).
