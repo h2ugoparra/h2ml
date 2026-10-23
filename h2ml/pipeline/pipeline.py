@@ -254,7 +254,10 @@ class PipelineResult:
                               build_final_model to build LocalConformalCalibration.
         time_bin_resolution:  Temporal bin resolution forwarded from PipelineConfig.
         cv_warnings:          Warnings for models with ≥1 failed CV fold (steps 1 & 3).
-        metric:               Short selection metric name, e.g. "AUC" or "R2".
+        class_weight_balanced: True when CV ran with class_weight="balanced" injected
+                              (handle_imbalance resolved active); build_final_model
+                              re-applies it when step 4 did not produce best_params.
+        metric:            Short selection metric name, e.g. "AUC" or "R2".
         splitter:             Splitter built once in step 1 and reused in steps 3-4.
                               Not persisted.
     """
@@ -297,6 +300,8 @@ class PipelineResult:
     time_bin_resolution: str = "month"
     # Models that had at least one failed CV fold — populated by step 1 and step 3
     cv_warnings: list[str] = field(default_factory=list)
+    # Whether CV ran with class_weight="balanced" (resolved handle_imbalance)
+    class_weight_balanced: bool = False
     # Short metric name used for model selection, e.g. "AUC" or "R2" (from PipelineConfig)
     metric: Optional[str] = None
     # Splitter built once in step 1 and reused in steps 3 and 4 (not persisted)
@@ -623,6 +628,7 @@ class H2MLPipeline:
             raise ValueError(f"result must have {missing} set. Run run_step1_to_step2() first.")
         assert result.features is not None  # validated above
         self._resolve_class_weights(result.features.y)
+        result.class_weight_balanced = self._class_weight_active
         transform_stores = self._rebuild_transform_stores(result, transform_stores)
         result = self._run_step3(result, transform_stores)
         result = self._run_step4(result, transform_stores)
@@ -673,6 +679,7 @@ class H2MLPipeline:
             )
         assert result.features is not None  # validated above
         self._resolve_class_weights(result.features.y)
+        result.class_weight_balanced = self._class_weight_active
         transform_stores = self._rebuild_transform_stores(result, transform_stores)
         return self._run_step4(result, transform_stores)
 
@@ -1088,6 +1095,7 @@ class H2MLPipeline:
             cv_type="spatial" if store.coords is not None else "random",
             spatial_cv_metric=self.config.spatial_cv_metric,
             time_bin_resolution=self.config.time_bin_resolution,
+            class_weight_balanced=self._class_weight_active,
         )
 
     def _validate_store(self, store: PipelineData) -> None:

@@ -11,6 +11,14 @@ All notable changes to this project will be documented in this file.
   the imbalance warning). It is decided when each run starts, including on resume
   via `run_from_step3` / `run_step4_only`. `True` and `False` behave as before.
 
+### Fixed
+
+- `build_final_model()` now keeps `class_weight="balanced"` when `handle_imbalance`
+  was active but step 4 did not run (e.g. after `run_step1_to_step3`). Previously
+  the final model was refit from registry defaults without the weights CV used.
+  The decision is stored as `PipelineResult.class_weight_balanced` and persisted;
+  results saved before this change load with it set to `False`.
+
 ### Changed
 
 - The precision–recall metric is renamed from `"AUC_PR"` to `"AUCPR"`, in line
