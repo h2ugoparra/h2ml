@@ -1208,13 +1208,14 @@ class H2MLPipeline:
         return entry.supports_class_weight if entry is not None else False
 
     def _inject_class_weights(self, class_weight: Optional[str] = "balanced") -> None:
-        """Set class_weight on every supporting classifier in self.models."""
-        from h2ml.utils.registry import CLASSIFIER_REGISTRY
+        """Set class_weight on every supporting classifier in self.models.
 
+        Looked up by estimator class name — the same key step 4 uses — so a model
+        given a custom display name (e.g. name="LR") is weighted consistently.
+        """
         injected = []
         for model in self.models:
-            entry = CLASSIFIER_REGISTRY.get(model.name)
-            if entry is not None and entry.supports_class_weight:
+            if self._supports_class_weight(model.estimator.__class__.__name__):
                 model.estimator.set_params(class_weight=class_weight)
                 injected.append(model.name)
         if injected:
