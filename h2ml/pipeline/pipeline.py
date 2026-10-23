@@ -242,7 +242,15 @@ class PipelineResult:
                               "reduced", never "optimized".
         step3_reduced_stores: Cached reduced PipelineDatas keyed by transform name
                               ("" for no transform). Not persisted.
-        best_params:          Best hyperparameters found in step 4 (None = defaults).
+        best_base_estimator:  Unfitted clone of the winning model's estimator, exactly as
+                              CV ran it (constructor args and injected class_weight
+                              included). build_final_model refits clone(this) with
+                              best_params set on top.
+        best_requires_scaling: Whether the winning model was scaled in CV.
+        best_params:          Overrides applied to best_base_estimator in step 4 (tuned
+                              params plus fixed ones such as class_weight). None when
+                              step 4 did not run. Results saved before
+                              best_base_estimator existed hold full constructor kwargs.
         step4_fold_df:        Per-fold metrics from the step-4 final CV.
         step4_agg_df:         Aggregated step-4 metrics.
         step1_cv_result:      Raw step-1 CVResults — preserved for plots/persistence.
@@ -281,6 +289,9 @@ class PipelineResult:
     best_feature_stage: Optional[str] = None
     # Step 3: cached reduced PipelineDatas keyed by transform name (or "" for no transform)
     step3_reduced_stores: Optional[dict[str, "PipelineData"]] = field(default=None, repr=False)
+    # Winning estimator as CV ran it (unfitted) — the base build_final_model refits
+    best_base_estimator: Any = field(default=None, repr=False)
+    best_requires_scaling: bool = False
     # Step 4: hyperparameter optimization + final CV + select overall best
     best_params: Optional[dict] = None
     step4_fold_df: Optional[pd.DataFrame] = None
@@ -793,6 +804,7 @@ class H2MLPipeline:
         result.best_model_std = float(best["row"].get(std_col, float("nan")))
         result.best_stage = "default"
         result.y_transform = best["row"].get("Y_transform")
+        self._record_best_estimator(result)
         result.metric = self.config.metric
 
         self._log(
@@ -892,6 +904,7 @@ class H2MLPipeline:
         result.best_stage = str(best["row"]["Stage"])
         result.best_feature_stage = result.best_stage  # preserved — never overwritten by "optimized"
         result.y_transform = best["row"].get("Y_transform")
+        self._record_best_estimator(result)
 
         self._log(
             f"  Best: {result.best_model_name} | stage={result.best_stage}"
@@ -925,6 +938,9 @@ class H2MLPipeline:
 
         best_model = self._get_model(result.best_model_name)
         estimator_name = best_model.estimator.__class__.__name__
+        # Re-record: a resumed run (run_step4_only on a new pipeline) tunes this
+        # pipeline's model, which the final model must then be rebuilt from.
+        self._record_best_estimator(result)
 
         # Fixed params are injected into every Optuna trial alongside searched params.
         # Built before the opt_enabled check: the skip path must also carry them, or a
@@ -935,8 +951,8 @@ class H2MLPipeline:
             fixed_params["class_weight"] = "balanced"
 
         if not self._is_opt_enabled(estimator_name):
-            self._log(f"  {estimator_name} has opt_enabled=False — skipping optimization.")
-            result.best_params = {**self._get_default_params(estimator_name), **fixed_params}
+            self._log(f"  {estimator_name} has no enabled search space — skipping optimization.")
+            result.best_params = dict(fixed_params)
             return result
 
         study = run_study(
@@ -956,17 +972,19 @@ class H2MLPipeline:
             inverse_fn=inverse_fn,
             train_target_fn=train_target_fn,
             _splitter=result.splitter if store_for_opt.coords is not None else None,
+            estimator=best_model.estimator,
+            requires_scaling=best_model.requires_scaling,
         )
 
-        # study.best_params only contains trial.suggest_* values — merge with
-        # registry default_kwargs so fixed kwargs (e.g. probability=True for SVC)
-        # are preserved when _build_fold_model reconstructs the estimator.
+        # best_params are overrides on top of the winner's own estimator — trials,
+        # the final CV (_build_fold_model) and build_final_model all apply them via
+        # clone(estimator).set_params(), so constructor args (e.g. probability=True
+        # for SVC, or a user's max_iter) are kept everywhere.
         # fixed_params are re-applied last: every trial was evaluated with them
         # overriding sampled values (see _build_objective), so the final model must
         # match — otherwise a sampled class_weight=None from the search space would
         # silently undo handle_imbalance in the deployed params.
-        default_kwargs = {**self._get_default_params(estimator_name), **fixed_params}
-        merged_params = {**default_kwargs, **study.best_params, **fixed_params}
+        merged_params = {**study.best_params, **fixed_params}
 
         metadata = self._metadata_with(stage="optimized")
         if result.y_transform:
@@ -1001,7 +1019,7 @@ class H2MLPipeline:
             result.best_stage = "optimized"
             result.best_params = merged_params
         else:
-            result.best_params = default_kwargs
+            result.best_params = dict(fixed_params)
 
         self._log(
             f"  Optimized {self.config.metric}={optimized_value:.4f} ± {optimized_std:.4f}"
@@ -1193,12 +1211,16 @@ class H2MLPipeline:
         return INVERSE_TRANSFORMS.get(store.y_transform)
 
     def _is_opt_enabled(self, estimator_name: str) -> bool:
-        """Return False if the model's registry entry has opt_enabled=False."""
+        """Return True only if the model has a registry entry that run_study can tune.
+
+        Mirrors get_entry(): an estimator outside the registry, or one with
+        opt_enabled=False or no param_fn, has no search space and is skipped.
+        """
         from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
 
         registry = CLASSIFIER_REGISTRY if self.config.task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
         entry = registry.get(estimator_name)
-        return entry.opt_enabled if entry is not None else True
+        return entry is not None and entry.opt_enabled and entry.param_fn is not None
 
     def _supports_class_weight(self, estimator_name: str) -> bool:
         """Return True if the classifier's registry entry has supports_class_weight=True."""
@@ -1244,13 +1266,18 @@ class H2MLPipeline:
             f"class_weight={'balanced' if active else 'not applied'}"
         )
 
-    def _get_default_params(self, estimator_name: str) -> dict:
-        """Return the default_kwargs for a model from the registry."""
-        from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
+    def _record_best_estimator(self, result: PipelineResult) -> None:
+        """Store an unfitted clone of the winning model's estimator on result.
 
-        registry = CLASSIFIER_REGISTRY if self.config.task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
-        entry = registry.get(estimator_name)
-        return entry.default_kwargs if entry is not None else {}
+        build_final_model refits from this instead of rebuilding from the registry,
+        so custom display names, non-registry estimators and constructor args all
+        survive into the deployed model.
+        """
+        from sklearn.base import clone
+
+        model = self._get_model(result.best_model_name)
+        result.best_base_estimator = clone(model.estimator)
+        result.best_requires_scaling = model.requires_scaling
 
     def _get_model(self, name: Optional[str]) -> ModelWrapper:
         if name is None:

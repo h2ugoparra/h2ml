@@ -66,6 +66,7 @@ _SAVED_FIELDS = frozenset(
         "time_bin_resolution",
         "cv_warnings",
         "class_weight_balanced",
+        "best_requires_scaling",
         "metric",
         # parquet
         "step1_fold_df",
@@ -79,6 +80,7 @@ _SAVED_FIELDS = frozenset(
         "features_reduced",
         # pickles
         "selector",
+        "best_base_estimator",
         "step1_cv_result",
         "step3_cv_result",
         "step4_cv_result",
@@ -135,6 +137,7 @@ def save_result(result, path: str | Path) -> None:
             "time_bin_resolution": result.time_bin_resolution,
             "cv_warnings": result.cv_warnings,
             "class_weight_balanced": result.class_weight_balanced,
+            "best_requires_scaling": result.best_requires_scaling,
             "metric": result.metric,
         },
         root / "metadata.json",
@@ -162,6 +165,8 @@ def save_result(result, path: str | Path) -> None:
     # FeatureSelector + CV results
     if result.selector is not None:
         joblib.dump(result.selector, root / "selector.pkl")
+    if result.best_base_estimator is not None:
+        joblib.dump(result.best_base_estimator, root / "best_base_estimator.pkl")
     if result.step1_cv_result:
         joblib.dump(result.step1_cv_result, root / "step1_cv_result.pkl")
     if result.step3_cv_result:
@@ -219,6 +224,7 @@ def load_result(path: str | Path):
         features=_load_feature_store(root / "features"),
         features_reduced=_load_feature_store(root / "features_reduced"),
         selector=_load_pkl(root / "selector.pkl"),
+        best_base_estimator=_load_pkl(root / "best_base_estimator.pkl"),
         step1_cv_result=_load_pkl(root / "step1_cv_result.pkl"),
         step3_cv_result=_load_pkl(root / "step3_cv_result.pkl"),
         step4_cv_result=_load_pkl(root / "step4_cv_result.pkl"),
@@ -234,6 +240,7 @@ def load_result(path: str | Path):
         time_bin_resolution=meta.get("time_bin_resolution", "month"),
         cv_warnings=meta.get("cv_warnings", []),
         class_weight_balanced=meta.get("class_weight_balanced", False),
+        best_requires_scaling=meta.get("best_requires_scaling", False),
         metric=None if metric is None else resolve_metric(metric),
         step3_reduced_stores=None,
         **dfs,

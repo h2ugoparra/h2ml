@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
 from sklearn.preprocessing import StandardScaler
 
 from h2ml.core.base import TaskType
@@ -55,8 +56,10 @@ class FinalModel:
         task_type:        TaskType.CLASSIFICATION or TaskType.REGRESSION.
         requires_scaling: Whether StandardScaler was applied before fitting.
         scaler:           Fitted StandardScaler (None when requires_scaling is False).
-        best_model_name:  Name of the model as registered in the h2ml registry.
-        best_params:      Hyperparameters used for the final fit (None = defaults).
+        best_model_name:  Display name of the winning model (registry name or custom).
+        best_params:      Step-4 overrides set on top of the winning estimator for the
+                          final fit; {} or None when there were none. The full
+                          configuration is estimator.get_params().
         conformal:        Global conformal calibrator built from out-of-fold residuals;
                           powers predict_interval / predict_set. None when no calibration
                           was available (e.g. partial pipeline run).
@@ -526,8 +529,10 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     FinalModel ready for inference.
 
     Picks the correct feature store (reduced or full) via best_feature_stage,
-    applies StandardScaler when the model requires it, and fits with
-    best_params when step 4 ran.
+    applies StandardScaler when the model requires it, and fits
+    clone(result.best_base_estimator) with best_params set on top — the same
+    estimator CV validated. Results saved before best_base_estimator existed are
+    rebuilt from the model registry instead.
 
     Args:
         result: PipelineResult from H2MLPipeline.run().
@@ -537,9 +542,9 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
 
     Raises:
         ValueError: If the result is incomplete (no step-1 CV result, no
-            best_model_name, or the chosen feature store is missing), or if
-            best_model_name is no longer present in the registry (e.g. the model
-            was removed after the pipeline ran).
+            best_model_name, or the chosen feature store is missing), or, for a
+            legacy result without best_base_estimator, if best_model_name is not
+            present in the registry.
     """
     from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
 
@@ -557,27 +562,35 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     if store is None:
         raise ValueError(f"Cannot build final model: the '{feature_stage}' feature store is missing from the result.")
 
-    registry = CLASSIFIER_REGISTRY if task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
-    entry = registry.get(result.best_model_name)
-    if entry is None:
-        raise ValueError(
-            f"Model '{result.best_model_name}' not found in registry. Was it removed after the pipeline ran?"
-        )
-
-    # Instantiate with best_params when available, otherwise default. Step 4 already
-    # merges class_weight into best_params; without it, re-apply the weights CV ran
-    # with, or the deployed model would differ from the validated one.
-    if result.best_params:
-        estimator = entry.model_cls(**result.best_params)
+    if result.best_base_estimator is not None:
+        # The estimator CV ran (constructor args and injected class_weight included);
+        # best_params are step-4 overrides on top of it.
+        estimator = clone(result.best_base_estimator)
+        if result.best_params:
+            estimator.set_params(**result.best_params)
+        requires_scaling = result.best_requires_scaling
     else:
-        kwargs = dict(entry.default_kwargs)
-        if result.class_weight_balanced and entry.supports_class_weight:
-            kwargs["class_weight"] = "balanced"
-        estimator = entry.model_cls(**kwargs)
+        # Legacy results: rebuild from the registry, where best_params hold full kwargs.
+        registry = CLASSIFIER_REGISTRY if task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
+        entry = registry.get(result.best_model_name)
+        if entry is None:
+            raise ValueError(
+                f"Model '{result.best_model_name}' not found in registry. Was it removed after the pipeline ran?"
+            )
+        # Without best_params, re-apply the weights CV ran with, or the deployed
+        # model would differ from the validated one.
+        if result.best_params:
+            estimator = entry.model_cls(**result.best_params)
+        else:
+            kwargs = dict(entry.default_kwargs)
+            if result.class_weight_balanced and entry.supports_class_weight:
+                kwargs["class_weight"] = "balanced"
+            estimator = entry.model_cls(**kwargs)
+        requires_scaling = entry.requires_scaling
 
     X = store.X
     scaler = None
-    if entry.requires_scaling:
+    if requires_scaling:
         scaler = StandardScaler()
         X = scaler.fit_transform(X)
 
@@ -637,7 +650,7 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
         estimator=estimator,
         feature_names=store.feature_names,
         task_type=task_type,
-        requires_scaling=entry.requires_scaling,
+        requires_scaling=requires_scaling,
         scaler=scaler,
         best_model_name=result.best_model_name,
         best_params=result.best_params,

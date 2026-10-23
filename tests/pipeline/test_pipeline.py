@@ -1375,3 +1375,87 @@ class TestSpatialCVPipeline:
         for name, ts in stores.items():
             assert ts.coords is not None, f"Transform store '{name}' lost coords"
             np.testing.assert_array_equal(ts.coords, store.coords)
+
+
+# ---------------------------------------------------------------------------
+# Final model / step 4 rebuild from the winning estimator, not the registry
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerEstimatorReuse:
+    def test_custom_name_and_constructor_args_reach_final_model(self, clf_store):
+        """A custom display name used to fail the registry lookup, and constructor
+        args (C, max_iter) and the wrapper's requires_scaling were replaced by registry
+        defaults. The final model must be the estimator CV validated."""
+        lr = LogisticRegression(C=0.5, max_iter=123, random_state=42)
+        pipeline = H2MLPipeline(models=[make_classifier(lr, name="LR")], config=_clf_config())
+        with _mock_selector():
+            result = pipeline.run(clf_store)
+
+        assert result.best_model_name == "LR"
+        final = result.build_final_model()
+        params = final.estimator.get_params()
+        assert params["C"] == 0.5
+        assert params["max_iter"] == 123
+        # make_classifier defaults to requires_scaling=False; the registry says True for LR.
+        assert final.requires_scaling is False
+        assert final.scaler is None
+
+    def test_step4_tunes_and_deploys_on_top_of_winner(self, clf_store):
+        """Trials, the step-4 CV and the final model all keep unsearched constructor
+        args; best_params holds only the overrides."""
+        rf = RandomForestClassifier(n_estimators=10, ccp_alpha=0.01, random_state=42)
+        pipeline = H2MLPipeline(models=[make_classifier(rf)], config=_clf_config())
+        with _mock_selector():
+            result = pipeline.run_step1_to_step3(clf_store)
+
+        captured = {}
+        orig_run = pipeline._cv.run
+
+        def spy_run(*args, **kwargs):
+            fold_step = pipeline._cv._build_fold_model(args[0], kwargs["best_params"])
+            captured["fold_params"] = fold_step.estimator.get_params()
+            return orig_run(*args, **kwargs)
+
+        with (
+            _mock_optimizer({"n_estimators": 10, "max_depth": 3}) as mock_run_study,
+            patch.object(pipeline._cv, "run", side_effect=spy_run),
+        ):
+            result = pipeline.run_step4_only(result)
+
+        assert mock_run_study.call_args.kwargs["estimator"] is pipeline.models[0].estimator
+        assert mock_run_study.call_args.kwargs["requires_scaling"] is False
+        assert captured["fold_params"]["ccp_alpha"] == 0.01
+        assert captured["fold_params"]["max_depth"] == 3
+        assert set(result.best_params) <= {"n_estimators", "max_depth"}
+
+        final = result.build_final_model()
+        assert final.estimator.get_params()["ccp_alpha"] == 0.01
+
+    def test_non_registry_estimator_runs_end_to_end(self, clf_store):
+        """An estimator outside the registry has no search space: step 4 must skip it
+        (it used to raise KeyError in run_study) and the final model must refit it."""
+        from sklearn.tree import DecisionTreeClassifier
+
+        tree = DecisionTreeClassifier(max_depth=2, random_state=0)
+        pipeline = H2MLPipeline(models=[make_classifier(tree)], config=_clf_config())
+        with _mock_selector():
+            result = pipeline.run(clf_store)
+
+        assert result.best_params == {}
+        final = result.build_final_model()
+        assert isinstance(final.estimator, DecisionTreeClassifier)
+        assert final.estimator.get_params()["max_depth"] == 2
+
+    def test_is_opt_enabled_false_for_unregistered_estimator(self):
+        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config())
+        assert pipeline._is_opt_enabled("DecisionTreeClassifier") is False
+        assert pipeline._is_opt_enabled("LogisticRegression") is False  # opt_enabled=False
+        assert pipeline._is_opt_enabled("RandomForestClassifier") is True
+
+    def test_best_base_estimator_is_unfitted_clone(self, clf_store):
+        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config())
+        with _mock_selector():
+            result = pipeline.run_step1_only(clf_store)
+        assert result.best_base_estimator is not pipeline.models[0].estimator
+        assert not hasattr(result.best_base_estimator, "coef_")

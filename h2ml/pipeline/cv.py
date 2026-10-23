@@ -13,6 +13,7 @@ from typing import Any, Callable, Optional, Sequence, cast
 import numpy as np
 from joblib import Parallel, delayed
 from loguru import logger
+from sklearn.base import clone
 from sklearn.preprocessing import StandardScaler
 
 from h2ml.core.base import PredictorStep, TaskType
@@ -303,13 +304,14 @@ class CrossValidator:
         best_params: Optional[dict],
     ) -> PredictorStep:
         """
-        If best_params provided, return a fresh instance with those params.
-        Otherwise return the step as-is (default params).
+        If best_params provided, return a fresh instance with those params applied on
+        top of the step's own estimator (clone + set_params), so constructor arguments
+        not in best_params are kept. Otherwise return the step as-is (default params).
         """
         if best_params is None:
             return step
 
-        new_estimator = step.estimator.__class__(**best_params)
+        new_estimator = clone(step.estimator).set_params(**best_params)
 
         return step.__class__(
             estimator=new_estimator,  # type: ignore

@@ -26,6 +26,7 @@ from typing import Any, Callable, Optional
 import numpy as np
 import optuna
 from loguru import logger
+from sklearn.base import clone
 from sklearn.metrics import (
     average_precision_score,
     brier_score_loss,
@@ -226,6 +227,8 @@ def _build_objective(
     inverse_fn: Optional[Callable] = None,
     train_target_fn: Optional[Callable] = None,
     _splitter: Any = None,
+    base_estimator: Any = None,
+    requires_scaling: Optional[bool] = None,
 ):
     """
     Returns a closure that Optuna calls on each trial.
@@ -246,6 +249,12 @@ def _build_objective(
 
     train_target_fn: fitted on and applied to each training fold's targets (e.g.
                winsorize clipping), so its statistics never see test rows.
+
+    base_estimator: when given, each trial model is clone(base_estimator) with the
+               sampled params set on top, so its other constructor arguments are
+               kept. When None, the model is built from entry.model_cls(**params).
+
+    requires_scaling: overrides entry.requires_scaling when not None.
 
     Returns:
         objective(trial) -> float closure. The closure raises ValueError if the
@@ -276,7 +285,9 @@ def _build_objective(
     # The scaler fit is deterministic given the same fold split, so recomputing
     # it every trial is pure waste.
     scaled_folds: list[tuple[np.ndarray, np.ndarray]] | None = None
-    if getattr(entry, "requires_scaling", False):
+    if requires_scaling is None:
+        requires_scaling = getattr(entry, "requires_scaling", False)
+    if requires_scaling:
         scaled_folds = []
         for train_idx, test_idx in fold_indices:
             scaler = StandardScaler()
@@ -316,7 +327,10 @@ def _build_objective(
                 f"{'classifiers' if task == 'classification' else 'regressors'}.py"
             )
         params = {**entry.param_fn(trial), **fixed_params}
-        model = entry.model_cls(**params)
+        if base_estimator is not None:
+            model = clone(base_estimator).set_params(**params)
+        else:
+            model = entry.model_cls(**params)
 
         fold_scores = []
         for fold_idx, (train_idx, test_idx) in enumerate(fold_indices):
@@ -377,6 +391,8 @@ def run_study(
     inverse_fn: Optional[Callable] = None,
     train_target_fn: Optional[Callable] = None,
     _splitter: Any = None,
+    estimator: Any = None,
+    requires_scaling: Optional[bool] = None,
 ) -> optuna.Study:
     """
     Run an Optuna hyperparameter optimization study for a registered model.
@@ -403,6 +419,13 @@ def run_study(
                         Each repeat draws fold splits from a different random seed, amortising
                         the risk of an unlucky single split. The study with the highest
                         best_value is returned.
+        estimator:      Optional unfitted estimator to tune. Each trial clones it and
+                        sets the sampled params on top, keeping its other constructor
+                        arguments. Its class must match *name*'s registry entry, which
+                        still supplies the search space. When None, trials are built
+                        from the registry class with only the sampled params.
+        requires_scaling: Scale features inside folds; defaults to the registry
+                        entry's requires_scaling when None.
 
     Returns:
         optuna.Study with best_params, best_value, and full trial history.
@@ -468,6 +491,8 @@ def run_study(
             inverse_fn=inverse_fn,
             train_target_fn=train_target_fn,
             _splitter=repeat_splitter,
+            base_estimator=estimator,
+            requires_scaling=requires_scaling,
         )
 
         sampler = optuna.samplers.TPESampler(seed=seed)

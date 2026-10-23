@@ -793,3 +793,16 @@ class TestTrainTargetFn:
         result = cv.run(make_regressor(Ridge()), X, y, train_target_fn=clip_upper_outliers)
         for fold in result.folds:
             np.testing.assert_array_equal(fold.y_test, y[fold.test_idx])
+
+
+class TestBuildFoldModel:
+    def test_best_params_applied_on_top_of_constructor_args(self, cv):
+        """best_params override only what they name — other constructor args are kept."""
+        step = make_classifier(RandomForestClassifier(ccp_alpha=0.01, n_estimators=5), name="RF", requires_scaling=True)
+        fold_step = cv._build_fold_model(step, {"n_estimators": 10})
+        params = fold_step.estimator.get_params()
+        assert params["n_estimators"] == 10
+        assert params["ccp_alpha"] == 0.01
+        assert fold_step.estimator is not step.estimator
+        assert fold_step.name == "RF"
+        assert fold_step.requires_scaling is True
