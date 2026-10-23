@@ -194,6 +194,28 @@ class TestScalarRoundTrip:
         loaded = load_result(tmp_path / "run")
         assert loaded.class_weight_balanced is False
 
+    def test_best_base_estimator_and_scaling_preserved(self, tmp_path):
+        from sklearn.linear_model import LogisticRegression
+
+        result = _full_result()
+        result.best_base_estimator = LogisticRegression(C=0.25, max_iter=77)
+        result.best_requires_scaling = True
+        save_result(result, tmp_path / "run")
+        loaded = load_result(tmp_path / "run")
+        assert isinstance(loaded.best_base_estimator, LogisticRegression)
+        assert loaded.best_base_estimator.get_params()["C"] == 0.25
+        assert loaded.best_base_estimator.get_params()["max_iter"] == 77
+        assert loaded.best_requires_scaling is True
+
+    def test_best_base_estimator_absent_in_legacy_save(self, tmp_path):
+        """Results saved before best_base_estimator existed load with None, which makes
+        build_final_model fall back to the registry path."""
+        result = _full_result()
+        save_result(result, tmp_path / "run")
+        loaded = load_result(tmp_path / "run")
+        assert loaded.best_base_estimator is None
+        assert loaded.best_requires_scaling is False
+
     def test_cv_warnings_list_preserved(self, tmp_path):
         result = _full_result()
         result.cv_warnings = ["RF: 2/5 fold(s) failed (fold IDs: [0, 1])"]

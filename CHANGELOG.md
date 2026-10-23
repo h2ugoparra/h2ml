@@ -21,9 +21,25 @@ All notable changes to this project will be documented in this file.
 - `handle_imbalance` now finds supporting models by estimator class rather than
   display name. A model given a custom name (e.g. `make_classifier(..., name="LR")`)
   previously ran CV without `class_weight`, while step 4 and the final model added it.
+- `build_final_model()` now refits the estimator cross-validation actually ran,
+  instead of rebuilding it from the model registry. Previously a model with a
+  custom name (`make_classifier(..., name="LR")`) failed with "not found in
+  registry", and constructor arguments (e.g. `LogisticRegression(max_iter=500)`)
+  and the wrapper's `requires_scaling` were replaced by registry defaults. Step-4
+  Optuna trials and the step-4 CV had the same problem and are fixed too. The
+  unfitted winner is stored and persisted as `PipelineResult.best_base_estimator`.
+  Results saved before this change keep the old registry-based rebuild.
+- A winning estimator that is not in the registry no longer crashes step 4 with
+  `KeyError`; it is treated like `opt_enabled=False` and HPO is skipped.
 
 ### Changed
 
+- `PipelineResult.best_params` now holds only the overrides applied on top of the
+  winning estimator (tuned params plus fixed ones like `class_weight`), not the
+  registry's full default kwargs. When step 4 is skipped or does not improve it is
+  `{}` (or just the fixed overrides).
+- `run_study()` accepts optional `estimator` and `requires_scaling` arguments. With
+  `estimator`, each trial is `clone(estimator).set_params(**sampled)`.
 - The precision–recall metric is renamed from `"AUC_PR"` to `"AUCPR"`, in line
   with `LogLoss` and XGBoost's `aucpr`. Its result columns follow suit
   (`AUC_PR_Test_Mean` → `AUCPR_Test_Mean`, and likewise for `_Train` and `_Gap`).

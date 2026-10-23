@@ -9,9 +9,11 @@
 | 3 | K-fold CV all models on reduced features; compare vs step 1 | `best_stage`, `step3_agg_df` |
 | 4 | Optuna HPO on winning (model, stage, transform) | `best_params`, `step4_agg_df` |
 
-Step 4 is skipped when the winning model has `opt_enabled=False` (LogisticRegression, GaussianNB, KNeighborsClassifier, AdaBoost, Bagging — and their regressor equivalents). `best_params` is set to registry defaults in that case.
+Step 4 is skipped when the winning model has no enabled search space: `opt_enabled=False` (LogisticRegression, GaussianNB, KNeighborsClassifier, AdaBoost, Bagging — and their regressor equivalents), or an estimator that is not in the registry at all. `best_params` then holds only fixed overrides (e.g. `class_weight`), usually `{}`.
 
-If step 4 runs but does not improve on the step 3 baseline, `best_stage` stays at `"default"` or `"reduced"` and `best_params` is set to defaults — no HPO benefit was found.
+If step 4 runs but does not improve on the step 3 baseline, `best_stage` stays at `"default"` or `"reduced"` and `best_params` holds only fixed overrides — no HPO benefit was found.
+
+`best_params` are overrides on top of the winning model's own estimator, not full constructor kwargs. Optuna trials, the step-4 CV and `build_final_model()` all build the model as `clone(winner_estimator).set_params(**best_params)`, so arguments you passed to the estimator (and custom model names or estimators outside the registry) carry through to the deployed model. The unfitted winner is stored as `result.best_base_estimator`.
 
 ---
 
@@ -58,7 +60,7 @@ result.best_model_value       # best CV score (maximised internally)
 result.best_model_std         # std of that score across folds
 result.best_stage             # "default" | "reduced" | "optimized"
 result.best_feature_stage     # "default" | "reduced" (never "optimized")
-result.best_params            # dict of HPO params (or registry defaults if step 4 skipped)
+result.best_params            # HPO overrides on top of best_base_estimator ({} or fixed-only if step 4 skipped)
 result.y_transform            # winning y-transform (regression only, or None)
 result.cv_type                # "spatial" | "random"
 result.spatial_cv_metric      # "euclidean" | "haversine" — forwarded from config

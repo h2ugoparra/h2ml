@@ -336,6 +336,62 @@ class TestBuildObjective:
         )
         assert callable(obj)
 
+    def test_base_estimator_keeps_unsearched_constructor_args(self, clf_data):
+        """With base_estimator, each trial clones it and sets only the sampled params,
+        so constructor args outside the search space (ccp_alpha) survive."""
+        from sklearn.ensemble import RandomForestClassifier
+
+        X, y = clf_data
+        seen = []
+
+        def score_fn(model, X_train, X_test, y_train, y_test):
+            seen.append((model.get_params()["ccp_alpha"], model.get_params()["max_depth"]))
+            return 0.5
+
+        study = optuna.create_study(direction="maximize")
+        study.optimize(
+            _build_objective(
+                _fast_clf_entry(),
+                X,
+                y,
+                "classification",
+                n_splits=2,
+                random_state=42,
+                score_fn=score_fn,
+                base_estimator=RandomForestClassifier(ccp_alpha=0.01),
+            ),
+            n_trials=1,
+        )
+        assert seen
+        assert all(ccp_alpha == 0.01 for ccp_alpha, _ in seen)
+        assert all(max_depth in (2, 3) for _, max_depth in seen)  # sampled value applied
+
+    def test_requires_scaling_overrides_entry(self, clf_data):
+        """requires_scaling=True scales folds even though the entry says False."""
+        X, y = clf_data
+        X = X * 100 + 50
+        train_means = []
+
+        def score_fn(model, X_train, X_test, y_train, y_test):
+            train_means.append(float(np.abs(X_train.mean(axis=0)).max()))
+            return 0.5
+
+        study = optuna.create_study(direction="maximize")
+        study.optimize(
+            _build_objective(
+                _fast_clf_entry(),
+                X,
+                y,
+                "classification",
+                n_splits=2,
+                random_state=42,
+                score_fn=score_fn,
+                requires_scaling=True,
+            ),
+            n_trials=1,
+        )
+        assert train_means and max(train_means) < 1e-6
+
     def test_objective_returns_float(self, clf_data):
         X, y = clf_data
         study = optuna.create_study(direction="maximize")

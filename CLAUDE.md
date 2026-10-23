@@ -28,7 +28,7 @@ H2MLPipeline (pipeline/pipeline.py)
   ├── Step 1: CV all models × transforms  →  best_model_name, step1_agg_df
   ├── Step 2: OOF SHAP + correlation filter  →  features_reduced, selector
   ├── Step 3: CV on reduced features  →  best_stage ("default" or "reduced")
-  └── Step 4: Optuna HPO  →  best_params  [skipped if opt_enabled=False]
+  └── Step 4: Optuna HPO  →  best_params  [skipped if no enabled search space]
 
 CrossValidator (pipeline/cv.py)              → joblib.Parallel over models; scaling inside folds
 FeatureSelector (features/selector.py)       → shap_importance.py + correlation.py
@@ -87,7 +87,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 
 ## PipelineResult
 
-Key fields: `best_model_name`, `best_stage`, `best_feature_stage`, `best_params`, `y_transform`, `metric`, `cv_type`, `cv_warnings`, `splitter`, `step3_reduced_stores`. Note: `splitter` and `step3_reduced_stores` are not persisted — both are `None` after `PipelineResult.load()`.
+Key fields: `best_model_name`, `best_stage`, `best_feature_stage`, `best_base_estimator` (unfitted winner as CV ran it), `best_params` (overrides set on top of it), `y_transform`, `metric`, `cv_type`, `cv_warnings`, `splitter`, `step3_reduced_stores`. Note: `splitter` and `step3_reduced_stores` are not persisted — both are `None` after `PipelineResult.load()`.
 
 ```python
 result.summary(metric=None, ascending=False)   # combined agg DataFrame across all stages
