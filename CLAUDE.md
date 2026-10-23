@@ -75,7 +75,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 | `n_trials` | `50` | Optuna trials in step 4 |
 | `opt_n_splits` | `3` | Folds used during Optuna |
 | `n_hpo_repeats` | `1` | Independent HPO repeats; trials divided evenly, best repeat kept |
-| `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers with `supports_class_weight=True` |
+| `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers with `supports_class_weight=True`; `"auto"` only when minority-class ratio < 0.1, resolved per run |
 | `spatial_cv_method` | `"spcv"` | Spatial CV strategy: `"block"` or `"spcv"` (ignored when `store.coords` is `None`) |
 | `spatial_cv_metric` | `"euclidean"` | Distance metric: `"euclidean"` or `"haversine"` |
 | `time_bin_resolution` | `"month"` | Temporal bin granularity for spatial CV and local conformal calibration: `"month"` or `"season"` |

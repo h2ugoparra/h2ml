@@ -317,6 +317,13 @@ class TestPipelineConfig:
         config = PipelineConfig(handle_imbalance=True)
         assert config.handle_imbalance is True
 
+    def test_handle_imbalance_auto(self):
+        assert PipelineConfig(handle_imbalance="auto").handle_imbalance == "auto"
+
+    def test_handle_imbalance_invalid_raises(self):
+        with pytest.raises(ValueError, match="handle_imbalance"):
+            PipelineConfig(handle_imbalance="yes")
+
 
 # ---------------------------------------------------------------------------
 # handle_imbalance — class weight injection
@@ -352,6 +359,51 @@ class TestHandleImbalance:
         pipeline = H2MLPipeline(config=config)
         rf = next(m for m in pipeline.models if m.name == "RandomForestClassifier")
         assert rf.estimator.get_params().get("class_weight") is None
+
+    def test_auto_defers_injection_until_run(self):
+        """'auto' must not touch model params at construction — the target is unknown."""
+        pipeline = H2MLPipeline(config=PipelineConfig(handle_imbalance="auto"))
+        rf = next(m for m in pipeline.models if m.name == "RandomForestClassifier")
+        assert rf.estimator.get_params().get("class_weight") is None
+        assert pipeline._class_weight_active is False
+
+    def test_auto_applies_weights_on_imbalanced_target(self):
+        pipeline = H2MLPipeline(config=PipelineConfig(handle_imbalance="auto"))
+        pipeline._resolve_class_weights(self._make_imbalanced_store(minority_n=5, majority_n=95).y)
+        rf = next(m for m in pipeline.models if m.name == "RandomForestClassifier")
+        assert rf.estimator.get_params()["class_weight"] == "balanced"
+        assert pipeline._class_weight_active is True
+
+    def test_auto_skips_weights_on_balanced_target(self):
+        pipeline = H2MLPipeline(config=PipelineConfig(handle_imbalance="auto"))
+        pipeline._resolve_class_weights(np.array([0] * 50 + [1] * 50))
+        rf = next(m for m in pipeline.models if m.name == "RandomForestClassifier")
+        assert rf.estimator.get_params().get("class_weight") is None
+        assert pipeline._class_weight_active is False
+
+    def test_auto_resets_weights_when_reused_on_balanced_target(self):
+        """A pipeline reused on a balanced target must drop weights injected by an earlier imbalanced run."""
+        pipeline = H2MLPipeline(config=PipelineConfig(handle_imbalance="auto"))
+        pipeline._resolve_class_weights(self._make_imbalanced_store().y)
+        pipeline._resolve_class_weights(np.array([0] * 50 + [1] * 50))
+        rf = next(m for m in pipeline.models if m.name == "RandomForestClassifier")
+        assert rf.estimator.get_params().get("class_weight") is None
+        assert pipeline._class_weight_active is False
+
+    def test_auto_keeps_class_weight_in_step4_best_params(self):
+        """'auto' resolved to active must carry class_weight='balanced' into step 4,
+        including when resuming via run_step4_only on a fresh pipeline."""
+        rng = np.random.default_rng(0)
+        store = PipelineData(
+            X=rng.standard_normal((200, 5)),
+            feature_names=[f"feat_{i}" for i in range(5)],
+            y=np.array([1] * 15 + [0] * 185),
+        )
+        config = _clf_config(handle_imbalance="auto")
+        with _mock_selector():
+            result = H2MLPipeline(models=_lr_only(), config=config).run_step1_to_step3(store)
+            result = H2MLPipeline(models=_lr_only(), config=config).run_step4_only(result)
+        assert result.best_params["class_weight"] == "balanced"
 
     def test_imbalance_warning_fires(self):
         """minority ratio < 0.1 should emit a loguru warning."""

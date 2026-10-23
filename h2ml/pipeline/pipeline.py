@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Optional, cast
+from typing import TYPE_CHECKING, Any, Iterable, Literal, Optional, cast
 
 from loguru import logger
 
@@ -42,6 +42,10 @@ from h2ml.pipeline.cv import CrossValidator, CVResult
 from h2ml.preprocessing.transform_stores import build_transform_stores
 from h2ml.preprocessing.transforms import get_train_target_fn
 from h2ml.utils.registry import build_models
+
+# Minority-class share below which a target counts as imbalanced — drives both the
+# validation warning and handle_imbalance="auto".
+IMBALANCE_RATIO_THRESHOLD = 0.1
 
 
 @dataclass
@@ -119,7 +123,10 @@ class PipelineConfig:
 
         handle_imbalance:    (Classification only) Inject class_weight="balanced" into
                              every model whose registry entry has
-                             supports_class_weight=True. No effect on regression tasks.
+                             supports_class_weight=True. True — always; False — never;
+                             "auto" — only when the minority-class ratio of the input
+                             target is below IMBALANCE_RATIO_THRESHOLD (0.1), decided
+                             when a run starts. No effect on regression tasks.
                              Default: False.
     """
 
@@ -142,7 +149,7 @@ class PipelineConfig:
     pca_components: float = 0.95
     exact_max_samples: int = 5_000
     knn_neighbors: int = 15
-    handle_imbalance: bool = False
+    handle_imbalance: bool | Literal["auto"] = False
 
     def __post_init__(self):
         # Accept the string "classification" / "regression" so callers need not import TaskType.
@@ -183,6 +190,8 @@ class PipelineConfig:
             raise ValueError("n_jobs must be non-zero (-1 uses all cores), got 0")
         if self.spatial_cv_method not in ("block", "spcv"):
             raise ValueError(f"spatial_cv_method must be 'block' or 'spcv', got {self.spatial_cv_method!r}")
+        if not (isinstance(self.handle_imbalance, bool) or self.handle_imbalance == "auto"):
+            raise ValueError(f"handle_imbalance must be True, False or 'auto', got {self.handle_imbalance!r}")
 
     @property
     def minimize_metric(self) -> bool:
@@ -471,8 +480,12 @@ class H2MLPipeline:
         self._model_map = {m.name: m for m in models}
         self.config = config
         self.metadata = metadata
-        if config.handle_imbalance and config.task_type == TaskType.CLASSIFICATION:
+        # Whether class_weight="balanced" is in effect. "auto" is resolved per run by
+        # _resolve_class_weights() once the target is known.
+        self._class_weight_active = False
+        if config.handle_imbalance is True and config.task_type == TaskType.CLASSIFICATION:
             self._inject_class_weights()
+            self._class_weight_active = True
         self._cv = CrossValidator(
             n_splits=config.n_splits,
             shuffle=True,
@@ -503,6 +516,7 @@ class H2MLPipeline:
             PipelineResult with all four steps completed.
         """
         self._validate_store(store)
+        self._resolve_class_weights(store.y)
         result = self._new_result(store)
         transform_stores = self._build_transform_stores(store, transforms)
         result = self._run_step1(result, transform_stores)
@@ -529,6 +543,7 @@ class H2MLPipeline:
             PipelineResult with step 1 completed.
         """
         self._validate_store(store)
+        self._resolve_class_weights(store.y)
         transform_stores = self._build_transform_stores(store, transforms)
         return self._run_step1(
             self._new_result(store),
@@ -548,6 +563,7 @@ class H2MLPipeline:
             PipelineResult with steps 1-2 completed.
         """
         self._validate_store(store)
+        self._resolve_class_weights(store.y)
         transform_stores = self._build_transform_stores(store, transforms)
         result = self._new_result(store)
         result = self._run_step1(result, transform_stores)
@@ -569,6 +585,7 @@ class H2MLPipeline:
             PipelineResult with steps 1-3 completed (no HPO).
         """
         self._validate_store(store)
+        self._resolve_class_weights(store.y)
         transform_stores = self._build_transform_stores(store, transforms)
         result = self._new_result(store)
         result = self._run_step1(result, transform_stores)
@@ -604,6 +621,8 @@ class H2MLPipeline:
         ]
         if missing:
             raise ValueError(f"result must have {missing} set. Run run_step1_to_step2() first.")
+        assert result.features is not None  # validated above
+        self._resolve_class_weights(result.features.y)
         transform_stores = self._rebuild_transform_stores(result, transform_stores)
         result = self._run_step3(result, transform_stores)
         result = self._run_step4(result, transform_stores)
@@ -652,6 +671,8 @@ class H2MLPipeline:
                 "Steps 1–3 must be complete (run run_step1_to_step3() or load a result "
                 "that includes them)."
             )
+        assert result.features is not None  # validated above
+        self._resolve_class_weights(result.features.y)
         transform_stores = self._rebuild_transform_stores(result, transform_stores)
         return self._run_step4(result, transform_stores)
 
@@ -903,7 +924,7 @@ class H2MLPipeline:
         # deployed opt-disabled winner would silently lose class_weight="balanced"
         # even though CV ranked it with weights injected.
         fixed_params: dict = {}
-        if self.config.handle_imbalance and self._supports_class_weight(estimator_name):
+        if self._class_weight_active and self._supports_class_weight(estimator_name):
             fixed_params["class_weight"] = "balanced"
 
         if not self._is_opt_enabled(estimator_name):
@@ -1131,11 +1152,12 @@ class H2MLPipeline:
                 )
             classes, counts = np.unique(store.y, return_counts=True)
             minority_ratio = counts.min() / counts.sum()
-            if minority_ratio < 0.1:
+            if minority_ratio < IMBALANCE_RATIO_THRESHOLD:
                 suggestion = (
-                    "Consider setting handle_imbalance=True in PipelineConfig."
+                    "Consider setting handle_imbalance=True or 'auto' in PipelineConfig."
                     if not self.config.handle_imbalance
-                    else "handle_imbalance=True is active — class_weight='balanced' will be applied."
+                    else f"handle_imbalance={self.config.handle_imbalance!r} is active — "
+                    "class_weight='balanced' will be applied."
                 )
                 logger.warning(
                     f"Class imbalance detected: minority class ratio={minority_ratio:.3f} "
@@ -1177,18 +1199,41 @@ class H2MLPipeline:
         entry = CLASSIFIER_REGISTRY.get(estimator_name)
         return entry.supports_class_weight if entry is not None else False
 
-    def _inject_class_weights(self) -> None:
-        """Set class_weight='balanced' on every supporting classifier in self.models."""
+    def _inject_class_weights(self, class_weight: Optional[str] = "balanced") -> None:
+        """Set class_weight on every supporting classifier in self.models."""
         from h2ml.utils.registry import CLASSIFIER_REGISTRY
 
         injected = []
         for model in self.models:
             entry = CLASSIFIER_REGISTRY.get(model.name)
             if entry is not None and entry.supports_class_weight:
-                model.estimator.set_params(class_weight="balanced")
+                model.estimator.set_params(class_weight=class_weight)
                 injected.append(model.name)
         if injected:
-            logger.debug(f"handle_imbalance: class_weight='balanced' set on {injected}")
+            logger.debug(f"handle_imbalance: class_weight={class_weight!r} set on {injected}")
+
+    def _resolve_class_weights(self, y: np.ndarray) -> None:
+        """Resolve handle_imbalance="auto" against the run's target.
+
+        Injects class_weight="balanced" when the minority-class ratio is below
+        IMBALANCE_RATIO_THRESHOLD. If an earlier run on this pipeline injected
+        weights and this target is balanced, they are reset to None so a reused
+        pipeline does not carry a stale decision. No-op unless "auto" + classification.
+        """
+        if self.config.handle_imbalance != "auto" or self.config.task_type != TaskType.CLASSIFICATION:
+            return
+        _, counts = np.unique(y, return_counts=True)
+        minority_ratio = counts.min() / counts.sum()
+        active = bool(minority_ratio < IMBALANCE_RATIO_THRESHOLD)
+        if active:
+            self._inject_class_weights("balanced")
+        elif self._class_weight_active:
+            self._inject_class_weights(None)
+        self._class_weight_active = active
+        logger.info(
+            f"handle_imbalance='auto': minority class ratio={minority_ratio:.3f} → "
+            f"class_weight={'balanced' if active else 'not applied'}"
+        )
 
     def _get_default_params(self, estimator_name: str) -> dict:
         """Return the default_kwargs for a model from the registry."""

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `PipelineConfig(handle_imbalance="auto")` injects `class_weight="balanced"` only
+  when the input target's minority-class ratio is below 0.1 (the same threshold as
+  the imbalance warning). It is decided when each run starts, including on resume
+  via `run_from_step3` / `run_step4_only`. `True` and `False` behave as before.
+
 ### Changed
 
 - The precision–recall metric is renamed from `"AUC_PR"` to `"AUCPR"`, in line
