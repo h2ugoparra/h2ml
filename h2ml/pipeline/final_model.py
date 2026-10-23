@@ -564,11 +564,16 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
             f"Model '{result.best_model_name}' not found in registry. Was it removed after the pipeline ran?"
         )
 
-    # Instantiate with best_params when available, otherwise default
+    # Instantiate with best_params when available, otherwise default. Step 4 already
+    # merges class_weight into best_params; without it, re-apply the weights CV ran
+    # with, or the deployed model would differ from the validated one.
     if result.best_params:
         estimator = entry.model_cls(**result.best_params)
     else:
-        estimator = entry.model_cls(**entry.default_kwargs)
+        kwargs = dict(entry.default_kwargs)
+        if result.class_weight_balanced and entry.supports_class_weight:
+            kwargs["class_weight"] = "balanced"
+        estimator = entry.model_cls(**kwargs)
 
     X = store.X
     scaler = None

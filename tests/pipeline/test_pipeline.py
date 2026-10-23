@@ -405,6 +405,28 @@ class TestHandleImbalance:
             result = H2MLPipeline(models=_lr_only(), config=config).run_step4_only(result)
         assert result.best_params["class_weight"] == "balanced"
 
+    def test_final_model_keeps_class_weight_without_step4(self, clf_store):
+        """With no step 4 there are no best_params; build_final_model must still
+        re-apply the class_weight CV ran with, or the deployed model would differ."""
+        # Registry-keyed name: build_final_model looks the winner up in CLASSIFIER_REGISTRY.
+        models = [make_classifier(LogisticRegression(max_iter=200, random_state=42))]
+        pipeline = H2MLPipeline(models=models, config=_clf_config(handle_imbalance=True))
+        with _mock_selector():
+            result = pipeline.run_step1_to_step3(clf_store)
+        assert result.best_params is None
+        assert result.class_weight_balanced is True
+        final = result.build_final_model()
+        assert final.estimator.get_params()["class_weight"] == "balanced"
+
+    def test_final_model_no_class_weight_when_inactive(self, clf_store):
+        models = [make_classifier(LogisticRegression(max_iter=200, random_state=42))]
+        pipeline = H2MLPipeline(models=models, config=_clf_config(handle_imbalance=False))
+        with _mock_selector():
+            result = pipeline.run_step1_to_step3(clf_store)
+        assert result.class_weight_balanced is False
+        final = result.build_final_model()
+        assert final.estimator.get_params()["class_weight"] is None
+
     def test_imbalance_warning_fires(self):
         """minority ratio < 0.1 should emit a loguru warning."""
         from loguru import logger

@@ -173,6 +173,27 @@ class TestScalarRoundTrip:
         loaded = load_result(tmp_path / "run")
         assert loaded.cv_type == "random"
 
+    def test_class_weight_balanced_preserved(self, tmp_path):
+        result = _full_result()
+        result.class_weight_balanced = True
+        save_result(result, tmp_path / "run")
+        loaded = load_result(tmp_path / "run")
+        assert loaded.class_weight_balanced is True
+
+    def test_class_weight_balanced_defaults_to_false_when_absent(self, tmp_path):
+        """Results saved before class_weight_balanced was persisted should load as False."""
+        result = _full_result()
+        result.class_weight_balanced = True
+        save_result(result, tmp_path / "run")
+        import json
+
+        meta_path = tmp_path / "run" / "metadata.json"
+        meta = json.loads(meta_path.read_text())
+        meta.pop("class_weight_balanced", None)
+        meta_path.write_text(json.dumps(meta))
+        loaded = load_result(tmp_path / "run")
+        assert loaded.class_weight_balanced is False
+
     def test_cv_warnings_list_preserved(self, tmp_path):
         result = _full_result()
         result.cv_warnings = ["RF: 2/5 fold(s) failed (fold IDs: [0, 1])"]
