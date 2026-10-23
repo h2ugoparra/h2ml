@@ -8,7 +8,8 @@ Robustness of a CV model selection, computed from per-fold metrics after select_
       correction for overlapping training sets.
     - Cross-metric ranks: where each candidate ranks under every other metric.
 
-Advisory only — nothing here changes which model is selected.
+Nothing here changes which model is selected. The pipeline acts on the
+Indistinguishable flag only when PipelineConfig.prefer_reduced_on_tie is set (step 3).
 """
 
 from __future__ import annotations
@@ -61,7 +62,8 @@ def ranking_robustness(fold_df: pd.DataFrame, metric: str, n_folds: Optional[int
             Folds_Won          — folds where the winner scored strictly better
             Paired_Folds       — folds both completed
             Indistinguishable  — Winner_Gap ≤ Gap_SE (a heuristic tie, not a formal test)
-            Is_Winner
+            Is_Winner          — the select_best winner, i.e. before any
+                                 prefer_reduced_on_tie switch in the pipeline
             Rank_<m>           — rank (1 = best) under each metric present, by the same
                                  confidence-bound score select_best uses
     """
