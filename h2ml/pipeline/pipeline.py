@@ -47,6 +47,15 @@ from h2ml.utils.registry import build_models
 # validation warning and handle_imbalance="auto".
 IMBALANCE_RATIO_THRESHOLD = 0.1
 
+# Metric-suitability thresholds (see H2MLPipeline._check_metric_suitability).
+# Max/min ratio of the minority-class share across test folds above which AUCPR is noisy.
+PREVALENCE_SPREAD_RATIO = 2.0
+# Test-fold variance of y, as a fraction of the overall variance, below which R2 is unstable.
+LOW_FOLD_VARIANCE_RATIO = 0.1
+# Share of the total squared deviation carried by the top 1% of points above which RMSE is
+# dominated by a few observations.
+TAIL_SSD_SHARE = 0.5
+
 
 @dataclass
 class PipelineConfig:
@@ -261,7 +270,9 @@ class PipelineResult:
         spatial_cv_metric:    Distance metric forwarded from PipelineConfig; used by
                               build_final_model to build LocalConformalCalibration.
         time_bin_resolution:  Temporal bin resolution forwarded from PipelineConfig.
-        cv_warnings:          Warnings for models with ≥1 failed CV fold (steps 1 & 3).
+        cv_warnings:          Warnings for models with ≥1 failed CV fold (steps 1 & 3), plus
+                              data conditions that make the selection metric unreliable
+                              (checked in step 1; advisory — the metric is never changed).
         class_weight_balanced: True when CV ran with class_weight="balanced" injected
                               (handle_imbalance resolved active); build_final_model
                               re-applies it when step 4 did not produce best_params.
@@ -309,7 +320,7 @@ class PipelineResult:
     spatial_cv_metric: str = "euclidean"
     # Temporal bin resolution forwarded from PipelineConfig
     time_bin_resolution: str = "month"
-    # Models that had at least one failed CV fold — populated by step 1 and step 3
+    # Models with failed CV folds (steps 1 & 3) and metric-suitability warnings (step 1)
     cv_warnings: list[str] = field(default_factory=list)
     # Whether CV ran with class_weight="balanced" (resolved handle_imbalance)
     class_weight_balanced: bool = False
@@ -731,6 +742,7 @@ class H2MLPipeline:
         # transforms, so scaler fits are the same for every (transform, model) pair.
         # Workers receive the pre-computed arrays and skip _maybe_scale() entirely.
         fold_indices = list(result.splitter.split(first_store.X, first_store.y))
+        result.cv_warnings.extend(self._check_metric_suitability(result.features.y, fold_indices))
         has_scaling = any(getattr(m, "requires_scaling", False) for m in self.models)
         precomputed_scaled_folds = None
         if has_scaling:
@@ -1201,6 +1213,77 @@ class H2MLPipeline:
             for r in cv_results
             if r.failed_folds
         ]
+
+    def _check_metric_suitability(self, y: np.ndarray, fold_indices: list[tuple[np.ndarray, np.ndarray]]) -> list[str]:
+        """Warn when the data makes config.metric an unreliable selection criterion.
+
+        Advisory only — the metric encodes how predictions will be used, which the data
+        cannot tell, so it is never changed. Only conditions that affect the chosen metric
+        are reported. y is the original-scale target; fold_indices are the step-1 folds.
+        """
+        metric = self.config.metric
+        test_ys = [y[te] for _, te in fold_indices]
+        msgs: list[str] = []
+
+        if self.config.task_type == TaskType.CLASSIFICATION:
+            classes, counts = np.unique(y, return_counts=True)
+            minority_ratio = counts.min() / counts.sum()
+            minority = classes[counts.argmin()]
+            if metric == "AUC" and minority_ratio < IMBALANCE_RATIO_THRESHOLD:
+                msgs.append(
+                    f"AUC with minority class ratio={minority_ratio:.3f}: AUC can look optimistic "
+                    "when negatives dominate. Consider 'AUCPR' or 'Brier'."
+                )
+            if metric in ("AUC", "AUCPR"):
+                n_single = sum(len(np.unique(yt)) < 2 for yt in test_ys)
+                if n_single:
+                    msgs.append(
+                        f"{metric}: {n_single}/{len(test_ys)} test fold(s) hold a single class, so "
+                        f"{metric} is NaN there and the mean uses fewer folds. Consider 'Brier' or 'LogLoss'."
+                    )
+            if metric == "AUCPR":
+                shares = [np.mean(yt == minority) for yt in test_ys]
+                if max(shares) > PREVALENCE_SPREAD_RATIO * min(shares):
+                    msgs.append(
+                        f"AUCPR: minority-class share varies across test folds "
+                        f"({min(shares):.3f}-{max(shares):.3f}); AUCPR's baseline is the prevalence, "
+                        "so fold scores are not comparable. Check the fold std, or consider 'Brier'."
+                    )
+            if metric == "F1" and self._class_weight_active:
+                msgs.append(
+                    "F1 with class_weight='balanced': weighting shifts the effective threshold, so F1 "
+                    "partly ranks thresholds rather than models. Consider a threshold-free metric."
+                )
+        else:
+            if metric == "R2":
+                total_var = np.var(y)
+                n_low = sum(np.var(yt) < LOW_FOLD_VARIANCE_RATIO * total_var for yt in test_ys)
+                if n_low:
+                    msgs.append(
+                        f"R2: {n_low}/{len(test_ys)} test fold(s) have y variance below "
+                        f"{LOW_FOLD_VARIANCE_RATIO:.0%} of the overall variance, where R2 is unstable "
+                        "and can be strongly negative. Consider 'RMSE' or 'MAE'."
+                    )
+            if metric == "RMSE":
+                sq_dev = np.sort((y - y.mean()) ** 2)[::-1]
+                n_top = max(1, int(np.ceil(0.01 * len(y))))
+                tail_share = sq_dev[:n_top].sum() / sq_dev.sum() if sq_dev.sum() > 0 else 0.0
+                if tail_share > TAIL_SSD_SHARE:
+                    msgs.append(
+                        f"RMSE: the top 1% of observations carry {tail_share:.0%} of the squared "
+                        "deviation, so a few points dominate RMSE. Consider 'MAE' or a winsorized transform."
+                    )
+            if metric == "MAE":
+                zero_share = np.mean(y == 0)
+                if zero_share >= 0.5:
+                    msgs.append(
+                        f"MAE with {zero_share:.0%} zeros in y: the median is 0, so MAE rewards "
+                        "predicting ~0 everywhere. Consider 'RMSE' or a delta (hurdle) model."
+                    )
+
+        for m in msgs:
+            logger.warning(f"[metric] {m}")
+        return msgs
 
     def _get_inverse_fn(self, store: PipelineData):
         """Return the inverse transform callable for the store's y_transform, or None."""
