@@ -345,6 +345,13 @@ class TestHandleImbalance:
         rf = next(m for m in pipeline.models if m.name == "RandomForestClassifier")
         assert rf.estimator.get_params()["class_weight"] == "balanced"
 
+    def test_class_weight_set_on_custom_named_model(self):
+        """Injection keys on the estimator class, not the display name — otherwise a
+        custom-named model would CV unweighted while step 4 adds class_weight."""
+        pipeline = H2MLPipeline(models=_lr_only(), config=PipelineConfig(handle_imbalance=True))
+        assert pipeline.models[0].name == "LR"
+        assert pipeline.models[0].estimator.get_params()["class_weight"] == "balanced"
+
     def test_class_weight_not_set_on_unsupported_models(self):
         """GaussianNB does not accept class_weight — it must not be modified."""
         config = PipelineConfig(handle_imbalance=True)

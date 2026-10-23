@@ -18,6 +18,9 @@ All notable changes to this project will be documented in this file.
   the final model was refit from registry defaults without the weights CV used.
   The decision is stored as `PipelineResult.class_weight_balanced` and persisted;
   results saved before this change load with it set to `False`.
+- `handle_imbalance` now finds supporting models by estimator class rather than
+  display name. A model given a custom name (e.g. `make_classifier(..., name="LR")`)
+  previously ran CV without `class_weight`, while step 4 and the final model added it.
 
 ### Changed
 
