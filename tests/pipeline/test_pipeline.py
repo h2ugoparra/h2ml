@@ -511,6 +511,89 @@ class TestHandleImbalance:
 
 
 # ---------------------------------------------------------------------------
+# Metric suitability
+# ---------------------------------------------------------------------------
+
+
+def _folds(n: int, n_splits: int = 5) -> list:
+    """Contiguous (unshuffled) folds, so tests can place classes/values in specific folds."""
+    from sklearn.model_selection import KFold
+
+    return list(KFold(n_splits=n_splits).split(np.zeros(n)))
+
+
+class TestMetricSuitability:
+    def _check(self, config: PipelineConfig, y: np.ndarray, models=None) -> list[str]:
+        pipeline = H2MLPipeline(models=models or _lr_only(), config=config)
+        return pipeline._check_metric_suitability(y, _folds(len(y)))
+
+    def test_balanced_auc_no_warning(self):
+        y = np.tile([0, 1], 50)
+        assert self._check(_clf_config(metric="AUC"), y) == []
+
+    def test_auc_warns_on_imbalance(self):
+        y = np.tile([1] + [0] * 19, 5)  # 5% positives, spread across folds
+        msgs = self._check(_clf_config(metric="AUC"), y)
+        assert any("optimistic" in m for m in msgs)
+
+    def test_imbalance_not_flagged_for_brier(self):
+        y = np.tile([1] + [0] * 19, 5)
+        assert self._check(_clf_config(metric="Brier"), y) == []
+
+    def test_auc_warns_on_single_class_fold(self):
+        y = np.concatenate([np.ones(20, dtype=int), np.tile([0, 1], 40)])  # fold 0 is all positives
+        msgs = self._check(_clf_config(metric="AUC"), y)
+        assert any("1/5 test fold(s) hold a single class" in m for m in msgs)
+
+    def test_aucpr_warns_on_prevalence_spread(self):
+        # Positive share per fold: 0.05, 0.5, 0.5, 0.5, 0.5
+        y = np.concatenate([[1] + [0] * 19] + [np.tile([0, 1], 10)] * 4)
+        msgs = self._check(_clf_config(metric="AUCPR"), y)
+        assert any("varies across test folds" in m for m in msgs)
+
+    def test_f1_warns_with_class_weight(self):
+        y = np.tile([0, 1], 50)
+        msgs = self._check(_clf_config(metric="F1", handle_imbalance=True), y)
+        assert any("class_weight" in m for m in msgs)
+
+    def test_f1_no_warning_without_class_weight(self):
+        y = np.tile([0, 1], 50)
+        assert self._check(_clf_config(metric="F1"), y) == []
+
+    def test_r2_warns_on_low_variance_fold(self):
+        rng = np.random.default_rng(0)
+        y = np.concatenate([np.full(20, 3.0), rng.normal(0, 5, 80)])  # fold 0 is constant
+        msgs = self._check(_reg_config(metric="R2"), y, models=_reg_steps())
+        assert any("variance" in m for m in msgs)
+
+    def test_rmse_warns_on_heavy_tail(self):
+        y = np.ones(100)
+        y[::2] = 0.0
+        y[0] = 1000.0
+        msgs = self._check(_reg_config(metric="RMSE"), y, models=_reg_steps())
+        assert any("dominate RMSE" in m for m in msgs)
+
+    def test_rmse_no_warning_on_normal_target(self):
+        y = np.random.default_rng(0).normal(size=200)
+        assert self._check(_reg_config(metric="RMSE"), y, models=_reg_steps()) == []
+
+    def test_mae_warns_on_zero_inflation(self):
+        y = np.tile([0.0, 0.0, 0.0, 2.0], 25)
+        msgs = self._check(_reg_config(metric="MAE"), y, models=_reg_steps())
+        assert any("zeros" in m for m in msgs)
+
+    def test_warnings_land_in_cv_warnings(self):
+        rng = np.random.default_rng(0)
+        store = PipelineData(
+            X=rng.standard_normal((200, 5)),
+            feature_names=[f"feat_{i}" for i in range(5)],
+            y=np.array([1] * 10 + [0] * 190),
+        )
+        result = H2MLPipeline(models=_lr_only(), config=_clf_config(metric="AUC")).run_step1_only(store)
+        assert any("optimistic" in w for w in result.cv_warnings)
+
+
+# ---------------------------------------------------------------------------
 # PipelineResult
 # ---------------------------------------------------------------------------
 
