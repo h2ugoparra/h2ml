@@ -117,7 +117,7 @@ Step 4 is skipped when the winning model has `opt_enabled=False` in the registry
 | `n_trials` | `50` | Optuna trials in step 4 |
 | `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; best is kept |
 | `min_features` | `1` | Minimum features retained after the correlation filter |
-| `handle_imbalance` | `False` | Inject `class_weight="balanced"` for supporting classifiers |
+| `handle_imbalance` | `False` | Inject `class_weight="balanced"` for supporting classifiers; `"auto"` only when the minority-class ratio is below 0.1 |
 | `random_state` | `42` | Global seed |
 | `verbose` | `False` | Log step-by-step progress to stdout |
 

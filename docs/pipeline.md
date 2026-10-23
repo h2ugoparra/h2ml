@@ -30,7 +30,7 @@ Full parameter reference:
 | `min_features` | `1` | Hard lower bound on retained features after the correlation filter |
 | `n_trials` | `50` | Optuna trial budget in step 4 |
 | `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; the best repeat is kept |
-| `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers that support it |
+| `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers that support it. `"auto"` injects only when the minority-class ratio is below 0.1 |
 | `random_state` | `42` | Global seed for folds, models, and Optuna |
 | `verbose` | `False` | Log step-by-step progress |
 | `time_bin_resolution` | `"month"` | Time bin granularity for compound (spatial block × time) conformal cells: `"month"` (bins 1–12) or `"season"` (0=DJF, 1=MAM, 2=JJA, 3=SON). Only used when `store.times` is provided. |
