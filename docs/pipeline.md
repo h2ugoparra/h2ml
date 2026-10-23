@@ -9,6 +9,8 @@
 | 3 | K-fold CV all models on reduced features; compare vs step 1 | `best_stage`, `step3_agg_df` |
 | 4 | Optuna HPO on winning (model, stage, transform) | `best_params`, `step4_agg_df` |
 
+Steps 1 and 3 pick the candidate with the best confidence-bound score (mean − std/√k for maximised metrics, mean + std/√k for minimised ones). With `prefer_reduced_on_tie=True`, step 3 then applies a 1-SE rule: if the winner uses all features but a reduced-feature candidate is statistically tied with it on paired folds, the reduced candidate is selected instead — see [Preferring reduced features on ties](#preferring-reduced-features-on-ties).
+
 Step 4 is skipped when the winning model has no enabled search space: `opt_enabled=False` (LogisticRegression, GaussianNB, KNeighborsClassifier, AdaBoost, Bagging — and their regressor equivalents), or an estimator that is not in the registry at all. `best_params` then holds only fixed overrides (e.g. `class_weight`), usually `{}`.
 
 If step 4 runs but does not improve on the step 3 baseline, `best_stage` stays at `"default"` or `"reduced"` and `best_params` holds only fixed overrides — no HPO benefit was found.
@@ -33,6 +35,7 @@ Full parameter reference:
 | `n_trials` | `50` | Optuna trial budget in step 4 |
 | `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; the best repeat is kept |
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers that support it. `"auto"` injects only when the minority-class ratio is below 0.1 |
+| `prefer_reduced_on_tie` | `False` | Step 3: when an all-features winner is statistically tied (paired folds, within one corrected SE) with a reduced-feature candidate, select the best-ranked tied reduced candidate instead. See [Preferring reduced features on ties](#preferring-reduced-features-on-ties). |
 | `random_state` | `42` | Global seed for folds, models, and Optuna |
 | `verbose` | `False` | Log step-by-step progress |
 | `time_bin_resolution` | `"month"` | Time bin granularity for compound (spatial block × time) conformal cells: `"month"` (bins 1–12) or `"season"` (0=DJF, 1=MAM, 2=JJA, 3=SON). Only used when `store.times` is provided. |
@@ -65,8 +68,8 @@ result.y_transform            # winning y-transform (regression only, or None)
 result.cv_type                # "spatial" | "random"
 result.spatial_cv_metric      # "euclidean" | "haversine" — forwarded from config
 result.time_bin_resolution    # "month" | "season" — forwarded from config
-result.cv_warnings            # list[str] — failed CV folds, metric-suitability and
-                              # ranking-robustness flags (advisory; never change selection)
+result.cv_warnings            # list[str] — failed CV folds, [metric] suitability and
+                              # [ranking] robustness flags, prefer_reduced_on_tie switches
 result.metric                 # short metric name, e.g. "AUC"
 ```
 
@@ -82,6 +85,51 @@ One row per candidate. `Winner_Gap` is the mean per-fold difference to the winne
 `Gap_SE` is its Nadeau–Bengio corrected standard error. `Indistinguishable` marks
 candidates within one SE of the winner — a heuristic tie, not a significance test.
 `Rank_<metric>` columns show where each candidate ranks under every metric.
+`Is_Winner` marks the confidence-bound winner — the candidate *before* any
+`prefer_reduced_on_tie` switch, so it can differ from `result.best_stage`.
+
+### Warnings in `cv_warnings`
+
+All are advisory except the `prefer_reduced_on_tie` line, which records a selection
+change you opted into. Each is also logged when it is raised.
+
+| `cv_warnings` entry starts with | Log prefix | Raised in | Meaning |
+|---|---|---|---|
+| a model name, e.g. `RF: 2/5 fold(s) failed` | `[CV]` (end of `run()`) | steps 1, 3 | A model had failed CV folds |
+| the metric name, e.g. `AUC with minority…`, `R2: …` | `[metric]` | step 1 | The data makes the configured metric unreliable — AUC under class imbalance, single-class test folds for AUC/AUCPR, uneven fold prevalence for AUCPR, F1 with class weights, low-variance folds for R2, heavy tails for RMSE, zero inflation for MAE. The metric is never changed. |
+| `step 1:` / `step 3:` | `[ranking]` | steps 1, 3 | Candidates tied with the winner on paired folds, or the winner ranking below 1st on the counterpart-family metric (AUC/AUCPR ↔ Brier, LogLoss/Brier ↔ AUC, F1 → AUC, R2/RMSE ↔ MAE) |
+| `step 3: prefer_reduced_on_tie →` | *(info log)* | step 3 | The tie-break switched the selection to a reduced-feature candidate |
+
+### Preferring reduced features on ties
+
+Tree ensembles predict well with correlated features, so the all-features ("default")
+stage often wins step 3 by a margin smaller than the CV noise. The reduced set is
+usually the better deployment choice in that case: it is simpler, more stable across
+runs, and less likely to rely on a proxy feature whose correlation with the true
+driver changes in new regions or periods.
+
+`PipelineConfig(prefer_reduced_on_tie=True)` applies a one-standard-error rule after
+step 3's selection:
+
+1. Only acts when the winner is a `"default"`-stage candidate and the reduced set
+   dropped at least one feature.
+2. Takes the reduced candidates (any model, the winning transform) whose paired-fold
+   gap to the winner is within one Nadeau–Bengio corrected SE — the `Indistinguishable`
+   rows of `result.ranking_robustness(step=3)`.
+3. Selects the best-ranked of them under `metric`, and sets `best_model_name`,
+   `best_stage`/`best_feature_stage`, `best_model_value`/`best_model_std` and
+   `y_transform` from its row.
+
+Step 4 then tunes the reduced candidate on the reduced features, and judges
+improvement against the reduced candidate's own score. The switch is logged and
+recorded in `cv_warnings`, e.g.
+`step 3: prefer_reduced_on_tie → SVC | reduced (tied with RandomForestClassifier | default: gap 0.003 ≤ SE 0.008)`.
+
+The paired SE is used rather than the classic unpaired one (std/√k of the winner's
+score) because the unpaired SE includes fold difficulty, which under spatial CV is
+large enough that almost every candidate would tie. Step 2 selects features using
+all the data, which makes the reduced stage's CV score slightly optimistic; that
+nudges toward reduced in the same direction as this rule.
 
 ### Per-step data
 

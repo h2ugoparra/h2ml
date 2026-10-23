@@ -6,6 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `PipelineConfig(prefer_reduced_on_tie=True)` applies a one-standard-error rule in
+  step 3: when the winner uses all features and a reduced-feature candidate is tied
+  with it on paired folds (within one Nadeau–Bengio corrected SE), the best-ranked
+  tied reduced candidate is selected instead. Step 4 then tunes it on the reduced
+  features against its own score. Each switch is logged and recorded in
+  `cv_warnings`. Default `False` — selection is unchanged unless enabled.
+- Selection robustness check (`h2ml.evaluation.ranking`). After selection in steps 1
+  and 3, every candidate is compared with the winner on shared folds (paired
+  differences, Nadeau–Bengio corrected SE) and ranked under every metric. Ties with
+  the winner, and a winner ranking below 1st on the counterpart-family metric (e.g.
+  AUC vs Brier), are added to `cv_warnings`. `PipelineResult.ranking_robustness(step=None)`
+  returns the full table and works on loaded results. Advisory only.
+- Metric-suitability check in step 1. Warns, using the actual CV folds, when the data
+  makes the configured metric unreliable: AUC under class imbalance, single-class
+  test folds for AUC/AUCPR, uneven fold prevalence for AUCPR, F1 with class weights,
+  low-variance folds for R2, heavy tails for RMSE, zero inflation for MAE. Warnings
+  go to `cv_warnings`; the metric is never changed.
 - `PipelineConfig(handle_imbalance="auto")` injects `class_weight="balanced"` only
   when the input target's minority-class ratio is below 0.1 (the same threshold as
   the imbalance warning). It is decided when each run starts, including on resume
