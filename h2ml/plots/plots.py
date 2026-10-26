@@ -25,7 +25,7 @@ import scipy.stats as stats
 import seaborn as sns
 from loguru import logger
 from sklearn.metrics import auc as sklearn_auc
-from sklearn.metrics import roc_curve
+from sklearn.metrics import roc_auc_score, roc_curve
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -168,6 +168,9 @@ def cv_diagnostics(
 
     Classification (3×2): predicted probability by class, log-loss by class,
     raw residuals vs predicted, residuals histogram, ROC curve, calibration.
+    The ROC panel overlays per-fold curves and reports both the fold-mean AUC
+    (the pipeline's AUC metric) and the pooled AUC; a pooled AUC well below the
+    fold mean means fold models' probability scales are not comparable.
     Binary targets only — multiclass CVResults raise a clear error.
 
     Regression (2×2): observed vs predicted, residuals vs fitted,
@@ -209,9 +212,25 @@ def cv_diagnostics(
                 "cv_diagnostics: the classification panel supports binary targets only, "
                 f"but got a multiclass probability matrix with {y_prob.shape[1]} classes."
             )
-        _classification_diagnostics(y_true, y_prob, main_title, save_path)
+        fold_scores = [(f.y_test, f.y_prob_test) for f in all_folds]
+        _classification_diagnostics(y_true, y_prob, main_title, save_path, fold_scores)
     else:
         _regression_diagnostics(y_true, y_pred, main_title, save_path)
+
+
+def _scorable_folds(fold_scores: list[tuple[np.ndarray, np.ndarray]]) -> list[tuple[np.ndarray, np.ndarray]]:
+    """
+    Folds with both classes in their test set.
+
+    Single-class folds have no ROC curve or AUC — the metric computation
+    records NaN for them, so they are left out of the fold mean too.
+    """
+    return [(y, p) for y, p in fold_scores if len(np.unique(y)) > 1]
+
+
+def _fold_aucs(fold_scores: list[tuple[np.ndarray, np.ndarray]]) -> list[float]:
+    """Per-fold ROC AUC — what the pipeline averages for its AUC metric."""
+    return [float(roc_auc_score(y, p)) for y, p in _scorable_folds(fold_scores)]
 
 
 def _classification_diagnostics(
@@ -219,8 +238,16 @@ def _classification_diagnostics(
     y_prob: np.ndarray,
     title: str,
     save_path: Optional[Path],
+    fold_scores: list[tuple[np.ndarray, np.ndarray]],
 ) -> None:
-    """3×2 classification diagnostic panel."""
+    """
+    3×2 classification diagnostic panel.
+
+    The ROC panel shows each fold's curve next to the pooled one. Pooled AUC
+    ranks all folds' probabilities together, so it drops below the fold mean
+    (the pipeline's AUC) when fold models' probability scales differ — e.g.
+    spatial folds with different prevalence.
+    """
     ll = -(
         y_true * np.log(np.clip(y_prob, 1e-15, 1 - 1e-15))
         + (1 - y_true) * np.log(np.clip(1 - y_prob, 1e-15, 1 - 1e-15))
@@ -296,7 +323,14 @@ def _classification_diagnostics(
     axes[1, 1].set_xlabel("Residuals")
 
     # [2,0] ROC curve
-    axes[2, 0].plot(fpr, tpr, label=f"AUC = {roc_auc:.3f}")
+    fold_aucs = _fold_aucs(fold_scores)
+    for i, (y_fold, p_fold) in enumerate(_scorable_folds(fold_scores)):
+        fold_fpr, fold_tpr, _ = roc_curve(y_fold, p_fold)
+        axes[2, 0].plot(fold_fpr, fold_tpr, color="grey", alpha=0.4, linewidth=1, label="Folds" if i == 0 else None)
+    if fold_aucs:
+        spread = f" ± {np.std(fold_aucs, ddof=1):.3f}" if len(fold_aucs) > 1 else ""
+        axes[2, 0].plot([], [], " ", label=f"Fold mean AUC = {np.mean(fold_aucs):.3f}{spread}")
+    axes[2, 0].plot(fpr, tpr, color="steelblue", linewidth=2, label=f"Pooled AUC = {roc_auc:.3f}")
     axes[2, 0].plot([0, 1], [0, 1], "r--")
     axes[2, 0].set_xlabel("False Positive Rate")
     axes[2, 0].set_ylabel("True Positive Rate")
