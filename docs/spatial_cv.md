@@ -43,7 +43,7 @@ Two-stage method based on [Wang et al. 2023](https://www.sciencedirect.com/scien
 1. **AHC blocks** — Agglomerative Hierarchical Clustering on coordinates groups samples into spatially coherent blocks
 2. **Cluster ensemble (HBGF)** — three independent KMeans runs (on location, covariates, and target) are combined into a consensus fold assignment via SpectralClustering
 
-Produces folds that are geographically separated *and* representative of the covariate and label space.
+Blocks that co-cluster across the three views end up in the same fold, so each test fold is a distinct region of geographic, covariate, and target space. The folds are deliberately *not* representative of the full data: scores estimate extrapolation to unseen conditions and are typically more pessimistic than block or random CV.
 
 ```python
 config = PipelineConfig(
@@ -85,7 +85,7 @@ Use **block** when:
 Use **spcv** when:
 
 - Spatial autocorrelation is the primary concern
-- You have covariate and target structure you want folds to respect
+- You want a strict, extrapolation-style estimate: test folds that differ from training in covariate and target space
 - Dataset is small enough for AHC (or approximate AHC handles the scale)
 
 ---
