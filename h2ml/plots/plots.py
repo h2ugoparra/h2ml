@@ -473,6 +473,7 @@ def shap_dependence(
     n_features: int = 6,
     title: Optional[str] = None,
     save_path: Optional[Path] = None,
+    n_jobs: int = -1,
 ) -> None:
     """
     Scatter + LOWESS smoother (with a 95% bootstrap CI band) for the top-N features.
@@ -489,8 +490,10 @@ def shap_dependence(
         n_features: Number of top features to plot (default 6, arranged in 2×3 grid).
         title:      Figure title.
         save_path:  Path to save figure. If None, shows the plot.
+        n_jobs:     Worker processes for model-agnostic SHAP (SVC/SVR with non-linear
+                    kernels, KNN, ...); values do not depend on it. Default -1 (all cores).
     """
-    shap_values, importance, store = _compute_final_shap(result)
+    shap_values, importance, store = _compute_final_shap(result, n_jobs=n_jobs)
     feat_idx = {name: i for i, name in enumerate(store.feature_names)}
     top_features = importance.index[:n_features].tolist()
 
@@ -522,7 +525,7 @@ def shap_dependence(
     _save_or_show(save_path)
 
 
-def _compute_final_shap(result) -> tuple:
+def _compute_final_shap(result, n_jobs: int = -1) -> tuple:
     """
     Build the FinalModel and compute SHAP values from it.
 
@@ -557,7 +560,7 @@ def _compute_final_shap(result) -> tuple:
     else:
         shap_store = store
 
-    shap_values, feature_importance = get_shap_values(final.estimator, shap_store, final.task_type)
+    shap_values, feature_importance = get_shap_values(final.estimator, shap_store, final.task_type, n_jobs=n_jobs)
 
     result._final_shap_cache = (shap_values, feature_importance, store)
     return result._final_shap_cache
@@ -566,6 +569,7 @@ def _compute_final_shap(result) -> tuple:
 def shap_summary_plot(
     result,
     save_path: Optional[Path] = None,
+    n_jobs: int = -1,
 ) -> None:
     """
     SHAP beeswarm summary plot for the overall best model.
@@ -576,10 +580,12 @@ def shap_summary_plot(
     Args:
         result:    PipelineResult from H2MLPipeline.run().
         save_path: Path to save figure. If None, shows the plot.
+        n_jobs:    Worker processes for model-agnostic SHAP (SVC/SVR with non-linear
+                   kernels, KNN, ...); values do not depend on it. Default -1 (all cores).
     """
     import shap as _shap
 
-    shap_values, _, store = _compute_final_shap(result)
+    shap_values, _, store = _compute_final_shap(result, n_jobs=n_jobs)
 
     X_df = pd.DataFrame(store.X, columns=store.feature_names)
     import warnings
