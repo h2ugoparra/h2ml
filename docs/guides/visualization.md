@@ -68,5 +68,26 @@ plot_spatial_blocks(result.splitter, save_path="plots/blocks.png")
 ```
 
 `lon_col` / `lat_col` (default `1` / `0`) select which columns of the splitter's
-coords are longitude and latitude. `result.splitter` is `None` after
-`PipelineResult.load()` — rebuild via `build_final_model()` first.
+coords are longitude and latitude. The defaults assume `[lat, lon]` coords; if you
+built them as `np.column_stack([lon, lat])`, pass `lon_col=0, lat_col=1`.
+
+`result.splitter` is not persisted, so it is `None` after `PipelineResult.load()`
+(`build_final_model()` does not restore it). Rebuild it from the same data and
+config — the folds are deterministic, so they match the ones the pipeline used:
+
+```python
+from h2ml.core.base import TaskType
+from h2ml.features.spatial_cv import build_splitter
+
+splitter = build_splitter(
+    TaskType(config.task_type),
+    n_splits=config.n_splits,
+    random_state=config.random_state,
+    shuffle=True,
+    coords=store.coords,
+    X=store.X,
+    y=store.y,
+    spatial=config.spatial_cv,
+)
+splitter.plot()
+```
