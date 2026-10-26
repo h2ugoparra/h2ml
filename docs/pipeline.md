@@ -84,6 +84,11 @@ One row per candidate. `Winner_Gap` is the mean per-fold difference to the winne
 (positive = winner better), paired on shared folds so fold difficulty cancels;
 `Gap_SE` is its Nadeau–Bengio corrected standard error. `Indistinguishable` marks
 candidates within one SE of the winner — a heuristic tie, not a significance test.
+A negative `Winner_Gap` (better mean, but penalised for fold-to-fold spread by the
+confidence bound) is always flagged. `Folds_Won` counts the folds where the *winner*
+beat that row's candidate, out of `Paired_Folds` (folds both completed; a NaN score
+drops a fold from that pair only) — a low count means the candidate often beat the
+winner. The winner's own row reads gap 0, `Gap_SE` NaN, `Folds_Won` 0.
 `Rank_<metric>` columns show where each candidate ranks under every metric.
 `Is_Winner` marks the confidence-bound winner — the candidate *before* any
 `prefer_reduced_on_tie` switch, so it can differ from `result.best_stage`.
