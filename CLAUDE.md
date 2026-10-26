@@ -71,7 +71,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 |-----------|---------|--------|
 | `metric` | `"AUC"` | Model selection and HPO metric. Classification: `"AUC"`, `"AUCPR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. |
 | `n_splits` | `5` | CV folds for model screening (steps 1 and 3) |
-| `n_jobs` | `-1` | Worker processes for parallel CV in steps 1 and 3; must be non-zero |
+| `n_jobs` | `-1` | Worker processes for parallel CV in steps 1 and 3 and for chunked model-agnostic SHAP in step 2; must be non-zero |
 | `corr_threshold` | `0.7` | Drop feature if it exceeds this in any of Pearson, Spearman, or Kendall with a retained feature |
 | `min_features` | `1` | Minimum features retained after correlation filter |
 | `n_trials` | `50` | Optuna trials in step 4 |
@@ -112,7 +112,7 @@ compare_results(results, labels, metric, n_folds)  # sort direction auto-derived
 
 - **Logging** — use `loguru` (`from loguru import logger`), not stdlib `logging`
 - **CatBoost** uses `random_seed` (not `random_state`) and `thread_count` (not `n_jobs`)
-- **SHAP routing**: tree models → `TreeExplainer`; linear SVM (`kernel="linear"`, `probability=False`) → `LinearExplainer`; all others → KernelSHAP with `shap.kmeans` background (capped at `max_background=100`)
+- **SHAP routing**: tree models → `TreeExplainer`; linear SVM (`kernel="linear"`, `probability=False`) → `LinearExplainer`; all others → model-agnostic `shap.Explainer` (Exact for ≤10 features, Permutation above; seeded from `random_state`) with `shap.kmeans` background (capped at `max_background=100`). That path is the expensive one (seconds/row for RBF SVC/SVR): folds are fitted serially, then test rows are explained in fixed 16-row chunks in parallel (`n_jobs`); results don't depend on `n_jobs`
 - **y-transform names**: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`, `"winlog"`, `"winsqrt"`; winsorize variants silently skipped when no outliers; their stores hold pre-clip y and the IQR limit is fitted per training fold via `get_train_target_fn()` (never on the full y before splitting)
 - **`n_jobs=1`** in optimizer always — parallel Optuna trials cause resource-tracker warnings on Windows
 - **Boosting extras** require `uv sync --extra boosting`

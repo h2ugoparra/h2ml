@@ -52,16 +52,18 @@ class FeatureSelector(BasePreprocessor):
                         information leakage into feature selection. If False, fit on
                         the full training set (faster, mildly optimistic step 3 scores).
         n_splits:       Folds for the OOF CV pass (used only when use_oof=True).
-        random_state:   Seed for OOF fold shuffle (used only when use_oof=True).
+        random_state:   Seed for OOF fold shuffle and the PermutationExplainer.
         shap_save_path: Optional path to save SHAP array as .npy.
-        max_background: Max background samples for KernelSHAP (affects non-tree,
-                        non-linear models such as SVC/SVR with rbf kernel). Larger
+        max_background: Max background samples for the model-agnostic explainer (affects
+                        non-tree, non-linear models such as SVC/SVR with rbf kernel). Larger
                         training folds are summarised with shap.kmeans to this size.
                         Default 100 — increase for more accurate SHAP at cost of speed.
         verbose:        Log selected/removed feature counts.
         train_target_fn: Step fitted on and applied to the targets each SHAP model is
                         trained on (e.g. winsorize clipping) — per training fold in OOF
                         mode, so its statistics never see held-out rows.
+        n_jobs:         Worker processes for the model-agnostic explainer (row chunks are
+                        explained in parallel; results do not depend on n_jobs). Default 1.
         _splitter:      Internal — a pre-built spatial splitter reused for the OOF
                         SHAP pass so it matches the pipeline's CV folds. Leave None
                         for non-spatial use; the pipeline injects it when relevant.
@@ -85,6 +87,7 @@ class FeatureSelector(BasePreprocessor):
         max_background: int = 100,
         verbose: bool = False,
         train_target_fn: Optional[Callable] = None,
+        n_jobs: int = 1,
         _splitter: Any = None,
     ):
         if min_features < 1:
@@ -100,6 +103,7 @@ class FeatureSelector(BasePreprocessor):
         self.shap_save_path = shap_save_path
         self.max_background = max_background
         self.train_target_fn = train_target_fn
+        self.n_jobs = n_jobs
         self._splitter = _splitter
 
         # Set after fit
@@ -136,6 +140,7 @@ class FeatureSelector(BasePreprocessor):
                 save_path=self.shap_save_path,
                 max_background=self.max_background,
                 train_target_fn=self.train_target_fn,
+                n_jobs=self.n_jobs,
                 _splitter=self._splitter,
             )
         else:
@@ -158,6 +163,8 @@ class FeatureSelector(BasePreprocessor):
                 task_type=self.task_type,
                 save_path=self.shap_save_path,
                 max_background=self.max_background,
+                n_jobs=self.n_jobs,
+                random_state=self.random_state,
             )
 
         # Remove correlated features in importance order
