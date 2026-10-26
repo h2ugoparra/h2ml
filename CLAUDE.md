@@ -39,6 +39,8 @@ FinalModel (pipeline/final_model.py)         → predict/predict_proba + optiona
 DeltaFinalModel (pipeline/final_model.py)    → P(present) × E(count|present); built via build_delta_final_model()
 model registry (utils/registry.py)           → CLASSIFIER_REGISTRY / REGRESSOR_REGISTRY dicts of ModelEntry; build_models(task)
 optimizer (optimization/optimizer.py)        → run_study(); optimize_all() for batch use  [module functions, no class]
+ranking (evaluation/ranking.py)              → ranking_robustness() / ranking_warnings(): paired-fold + cross-metric
+                                               robustness of a selection; drives prefer_reduced_on_tie
 
 core/ (foundational, dependency-free leaf layer; nothing in core imports other h2ml packages)
   base.py         → TaskType, BaseStep/PredictorMixin, BaseClassifier/Regressor/Preprocessor
@@ -76,6 +78,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 | `opt_n_splits` | `3` | Folds used during Optuna |
 | `n_hpo_repeats` | `1` | Independent HPO repeats; trials divided evenly, best repeat kept |
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers with `supports_class_weight=True`; `"auto"` only when minority-class ratio < 0.1, resolved per run |
+| `prefer_reduced_on_tie` | `False` | Step 3 1-SE rule: if the winner is `"default"` stage and a reduced candidate is `Indistinguishable` from it (paired folds, Nadeau–Bengio SE), select the best-ranked such reduced candidate; switch recorded in `cv_warnings` |
 | `spatial_cv_method` | `"spcv"` | Spatial CV strategy: `"block"` or `"spcv"` (ignored when `store.coords` is `None`) |
 | `spatial_cv_metric` | `"euclidean"` | Distance metric: `"euclidean"` or `"haversine"` |
 | `time_bin_resolution` | `"month"` | Temporal bin granularity for spatial CV and local conformal calibration: `"month"` or `"season"` |
@@ -93,6 +96,9 @@ Key fields: `best_model_name`, `best_stage`, `best_feature_stage`, `best_base_es
 result.summary(metric=None, ascending=False)   # combined agg DataFrame across all stages
 result.build_final_model()                      # refit on full training set → FinalModel
 result.save(path) / PipelineResult.load(path)  # serialise/reload
+result.ranking_robustness(step=None)            # paired-fold gaps/ties + per-metric ranks (step 3 if run, else 1)
+# cv_warnings also carries advisory [metric] (step 1) and [ranking] (steps 1 & 3) flags;
+# Is_Winner in ranking_robustness is the confidence-bound winner before prefer_reduced_on_tie
 
 # FinalModel conformal prediction
 model.predict_interval(X, alpha)  # regression; alpha=0.10 → 90% coverage

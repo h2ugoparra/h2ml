@@ -593,6 +593,73 @@ class TestMetricSuitability:
         assert any("optimistic" in w for w in result.cv_warnings)
 
 
+def _separable_store() -> PipelineData:
+    """feat_0 alone separates y; the other features are noise."""
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((N_SAMPLES, len(FEATURE_NAMES)))
+    return PipelineData(X=X, feature_names=FEATURE_NAMES, y=(X[:, 0] > 0).astype(int))
+
+
+def _stump() -> list:
+    """A depth-1 tree always splits on feat_0 here, so it scores identically on any
+    feature set containing feat_0 — a deterministic default-vs-reduced tie."""
+    from sklearn.tree import DecisionTreeClassifier
+
+    return [make_classifier(DecisionTreeClassifier(max_depth=1, random_state=0), name="Stump")]
+
+
+class TestPreferReducedOnTie:
+    def _run(self, selected: list[str], **config_kwargs) -> PipelineResult:
+        config = _clf_config(**config_kwargs)
+        with _mock_selector(selected):
+            return H2MLPipeline(models=_stump(), config=config).run_step1_to_step3(_separable_store())
+
+    def test_default_off(self):
+        assert PipelineConfig().prefer_reduced_on_tie is False
+
+    def test_non_bool_raises(self):
+        with pytest.raises(ValueError, match="prefer_reduced_on_tie"):
+            PipelineConfig(prefer_reduced_on_tie="yes")
+
+    def test_flag_off_keeps_default_winner_on_tie(self):
+        result = self._run(FEATURE_NAMES[:5])
+        assert result.best_stage == "default"
+        assert not any("prefer_reduced_on_tie" in w for w in result.cv_warnings)
+
+    def test_tie_switches_to_reduced(self):
+        result = self._run(FEATURE_NAMES[:5], prefer_reduced_on_tie=True)
+        assert result.best_stage == result.best_feature_stage == "reduced"
+        assert result.best_model_name == "Stump"
+        assert any(w.startswith("step 3: prefer_reduced_on_tie → Stump | reduced") for w in result.cv_warnings)
+
+    def test_clear_default_win_is_kept(self):
+        """Reduced set without feat_0 loses clearly — no tie, no switch."""
+        result = self._run(FEATURE_NAMES[1:6], prefer_reduced_on_tie=True)
+        assert result.best_stage == "default"
+        assert not any("prefer_reduced_on_tie" in w for w in result.cv_warnings)
+
+    def test_skipped_when_reduced_keeps_every_feature(self):
+        result = self._run(FEATURE_NAMES, prefer_reduced_on_tie=True)
+        assert result.best_stage == "default"
+        assert not any("prefer_reduced_on_tie" in w for w in result.cv_warnings)
+
+    def test_switch_sets_reduced_baseline_for_step4(self):
+        """best_model_value must be the reduced row's score (step 4's "improved" baseline)
+        and step 4 must optimise on the reduced store."""
+        config = _clf_config(prefer_reduced_on_tie=True)
+        pipeline = H2MLPipeline(models=_stump(), config=config)
+        with _mock_selector(FEATURE_NAMES[:5]):
+            result = pipeline.run_step1_to_step3(_separable_store())
+        reduced_value = result.step3_agg_df.iloc[0][config.metric_col]
+        assert result.best_model_value == pytest.approx(reduced_value)
+        assert pipeline._resolve_opt_store(result, None).n_features == 5
+
+    def test_already_reduced_winner_unchanged(self):
+        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(prefer_reduced_on_tie=True))
+        row = pd.Series({"Model": "LR", "Stage": "reduced"})
+        assert pipeline._prefer_reduced_on_tie(PipelineResult(), pd.DataFrame(), pd.DataFrame(), row) is row
+
+
 class TestRankingRobustness:
     def _twin_lr(self) -> list:
         """Two identical models — a guaranteed paired-fold tie."""
@@ -624,6 +691,14 @@ class TestRankingRobustness:
             result = H2MLPipeline(models=_clf_steps(), config=_clf_config()).run_step1_to_step3(clf_store)
         winner = result.ranking_robustness().query("Is_Winner").iloc[0]
         assert (winner["Model"], winner["Stage"]) == (result.best_model_name, result.best_stage)
+
+    def test_is_winner_marks_pre_tie_break_winner(self):
+        """Is_Winner is the confidence-bound winner even when prefer_reduced_on_tie switched."""
+        config = _clf_config(prefer_reduced_on_tie=True)
+        with _mock_selector(FEATURE_NAMES[:5]):
+            result = H2MLPipeline(models=_stump(), config=config).run_step1_to_step3(_separable_store())
+        assert result.best_stage == "reduced"
+        assert result.ranking_robustness().query("Is_Winner").iloc[0]["Stage"] == "default"
 
     def test_result_method_rejects_missing_or_invalid_step(self, clf_store):
         result = H2MLPipeline(models=_clf_steps(), config=_clf_config()).run_step1_only(clf_store)

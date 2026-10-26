@@ -36,7 +36,7 @@ from h2ml.evaluation.metrics import (
     resolve_metric,
     select_best,
 )
-from h2ml.evaluation.ranking import ranking_robustness, ranking_warnings
+from h2ml.evaluation.ranking import KEY_COLS, ranking_robustness, ranking_warnings
 from h2ml.features.selector import FeatureSelector
 from h2ml.optimization.optimizer import run_study
 from h2ml.pipeline.cv import CrossValidator, CVResult
@@ -138,6 +138,14 @@ class PipelineConfig:
                              target is below IMBALANCE_RATIO_THRESHOLD (0.1), decided
                              when a run starts. No effect on regression tasks.
                              Default: False.
+        prefer_reduced_on_tie: In step 3, when the winner uses all features ("default"
+                             stage) but a reduced-feature candidate is indistinguishable
+                             from it on paired folds (within one Nadeau–Bengio corrected
+                             SE — the Indistinguishable flag of ranking_robustness), select
+                             the best-ranked such reduced candidate instead (1-SE rule
+                             favouring the simpler feature set). Skipped when the reduced
+                             set kept every feature. Each switch is logged and recorded in
+                             cv_warnings. Default: False.
     """
 
     task_type: TaskType | str = TaskType.CLASSIFICATION
@@ -160,6 +168,7 @@ class PipelineConfig:
     exact_max_samples: int = 5_000
     knn_neighbors: int = 15
     handle_imbalance: bool | Literal["auto"] = False
+    prefer_reduced_on_tie: bool = False
 
     def __post_init__(self):
         # Accept the string "classification" / "regression" so callers need not import TaskType.
@@ -202,6 +211,8 @@ class PipelineConfig:
             raise ValueError(f"spatial_cv_method must be 'block' or 'spcv', got {self.spatial_cv_method!r}")
         if not (isinstance(self.handle_imbalance, bool) or self.handle_imbalance == "auto"):
             raise ValueError(f"handle_imbalance must be True, False or 'auto', got {self.handle_imbalance!r}")
+        if not isinstance(self.prefer_reduced_on_tie, bool):
+            raise ValueError(f"prefer_reduced_on_tie must be True or False, got {self.prefer_reduced_on_tie!r}")
 
     @property
     def minimize_metric(self) -> bool:
@@ -273,8 +284,9 @@ class PipelineResult:
         time_bin_resolution:  Temporal bin resolution forwarded from PipelineConfig.
         cv_warnings:          Warnings for models with ≥1 failed CV fold (steps 1 & 3), plus
                               data conditions that make the selection metric unreliable
-                              (checked in step 1), and ranking-robustness flags (steps 1
-                              & 3). All advisory — metric and selection are never changed.
+                              (checked in step 1), ranking-robustness flags (steps 1 & 3),
+                              and any prefer_reduced_on_tie switch (step 3). All but the
+                              switch are advisory.
         class_weight_balanced: True when CV ran with class_weight="balanced" injected
                               (handle_imbalance resolved active); build_final_model
                               re-applies it when step 4 did not produce best_params.
@@ -424,7 +436,9 @@ class PipelineResult:
         Paired-fold and cross-metric robustness of the step-1 or step-3 selection.
 
         See h2ml.evaluation.ranking.ranking_robustness for the columns. Works on
-        loaded results — fold DataFrames and metric are persisted.
+        loaded results — fold DataFrames and metric are persisted. Is_Winner marks
+        the confidence-bound winner; after a prefer_reduced_on_tie switch it differs
+        from best_stage (the switch is recorded in cv_warnings).
 
         Args:
             step: 1 (models × transforms on all features) or 3 (default and reduced
@@ -849,7 +863,8 @@ class H2MLPipeline:
         result.y_transform = best["row"].get("Y_transform")
         self._record_best_estimator(result)
         result.metric = self.config.metric
-        result.cv_warnings.extend(self._check_ranking_robustness(result.step1_fold_df, step=1))
+        robust_df = ranking_robustness(result.step1_fold_df, self.config.metric, n_folds=self.config.n_splits)
+        result.cv_warnings.extend(self._check_ranking_robustness(robust_df, step=1))
 
         self._log(
             f"  Best: {result.best_model_name}"
@@ -941,16 +956,21 @@ class H2MLPipeline:
             minimize=self.config.minimize_metric,
             n_folds=self.config.n_splits,
         )
-        result.best_model_name = best["model_name"]
-        result.best_model_value = float(best["value"])
-        std_col = self.config.metric_col.replace("_Mean", "_Std")
-        result.best_model_std = float(best["row"].get(std_col, float("nan")))
-        result.best_stage = str(best["row"]["Stage"])
-        result.best_feature_stage = result.best_stage  # preserved — never overwritten by "optimized"
         assert result.step1_fold_df is not None and result.step3_fold_df is not None
         both_stages_fold_df = pd.concat([result.step1_fold_df, result.step3_fold_df], ignore_index=True)
-        result.cv_warnings.extend(self._check_ranking_robustness(both_stages_fold_df, step=3))
-        result.y_transform = best["row"].get("Y_transform")
+        robust_df = ranking_robustness(both_stages_fold_df, self.config.metric, n_folds=self.config.n_splits)
+        result.cv_warnings.extend(self._check_ranking_robustness(robust_df, step=3))
+        best_row = best["row"]
+        if self.config.prefer_reduced_on_tie:
+            best_row = self._prefer_reduced_on_tie(result, robust_df, all_stages_agg, best_row)
+
+        result.best_model_name = best_row["Model"]
+        result.best_model_value = float(best_row[self.config.metric_col])
+        std_col = self.config.metric_col.replace("_Mean", "_Std")
+        result.best_model_std = float(best_row.get(std_col, float("nan")))
+        result.best_stage = str(best_row["Stage"])
+        result.best_feature_stage = result.best_stage  # preserved — never overwritten by "optimized"
+        result.y_transform = best_row.get("Y_transform")
         self._record_best_estimator(result)
 
         self._log(
@@ -1320,16 +1340,49 @@ class H2MLPipeline:
             logger.warning(f"[metric] {m}")
         return msgs
 
-    def _check_ranking_robustness(self, fold_df: pd.DataFrame, step: int) -> list[str]:
+    def _check_ranking_robustness(self, robust_df: pd.DataFrame, step: int) -> list[str]:
         """Warn when the winner is a paired-fold tie or loses on the counterpart-family metric.
 
-        Advisory only — see h2ml.evaluation.ranking. The selection is never changed.
+        Advisory only — see h2ml.evaluation.ranking. Only prefer_reduced_on_tie (step 3)
+        acts on these ties; the warnings themselves never change the selection.
         """
-        robust_df = ranking_robustness(fold_df, self.config.metric, n_folds=self.config.n_splits)
         msgs = [f"step {step}: {m}" for m in ranking_warnings(robust_df, self.config.metric)]
         for m in msgs:
             logger.warning(f"[ranking] {m}")
         return msgs
+
+    def _prefer_reduced_on_tie(
+        self,
+        result: PipelineResult,
+        robust_df: pd.DataFrame,
+        all_stages_agg: pd.DataFrame,
+        best_row: pd.Series,
+    ) -> pd.Series:
+        """1-SE rule: swap a default-stage winner for the best-ranked tied reduced candidate.
+
+        "Tied" is the Indistinguishable flag of ranking_robustness (paired-fold gap within
+        one corrected SE). Returns best_row unchanged when the winner is already reduced,
+        the reduced set kept every feature (stages identical), or no reduced candidate ties.
+        Otherwise records the switch in cv_warnings and returns the reduced agg row.
+        """
+        if best_row["Stage"] != "default":
+            return best_row
+        assert result.features is not None and result.features_reduced is not None
+        if result.features_reduced.n_features == result.features.n_features:
+            return best_row
+        tied = robust_df.loc[(robust_df["Stage"] == "reduced") & robust_df["Indistinguishable"]]
+        if tied.empty:
+            return best_row
+        pick = tied.iloc[0]  # robust_df is sorted by rank under the selection metric
+        keys = [c for c in KEY_COLS if c in robust_df.columns]
+        new_row = all_stages_agg.loc[(all_stages_agg[keys] == pick[keys]).all(axis=1)].iloc[0]
+        msg = (
+            f"step 3: prefer_reduced_on_tie → {pick['Model']} | reduced "
+            f"(tied with {best_row['Model']} | default: gap {pick['Winner_Gap']:.4g} ≤ SE {pick['Gap_SE']:.4g})"
+        )
+        logger.info(msg)
+        result.cv_warnings.append(msg)
+        return new_row
 
     def _get_inverse_fn(self, store: PipelineData):
         """Return the inverse transform callable for the store's y_transform, or None."""

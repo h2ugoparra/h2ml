@@ -99,7 +99,7 @@ result = pipeline.run_step4_only(result)
 |------|-------------|-------------------------------|
 | 1 | K-fold CV all models (× optional y-transforms) on all features | `best_model_name`, `step1_agg_df` |
 | 2 | Fit best model → SHAP importance → correlation-based feature drop | `features_reduced`, `selector` |
-| 3 | K-fold CV all models on reduced features (winning transform only); compare vs step 1 | `best_stage` (`"default"` or `"reduced"`), `best_feature_stage` |
+| 3 | K-fold CV all models on reduced features (winning transform only); compare vs step 1 (optionally preferring reduced on ties — `prefer_reduced_on_tie`) | `best_stage` (`"default"` or `"reduced"`), `best_feature_stage` |
 | 4 | Optuna HPO on the winning (model, stage, transform) | `best_params`, `step4_agg_df` |
 
 Step 4 is skipped when the winning model has `opt_enabled=False` in the registry (e.g. LogisticRegression, GaussianNB, KNeighborsClassifier).
@@ -118,6 +118,7 @@ Step 4 is skipped when the winning model has `opt_enabled=False` in the registry
 | `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; best is kept |
 | `min_features` | `1` | Minimum features retained after the correlation filter |
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for supporting classifiers; `"auto"` only when the minority-class ratio is below 0.1 |
+| `prefer_reduced_on_tie` | `False` | Step 3: select a reduced-feature candidate over an all-features winner when the two are statistically tied on paired folds (1-SE rule) |
 | `random_state` | `42` | Global seed |
 | `verbose` | `False` | Log step-by-step progress to stdout |
 
@@ -154,7 +155,8 @@ result.best_stage                 # "default" | "reduced" | "optimized"
 result.best_feature_stage         # "default" | "reduced" — feature store used by build_final_model()
 result.y_transform                # winning y-transform (regression only)
 result.cv_type                    # "spatial" | "random" — set from store.coords
-result.cv_warnings                # list of warning strings for models with failed folds
+result.cv_warnings                # failed folds, metric-suitability and ranking-robustness flags
+result.ranking_robustness()       # paired-fold ties and per-metric ranks of the selection
 result.step1_agg_df               # per-model mean/std metrics from step 1
 result.features_reduced           # PipelineData after feature selection
 result.selector.importance_summary()  # SHAP importances as a DataFrame
