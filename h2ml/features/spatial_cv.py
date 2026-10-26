@@ -8,8 +8,8 @@ SpatialBlockSplitter — quantile-grid blocks, fast, geography-only.
 SPCVSplitter — two-stage method:
   Stage 1: Agglomerative Hierarchical Clustering (AHC) on coordinates
            produces spatially coherent blocks that respect autocorrelation.
-  Stage 2: Cluster Ensembles (CE) with HBGF consensus assigns blocks to
-           folds by balancing location, covariates, and target variable.
+  Stage 2: Cluster Ensembles (CE) with HBGF consensus groups blocks that
+           are similar in location, covariates, and target into the same fold.
 """
 
 from __future__ import annotations
@@ -232,8 +232,11 @@ class SPCVSplitter:
         a co-occurrence affinity matrix is built from the stacked membership
         matrices and SpectralClustering produces the final k folds.
 
-    The result is folds that are geographically separated *and* representative
-    of the full covariate and label space.
+    Blocks that co-cluster across the three views get high affinity and end up
+    in the same fold, so each test fold is a distinct region of geographic,
+    covariate, and target space. The resulting folds are deliberately *not*
+    representative of the full data: CV scores estimate extrapolation to unseen
+    conditions and are typically more pessimistic than block or random CV.
 
     Args:
         coords:       (n_samples, 2) spatial coordinates (lat/lon or projected).
