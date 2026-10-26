@@ -17,6 +17,7 @@ What this module does NOT do:
 
 from __future__ import annotations
 
+import time
 import warnings
 from pathlib import Path
 from typing import Any, Callable, Optional, cast
@@ -216,18 +217,22 @@ def _explain_chunks(
     Explain (model, background, X_chunk) chunks in parallel; results in input order.
 
     Chunk i is seeded with random_state + i, so values are reproducible and
-    independent of n_jobs.
+    independent of n_jobs. A tqdm bar shows chunk progress, elapsed time and ETA;
+    total elapsed time is logged on completion.
     """
+    from tqdm import tqdm
+
     logger.info(f"Explaining {len(chunks)} chunks of <= {_SHAP_CHUNK_ROWS} rows (n_jobs={n_jobs})")
-    return cast(
-        list[np.ndarray],
-        Parallel(n_jobs=n_jobs, backend="loky")(
-            delayed(_explain_chunk)(
-                model, task_type, background, X_chunk, class_index, max_background, random_state + i
-            )
-            for i, (model, background, X_chunk) in enumerate(chunks)
-        ),
+    start = time.perf_counter()
+    # Ordered generator: results arrive in input order as they complete, so the bar
+    # can advance without collecting everything first.
+    results = Parallel(n_jobs=n_jobs, backend="loky", return_as="generator")(
+        delayed(_explain_chunk)(model, task_type, background, X_chunk, class_index, max_background, random_state + i)
+        for i, (model, background, X_chunk) in enumerate(chunks)
     )
+    values = cast(list[np.ndarray], list(tqdm(results, total=len(chunks), desc="SHAP", unit="chunk", leave=True)))
+    logger.info(f"SHAP explanation finished in {time.perf_counter() - start:.1f}s")
+    return values
 
 
 def _split_rows(X_frame: pd.DataFrame) -> list[slice]:
