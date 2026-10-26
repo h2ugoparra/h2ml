@@ -465,3 +465,76 @@ class TestSvcShapValues:
         )
         assert shap_arr.shape == (N, len(FEATURE_NAMES))
         assert set(importance.index) == set(FEATURE_NAMES)
+
+
+# ---------------------------------------------------------------------------
+# Model-agnostic path — parallel row chunks
+# ---------------------------------------------------------------------------
+
+WIDE_FEATURES = [f"w{i}" for i in range(12)]  # > 10 features → PermutationExplainer
+
+
+@pytest.fixture
+def wide_reg_store() -> PipelineData:
+    rng = np.random.default_rng(3)
+    return PipelineData(
+        X=rng.standard_normal((40, len(WIDE_FEATURES))),
+        feature_names=WIDE_FEATURES,
+        y=rng.standard_normal(40),
+    )
+
+
+def _svc_rbf_step():
+    return make_classifier(SVC(kernel="rbf", probability=True, random_state=42), requires_scaling=True)
+
+
+class TestParallelModelAgnosticShap:
+    """Chunked/parallel explanation must not change SHAP values."""
+
+    def test_chunked_matches_single_explainer_call(self, clf_store):
+        # Exact path (<= 10 features) is deterministic: chunking must be bit-identical
+        # to explaining all rows with one explainer call (the previous behaviour).
+        model = SVC(kernel="rbf", probability=True, random_state=42).fit(clf_store.X, clf_store.y)
+        X_frame = clf_store.to_frame()
+        explainer = _select_explainer(model, TaskType.CLASSIFICATION, X_frame, max_background=20)
+        expected = _extract_shap_array(explainer(X_frame, silent=True))
+
+        shap_arr, _ = get_shap_values(model, clf_store, TaskType.CLASSIFICATION, max_background=20, n_jobs=2)
+        assert np.array_equal(shap_arr, expected)
+
+    def test_oof_exact_path_n_jobs_independent(self, clf_store):
+        def run(n_jobs: int) -> np.ndarray:
+            arr, _ = get_oof_shap_values(
+                _svc_rbf_step(), clf_store, TaskType.CLASSIFICATION, n_splits=3, max_background=20, n_jobs=n_jobs
+            )
+            return arr
+
+        assert np.array_equal(run(1), run(2))
+
+    def test_oof_permutation_path_reproducible_and_n_jobs_independent(self, wide_reg_store):
+        step = make_regressor(SVR(kernel="rbf"), requires_scaling=True)
+
+        def run(n_jobs: int) -> np.ndarray:
+            arr, _ = get_oof_shap_values(
+                step, wide_reg_store, TaskType.REGRESSION, n_splits=3, max_background=10, n_jobs=n_jobs
+            )
+            return arr
+
+        a = run(1)
+        assert np.array_equal(a, run(1))
+        assert np.array_equal(a, run(2))
+
+    def test_permutation_path_leaves_global_rng_untouched(self, wide_reg_store):
+        # Pre-fitted model: SVR.fit itself draws a libsvm seed from the global RNG.
+        model = SVR(kernel="rbf").fit(wide_reg_store.X, wide_reg_store.y)
+        np.random.seed(123)
+        expected_next = np.random.random()
+        np.random.seed(123)
+        get_shap_values(model, wide_reg_store, TaskType.REGRESSION, max_background=10, n_jobs=1)
+        assert np.random.random() == expected_next
+
+    def test_tree_path_ignores_n_jobs(self, clf_store):
+        step = make_classifier(RandomForestClassifier(n_estimators=10, random_state=42))
+        serial, _ = get_oof_shap_values(step, clf_store, TaskType.CLASSIFICATION, n_splits=3, n_jobs=1)
+        parallel, _ = get_oof_shap_values(step, clf_store, TaskType.CLASSIFICATION, n_splits=3, n_jobs=2)
+        assert np.array_equal(serial, parallel)

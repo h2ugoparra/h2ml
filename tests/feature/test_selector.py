@@ -233,6 +233,20 @@ class TestFit:
             selector.fit(store)
         assert mock_oof.call_args.kwargs["train_target_fn"] is clip_upper_outliers
 
+    def test_fit_forwards_n_jobs_to_oof_shap(self, clf_step, store):
+        selector = FeatureSelector(clf_step, TaskType.CLASSIFICATION, n_jobs=3)
+        patch_shap, patch_corr = _mock_shap(use_oof=True)
+        with patch_shap as mock_oof, patch_corr:
+            selector.fit(store)
+        assert mock_oof.call_args.kwargs["n_jobs"] == 3
+
+    def test_fit_forwards_n_jobs_to_full_shap(self, clf_step, store):
+        selector = FeatureSelector(clf_step, TaskType.CLASSIFICATION, use_oof=False, n_jobs=3)
+        patch_shap, patch_corr = _mock_shap(use_oof=False)
+        with patch_shap as mock_full, patch_corr:
+            selector.fit(store)
+        assert mock_full.call_args.kwargs["n_jobs"] == 3
+
     def test_fit_use_oof_false_fits_on_train_target_fn_output(self):
         """The full-dataset SHAP model must fit on targets passed through train_target_fn."""
         fitted_targets = []

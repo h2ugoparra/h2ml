@@ -17,13 +17,15 @@ What this module does NOT do:
 
 from __future__ import annotations
 
+import time
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, cast
 
 import numpy as np
 import pandas as pd
 import shap
+from joblib import Parallel, delayed
 from loguru import logger
 
 from h2ml.core.base import TaskType
@@ -60,13 +62,37 @@ _GENERIC_EXPLAINER_MODELS: dict[TaskType, set[str]] = {
 
 _LINEAR_SVM_CLASSES: set[str] = {"SVC", "SVR"}
 
+# Rows per parallel task on the model-agnostic path. Fixed (not derived from n_jobs) so the
+# per-chunk seeds — and therefore Permutation-explainer values — do not depend on worker count.
+_SHAP_CHUNK_ROWS = 16
+
+
+def _is_linear_svm(model: Any) -> bool:
+    """
+    True for linear SVC/SVR without Platt scaling — explained exactly by LinearExplainer.
+
+    probability=True is excluded: Platt calibration wraps the decision function in a sigmoid,
+    so coef_/intercept_ no longer represent what predict_proba returns.
+    """
+    return (
+        model.__class__.__name__ in _LINEAR_SVM_CLASSES
+        and getattr(model, "kernel", None) == "linear"
+        and not getattr(model, "probability", False)
+    )
+
+
+def _uses_model_agnostic_explainer(model: Any, task_type: TaskType) -> bool:
+    """True when _select_explainer routes the model to the slow model-agnostic explainer."""
+    generic_models = _GENERIC_EXPLAINER_MODELS.get(task_type, set())
+    return model.__class__.__name__ in generic_models and not _is_linear_svm(model)
+
 
 def _summarize_background(
     background: pd.DataFrame,
     max_samples: int,
 ) -> pd.DataFrame:
     """
-    Reduce a large background dataset for KernelSHAP.
+    Reduce a large background dataset for the model-agnostic explainer.
 
     Uses shap.kmeans when the background exceeds max_samples; this preserves
     the data distribution better than random subsampling and is the canonical
@@ -88,23 +114,28 @@ def _select_explainer(
     X: pd.DataFrame,
     X_background: Optional[pd.DataFrame] = None,
     max_background: int = 100,
+    seed: Optional[int] = None,
 ) -> shap.Explainer:
     """
     Route to the correct SHAP explainer.
 
     Tree-based models use TreeExplainer (faster, exact).
-    Linear SVMs use LinearExplainer (exact, avoids KernelSHAP entirely).
-    Other distance/kernel models use generic Explainer (KernelSHAP) with a
-    summarized background to cap compute cost.
+    Linear SVMs use LinearExplainer (exact, avoids the model-agnostic path entirely).
+    Other distance/kernel models use the model-agnostic shap.Explainer — which
+    resolves to ExactExplainer for <= 10 features and PermutationExplainer above
+    that — with a summarized background to cap compute cost.
 
     Args:
         X_background:   Background dataset for generic/linear explainers.
                         Defaults to X when None. In OOF mode, pass the
                         training-fold DataFrame so the baseline reflects only
                         data the model actually saw.
-        max_background: Maximum background rows passed to KernelSHAP.
-                        Larger backgrounds are replaced with shap.kmeans
+        max_background: Maximum background rows passed to the model-agnostic
+                        explainer. Larger backgrounds are replaced with shap.kmeans
                         centroids of this size (default 100).
+        seed:           Seed for the PermutationExplainer's random permutations
+                        (ignored by ExactExplainer). Note shap applies it via
+                        np.random.seed, i.e. to the global RNG.
     """
     model_name = model.__class__.__name__
     generic_models = _GENERIC_EXPLAINER_MODELS.get(task_type, set())
@@ -112,15 +143,10 @@ def _select_explainer(
     if model_name in generic_models:
         background = X_background if X_background is not None else X
 
-        # Linear SVC/SVR: use exact LinearExplainer — avoids KernelSHAP entirely.
-        # Skip when probability=True: Platt calibration wraps the decision function
-        # in a sigmoid, so coef_/intercept_ no longer represent what predict_proba
-        # returns. KernelSHAP (below) explains the actual probability output instead.
-        if (
-            model_name in _LINEAR_SVM_CLASSES
-            and getattr(model, "kernel", None) == "linear"
-            and not getattr(model, "probability", False)
-        ):
+        # Linear SVC/SVR: use exact LinearExplainer — avoids the model-agnostic path.
+        # probability=True stays on the model-agnostic path (see _is_linear_svm), which
+        # explains the actual probability output instead.
+        if _is_linear_svm(model):
             return shap.LinearExplainer(model, background)
 
         if task_type == TaskType.CLASSIFICATION:
@@ -139,9 +165,79 @@ def _select_explainer(
             return base_fn(X.values if isinstance(X, pd.DataFrame) else X)
 
         summarized = _summarize_background(background, max_background)
-        return shap.Explainer(predict_fn, summarized)
+        return shap.Explainer(predict_fn, summarized, seed=seed)
 
     return shap.TreeExplainer(model)
+
+
+def _explain_chunk(
+    model: Any,
+    task_type: TaskType,
+    X_background: pd.DataFrame,
+    X_chunk: pd.DataFrame,
+    class_index: Optional[int],
+    max_background: int,
+    seed: int,
+) -> np.ndarray:
+    """
+    Explain one chunk of rows with the model-agnostic explainer.
+
+    Module-level so joblib can pickle it. Each row's SHAP values depend only on the
+    model, the background and the row itself, so chunks are independent. The global
+    numpy RNG (reseeded by PermutationExplainer) is restored afterwards.
+    """
+    rng_state = np.random.get_state()
+    try:
+        explainer = _select_explainer(
+            model,
+            task_type,
+            X_chunk,
+            X_background=X_background,
+            max_background=max_background,
+            seed=seed,
+        )
+        # Filters don't cross process boundaries — install inside the worker.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*does not have valid feature names.*")
+            shap_output = explainer(X_chunk, silent=True)
+    finally:
+        np.random.set_state(rng_state)
+    return _extract_shap_array(shap_output, class_index=class_index)
+
+
+def _explain_chunks(
+    chunks: list[tuple[Any, pd.DataFrame, pd.DataFrame]],
+    task_type: TaskType,
+    class_index: Optional[int],
+    max_background: int,
+    random_state: int,
+    n_jobs: int,
+) -> list[np.ndarray]:
+    """
+    Explain (model, background, X_chunk) chunks in parallel; results in input order.
+
+    Chunk i is seeded with random_state + i, so values are reproducible and
+    independent of n_jobs. A tqdm bar shows chunk progress, elapsed time and ETA;
+    total elapsed time is logged on completion.
+    """
+    from tqdm import tqdm
+
+    logger.info(f"Explaining {len(chunks)} chunks of <= {_SHAP_CHUNK_ROWS} rows (n_jobs={n_jobs})")
+    start = time.perf_counter()
+    # Ordered generator: results arrive in input order as they complete, so the bar
+    # can advance without collecting everything first.
+    results = Parallel(n_jobs=n_jobs, backend="loky", return_as="generator")(
+        delayed(_explain_chunk)(model, task_type, background, X_chunk, class_index, max_background, random_state + i)
+        for i, (model, background, X_chunk) in enumerate(chunks)
+    )
+    values = cast(list[np.ndarray], list(tqdm(results, total=len(chunks), desc="SHAP", unit="chunk", leave=True)))
+    logger.info(f"SHAP explanation finished in {time.perf_counter() - start:.1f}s")
+    return values
+
+
+def _split_rows(X_frame: pd.DataFrame) -> list[slice]:
+    """Fixed-size row slices of X_frame (see _SHAP_CHUNK_ROWS)."""
+    return [slice(start, start + _SHAP_CHUNK_ROWS) for start in range(0, len(X_frame), _SHAP_CHUNK_ROWS)]
 
 
 def _extract_shap_array(shap_values: Any, class_index: Optional[int] = None) -> np.ndarray:
@@ -195,6 +291,8 @@ def get_shap_values(
     save_path: Optional[Path] = None,
     class_index: Optional[int] = None,
     max_background: int = 100,
+    n_jobs: int = 1,
+    random_state: int = 42,
 ) -> tuple[np.ndarray, pd.Series]:
     """
     Compute SHAP values and ranked feature importance for a fitted model.
@@ -210,8 +308,12 @@ def get_shap_values(
                         multiclass aggregates mean absolute SHAP across all classes.
                         Pass an integer to inspect a specific class.
                         Ignored for regressors.
-        max_background: Max background samples for KernelSHAP (non-tree, non-linear models).
-                        Larger datasets are summarised with shap.kmeans. Default 100.
+        max_background: Max background samples for the model-agnostic explainer (non-tree,
+                        non-linear models). Larger datasets are summarised with shap.kmeans.
+                        Default 100.
+        n_jobs:         Worker processes for the model-agnostic explainer, which explains
+                        row chunks in parallel. Tree/linear explainers ignore it. Default 1.
+        random_state:   Base seed for the PermutationExplainer (> 10 features). Default 42.
 
     Returns:
         shap_array:         np.ndarray of shape (n_samples, n_features).
@@ -222,11 +324,17 @@ def get_shap_values(
     # SHAP needs a DataFrame for column names — convert locally
     X_frame = store.to_frame()
 
-    explainer = _select_explainer(model, task_type, X_frame, max_background=max_background)
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message=".*does not have valid feature names.*")
-        shap_output = explainer(X_frame)
-    shap_array = _extract_shap_array(shap_output, class_index=class_index)
+    if _uses_model_agnostic_explainer(model, task_type):
+        background = _summarize_background(X_frame, max_background)
+        chunks = [(model, background, X_frame.iloc[rows]) for rows in _split_rows(X_frame)]
+        values = _explain_chunks(chunks, task_type, class_index, max_background, random_state, n_jobs)
+        shap_array = np.vstack(values)
+    else:
+        explainer = _select_explainer(model, task_type, X_frame, max_background=max_background)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*does not have valid feature names.*")
+            shap_output = explainer(X_frame)
+        shap_array = _extract_shap_array(shap_output, class_index=class_index)
 
     if save_path is not None:
         np.save(save_path, shap_array)
@@ -249,6 +357,7 @@ def get_oof_shap_values(
     class_index: Optional[int] = None,
     max_background: int = 100,
     train_target_fn: Optional[Callable] = None,
+    n_jobs: int = 1,
     _splitter: Any = None,
 ) -> tuple[np.ndarray, pd.Series]:
     """
@@ -264,19 +373,24 @@ def get_oof_shap_values(
         store:          PipelineData containing X, y, and feature_names.
         task_type:      TaskType.CLASSIFICATION or TaskType.REGRESSION.
         n_splits:       Number of CV folds (default 5).
-        random_state:   Seed for KFold shuffle (default 42).
+        random_state:   Seed for KFold shuffle and base seed for the PermutationExplainer
+                        (default 42).
         save_path:      Optional path to save the OOF SHAP array as .npy.
         class_index:    For classifiers, which class's SHAP values to use.
                         None (default): binary uses class 1 (positive class);
                         multiclass aggregates mean absolute SHAP across all classes.
                         Pass an integer to inspect a specific class.
-        max_background: Max background samples passed to KernelSHAP per fold.
-                        Training folds larger than this are summarised with
+        max_background: Max background samples passed to the model-agnostic explainer
+                        per fold. Training folds larger than this are summarised with
                         shap.kmeans, giving a significant speedup for SVC/SVR
                         with non-linear kernels. Default 100.
         train_target_fn: Fitted on and applied to each training fold's targets
                         (e.g. winsorize clipping), so its statistics never see
                         held-out rows.
+        n_jobs:         Worker processes for the model-agnostic explainer (SVC/SVR with
+                        non-linear kernels, KNN, ...). Folds are fitted serially, then
+                        all folds' test rows are explained in parallel chunks — results
+                        do not depend on n_jobs. Tree/linear explainers ignore it. Default 1.
 
     Returns:
         oof_shap:           np.ndarray of shape (n_samples, n_features).
@@ -308,7 +422,7 @@ def get_oof_shap_values(
 
     oof_shap = np.zeros((n_samples, n_features), dtype=np.float64)
 
-    for train_idx, test_idx in splitter.split(X, y):
+    def fit_fold(train_idx: np.ndarray, test_idx: np.ndarray) -> tuple[Any, pd.DataFrame, pd.DataFrame]:
         X_train, X_test = X[train_idx], X[test_idx]
         y_train = y[train_idx]
         if train_target_fn is not None:
@@ -321,22 +435,38 @@ def get_oof_shap_values(
 
         model = estimator_cls(**estimator_params)
         model.fit(X_train, y_train)
+        return model, pd.DataFrame(X_train, columns=feature_names), pd.DataFrame(X_test, columns=feature_names)
 
-        X_train_frame = pd.DataFrame(X_train, columns=feature_names)
-        X_test_frame = pd.DataFrame(X_test, columns=feature_names)
+    if _uses_model_agnostic_explainer(step.estimator, task_type):
+        # Explanation dominates the cost (seconds per row vs. sub-second fits), so fit
+        # folds serially here, then explain every fold's test rows in parallel chunks.
+        chunk_rows: list[np.ndarray] = []
+        chunks: list[tuple[Any, pd.DataFrame, pd.DataFrame]] = []
+        for train_idx, test_idx in splitter.split(X, y):
+            model, X_train_frame, X_test_frame = fit_fold(train_idx, test_idx)
+            background = _summarize_background(X_train_frame, max_background)
+            for rows in _split_rows(X_test_frame):
+                chunk_rows.append(test_idx[rows])
+                chunks.append((model, background, X_test_frame.iloc[rows]))
+        values = _explain_chunks(chunks, task_type, class_index, max_background, random_state, n_jobs)
+        for idx, chunk_values in zip(chunk_rows, values, strict=True):
+            oof_shap[idx] = chunk_values
+    else:
+        for train_idx, test_idx in splitter.split(X, y):
+            model, X_train_frame, X_test_frame = fit_fold(train_idx, test_idx)
 
-        explainer = _select_explainer(
-            model,
-            task_type,
-            X_test_frame,
-            X_background=X_train_frame,
-            max_background=max_background,
-        )
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message=".*does not have valid feature names.*")
-            shap_output = explainer(X_test_frame)
+            explainer = _select_explainer(
+                model,
+                task_type,
+                X_test_frame,
+                X_background=X_train_frame,
+                max_background=max_background,
+            )
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*does not have valid feature names.*")
+                shap_output = explainer(X_test_frame)
 
-        oof_shap[test_idx] = _extract_shap_array(shap_output, class_index=class_index)
+            oof_shap[test_idx] = _extract_shap_array(shap_output, class_index=class_index)
 
     if save_path is not None:
         np.save(save_path, oof_shap)

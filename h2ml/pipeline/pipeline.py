@@ -77,7 +77,9 @@ class PipelineConfig:
                              cost. Default: 5.
         random_state:        Seed for fold splitting and model initialisation. Default: 42.
         verbose:             Log step-by-step progress. Default: False.
-        n_jobs:              Worker processes used to CV models in parallel (steps 1 and 3).
+        n_jobs:              Worker processes used to CV models in parallel (steps 1 and 3)
+                             and to explain row chunks in step 2's SHAP pass for
+                             model-agnostic explainers (SVC/SVR with non-linear kernels, KNN, ...).
                              -1 uses all cores. Lower it when memory is the constraint
                              rather than CPU — each worker holds its own copy of the
                              model being fitted — or to leave headroom on a shared
@@ -899,6 +901,7 @@ class H2MLPipeline:
             random_state=self.config.random_state,
             verbose=self.config.verbose,
             train_target_fn=get_train_target_fn(fit_store.y_transform),
+            n_jobs=self.config.n_jobs,
             _splitter=result.splitter,
         )
         result.selector = selector
