@@ -35,7 +35,9 @@ FeatureSelector (features/selector.py)       → shap_importance.py + correlatio
 SpatialBlockSplitter / SPCVSplitter          → activated when store.coords is set; built once in step 1
   (features/spatial_cv.py)
 FinalModel (pipeline/final_model.py)         → predict/predict_proba + optional ConformalCalibration
-                                               or LocalConformalCalibration (space-time block-local)
+                                               or LocalConformalCalibration (space-time block-local);
+                                               area_of_applicability() via ApplicabilityDomain
+                                               (evaluation/applicability.py, Meyer & Pebesma DI fitted on CV rows/folds)
 DeltaFinalModel (pipeline/final_model.py)    → P(present) × E(count|present); built via build_delta_final_model()
 model registry (utils/registry.py)           → CLASSIFIER_REGISTRY / REGRESSOR_REGISTRY dicts of ModelEntry; build_models(task)
 optimizer (optimization/optimizer.py)        → run_study(); optimize_all() for batch use  [module functions, no class]

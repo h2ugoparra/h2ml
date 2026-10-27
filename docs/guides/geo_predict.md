@@ -95,6 +95,43 @@ pi_upper = clip(p + q, 0, 1)
 !!! note
     Unlike regression, these bounds are not a formal coverage guarantee on the class label — they are a calibration band expressing how much the predicted probability could plausibly shift given past model errors.
 
+### Area of applicability columns
+
+A model can only be trusted where the feature combinations resemble its training
+data. Mapping into new regions, years or conditions can produce confident-looking
+predictions — and conformal intervals — in feature space the model never saw.
+`aoa=True` adds two columns per target (Meyer & Pebesma 2021):
+
+```python
+df = predict_for_year(..., aoa=True)
+# columns: sparrow_v1, sparrow_v1_di, sparrow_v1_aoa
+```
+
+- `{target}_{schema}_di`: the **dissimilarity index**. It is the distance to the nearest
+  training row in standardised feature space, with features weighted by their step-2
+  SHAP importance, divided by the mean distance between training rows. 0 means the row
+  matches a training row.
+- `{target}_{schema}_aoa`: `True` when DI is at or below the model's threshold. The
+  threshold is the upper boxplot whisker of the training rows' own DI, each measured
+  against the rows outside its CV fold, so it reflects how far CV already had to
+  extrapolate. With spatial CV the threshold comes from spatial folds.
+
+Rows outside the AOA (`_aoa == False`) are extrapolations: the CV score and the
+conformal coverage do not describe them. Mask or flag them rather than reading them
+as predictions. The same check is available directly on the model:
+
+```python
+di, inside = final.area_of_applicability(X_new)   # DataFrame (aligned by name) or ndarray
+final.applicability.threshold                     # DI cut-off
+final.applicability.train_di                      # cross-validated DI of the training rows
+```
+
+`build_final_model()` fits the AOA on the rows the CV ran on (the dev rows when a
+holdout is used). FinalModels saved before this feature have no AOA. `aoa=True` then
+logs a warning and writes no AOA columns; rebuild the model with
+`result.build_final_model()`. `predict_for_year_delta(..., aoa=True)` adds a single
+`{target}_{schema}_aoa` column, `True` only where the row is inside both sub-models' AOA.
+
 ## predict_for_year_delta
 
 Same as `predict_for_year` but loads `DeltaFinalModel`s (two-component presence × abundance models). Model directories are expected at `root_dir/models/{target}_{schema}_final-model/`.
@@ -151,6 +188,14 @@ predict_map(..., save_path="figures/sparrow_2023.png")
 predict_map(..., vminmax=(0.0, 50.0))
 ```
 
+`mask_outside_aoa=True` drops cells outside the model's
+[area of applicability](#area-of-applicability-columns) before aggregating, so the map
+only shows where the model can be trusted:
+
+```python
+predict_map(..., mask_outside_aoa=True)
+```
+
 ### Differences from `predict_for_year`
 
 | | `predict_for_year` | `predict_map` |
@@ -158,5 +203,6 @@ predict_map(..., vminmax=(0.0, 50.0))
 | Output | Polars DataFrame | Plot only (`None`) |
 | Targets | Multiple | Single model |
 | Conformal intervals | Yes (with `alpha`) | No |
+| Area of applicability | `_di` / `_aoa` columns (with `aoa`) | Masking (with `mask_outside_aoa`) |
 | Temporal aggregation | None (raw time column) | `"month"` or `"season"` |
 | Typical use | Production pipeline | Exploratory / QA |
