@@ -111,7 +111,7 @@ change you opted into. Each is also logged when it is raised.
 | the metric name, e.g. `AUC with minority…`, `R2: …` | `[metric]` | step 1 | The data makes the configured metric unreliable — AUC under class imbalance, single-class test folds for AUC/AUCPR, uneven fold prevalence for AUCPR, F1 with class weights, low-variance folds for R2, heavy tails for RMSE, zero inflation for MAE. The metric is never changed. |
 | `step 1:` / `step 3:` | `[ranking]` | steps 1, 3 | Candidates tied with the winner on paired folds, or the winner ranking below 1st on the counterpart-family metric (AUC/AUCPR ↔ Brier, LogLoss/Brier ↔ AUC, F1 → AUC, R2/RMSE ↔ MAE) |
 | `step 3: prefer_reduced_on_tie →` | *(info log)* | step 3 | The tie-break switched the selection to a reduced-feature candidate |
-| `[holdout]` | `[CV]` (end of `run()`) | after step 3 or 4 | The holdout score is worse than the CV score by more than 2 fold SDs — the CV estimate is likely optimistic, or the holdout rows differ from the dev rows |
+| `[holdout]` | `[CV]` (end of `run()`) | after step 3 or 4 | The holdout score is worse than the CV score by more than 2 fold SDs — the CV estimate is likely optimistic, or the holdout rows differ from the dev rows. Classification: also when the holdout holds fewer than 20 rows of its rarest class, so its score and conformal calibration are unreliable |
 
 ### Preferring reduced features on ties
 
@@ -216,6 +216,11 @@ as "no evidence of optimism" rather than as an exact correction.
   the holdout score and interval coverage describe the deployed model exactly;
   `holdout_refit="all"` refits on dev + holdout for more data, after which both are
   approximate.
+- **Rare classes** — a holdout's usefulness depends on how many rows of the rarest
+  class it holds, not on its total size. Spatial blocks can be very uneven in
+  prevalence. Below 20 such rows, a `[holdout]` warning is added. For very rare
+  targets, prefer `holdout_frac=0`: CV scores, with conformal calibrated on the CV
+  residuals.
 
 ### Nested CV
 
