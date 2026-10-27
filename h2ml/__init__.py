@@ -6,6 +6,7 @@ from h2ml.pipeline.pipeline import (
     PipelineData,
     PipelineResult,
 )
+from h2ml.pipeline.stability import SeedStabilityResult, seed_stability
 
 __all__ = [
     "H2MLPipeline",
@@ -13,6 +14,8 @@ __all__ = [
     "PipelineConfig",
     "PipelineData",
     "PipelineResult",
+    "SeedStabilityResult",
     "TaskType",
     "nested_cv",
+    "seed_stability",
 ]

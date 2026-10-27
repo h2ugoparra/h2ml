@@ -250,6 +250,36 @@ nested.results               # the inner PipelineResults (outer test fold attach
   pipeline's choices depend on which rows it sees. Read the reported winner as one of
   several near-equivalent options.
 
+### Seed stability
+
+Each run uses one `random_state`. It decides the CV folds (and the spatial partition),
+SHAP sampling, the Optuna sampler and the holdout split. With 5 folds, another seed
+can change the winner or move the score by more than the gap between candidates.
+`seed_stability` reruns the pipeline under several seeds:
+
+```python
+from h2ml import seed_stability
+
+stab = seed_stability(H2MLPipeline(config), store, seeds=range(5))   # through_step=3 by default
+
+stab.summary()             # <metric>_Mean/_Std/_Min/_Max across seeds, Top_Selection(_Fraction)
+stab.runs_df               # per seed: Model / Y_transform / Stage / N_features, reported score
+                           # (and Holdout_<metric> when holdout_frac > 0)
+stab.selection_counts()    # how often each (model, transform, stage) won
+stab.feature_frequency()   # share of seeds whose final configuration used each feature
+```
+
+- `through_step`: `1` screens models only, `3` (default) runs selection without HPO,
+  and `4` runs the full pipeline.
+- Seeds set inside the model constructors (e.g. a registry RandomForest's
+  `random_state`) are not changed, so the spread isolates the evaluation and selection
+  procedure.
+- Reading it: if `<metric>_Std` across seeds is comparable to the gaps in
+  `ranking_robustness()`, or `Top_Selection_Fraction` is well below 1, the single-run
+  winner is partly luck. Treat the candidates that win across seeds as equivalent and
+  prefer the simplest. It complements `nested_cv`: that function measures
+  generalisation, while this one measures how much a run's choices depend on the seed.
+
 ### Per-step data
 
 ```python

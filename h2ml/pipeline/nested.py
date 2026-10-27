@@ -83,15 +83,34 @@ class NestedCVResult:
 
     def selection_counts(self) -> pd.DataFrame:
         """How often each (Model, Y_transform, Stage) was selected, most frequent first."""
-        keys = ["Model", "Y_transform", "Stage"]
-        counts = self.folds_df.fillna({"Y_transform": ""}).groupby(keys).size().reset_index(name="Count")
-        counts["Fraction"] = counts["Count"] / self.n_folds
-        return counts.sort_values("Count", ascending=False, kind="stable").reset_index(drop=True)
+        return selection_counts(self.folds_df)
 
     def feature_frequency(self) -> pd.Series:
         """Fraction of completed folds whose final configuration used each feature."""
-        flat = pd.Series([f for names in self.selected_features for f in names], dtype=object)
-        return (flat.value_counts() / self.n_folds).rename("Fraction")
+        return feature_frequency(self.selected_features)
+
+
+def selection_counts(df: pd.DataFrame) -> pd.DataFrame:
+    """Count and fraction of rows per (Model, Y_transform, Stage), most frequent first."""
+    keys = ["Model", "Y_transform", "Stage"]
+    counts = df.fillna({"Y_transform": ""}).groupby(keys).size().reset_index(name="Count")
+    counts["Fraction"] = counts["Count"] / len(df)
+    return counts.sort_values("Count", ascending=False, kind="stable").reset_index(drop=True)
+
+
+def feature_frequency(selected_features: list[list[str]]) -> pd.Series:
+    """Fraction of runs whose final configuration used each feature, most frequent first."""
+    flat = pd.Series([f for names in selected_features for f in names], dtype=object)
+    return (flat.value_counts() / len(selected_features)).rename("Fraction")
+
+
+def final_feature_names(result: PipelineResult) -> list[str]:
+    """Features the result's final configuration uses (reduced set when that stage won)."""
+    assert result.features is not None
+    feature_stage = result.best_feature_stage or result.best_stage
+    if feature_stage == "reduced" and result.features_reduced is not None:
+        return list(result.features_reduced.feature_names)
+    return list(result.features.feature_names)
 
 
 def nested_cv(
@@ -171,13 +190,7 @@ def nested_cv(
             failed.append(fold_id)
             continue
 
-        assert result.features is not None
-        feature_stage = result.best_feature_stage or result.best_stage
-        names = (
-            result.features_reduced.feature_names
-            if feature_stage == "reduced" and result.features_reduced is not None
-            else result.features.feature_names
-        )
+        names = final_feature_names(result)
         outer_metrics = compute_metrics(result.holdout_cv_result).iloc[0].drop(["Model", "Fold"])
         rows.append(
             {
@@ -185,7 +198,7 @@ def nested_cv(
                 "Model": result.best_model_name,
                 "Y_transform": result.y_transform,
                 "Stage": result.best_stage,
-                "Feature_Stage": feature_stage,
+                "Feature_Stage": result.best_feature_stage or result.best_stage,
                 "N_features": len(names),
                 "N_test": int(test_idx.size),
                 f"Inner_{config.metric}": result.best_model_value,
@@ -193,7 +206,7 @@ def nested_cv(
                 **outer_metrics.to_dict(),
             }
         )
-        selected_features.append(list(names))
+        selected_features.append(names)
         results.append(result)
 
     if not rows:
