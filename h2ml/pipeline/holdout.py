@@ -25,6 +25,9 @@ HOLDOUT_STRATEGIES = ("auto", "random", "time")
 HOLDOUT_REFITS = ("dev", "all")
 # Holdout sizes below this give a very noisy score — warned, not refused.
 MIN_HOLDOUT_SAMPLES = 30
+# Classification: fewer rows of the rarest class than this in the holdout make its score
+# (and the conformal calibration built on it) unreliable, however many rows it has.
+MIN_HOLDOUT_MINORITY = 20
 
 
 def split_holdout(

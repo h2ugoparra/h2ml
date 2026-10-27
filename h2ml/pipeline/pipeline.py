@@ -44,6 +44,7 @@ from h2ml.pipeline.cv import CrossValidator, CVResult
 from h2ml.pipeline.holdout import (
     HOLDOUT_REFITS,
     HOLDOUT_STRATEGIES,
+    MIN_HOLDOUT_MINORITY,
     FixedSplit,
     concat_stores,
     split_holdout,
@@ -1418,7 +1419,8 @@ class H2MLPipeline:
         Reuses CrossValidator.run with a one-fold split over dev + holdout, so scaling,
         per-fold winsorize clipping and inverse transforms match the CV runs exactly.
         No-op without a holdout. Adds a [holdout] warning when the holdout score is worse
-        than the CV score by more than two fold standard deviations.
+        than the CV score by more than two fold standard deviations, and (classification)
+        when the holdout holds fewer than MIN_HOLDOUT_MINORITY rows of its rarest class.
         """
         if result.holdout_store is None:
             return result
@@ -1453,6 +1455,15 @@ class H2MLPipeline:
         if result.y_transform:
             metadata = replace(metadata, y_transform=result.y_transform)
         result.holdout_df = aggregate_metrics(compute_metrics_all([cv_result], metadata=metadata), group_by_stage=False)
+        if self.config.task_type == TaskType.CLASSIFICATION:
+            holdout_y = result.holdout_store.y
+            n_minority = min(int(np.sum(holdout_y == c)) for c in np.unique(store.y))
+            if n_minority < MIN_HOLDOUT_MINORITY:
+                result.cv_warnings.append(
+                    f"[holdout] The holdout holds only {n_minority} row(s) of its rarest class, so its "
+                    f"score and the conformal calibration built on it are unreliable. Consider "
+                    "holdout_frac=0 for this target (CV scores and CV-residual conformal) or a larger holdout_frac."
+                )
 
         holdout_value = float(result.holdout_df.iloc[0][self.config.metric_col])
         cv_value, cv_std = result.best_model_value, result.best_model_std

@@ -273,10 +273,28 @@ class TestPipelineHoldout:
         with _mock_selector(FEATURE_NAMES[:3]):
             pipeline = _lr_pipeline(holdout_frac=0.25)
             result = pipeline.run(store)
-        assert not any(w.startswith("[holdout]") for w in result.cv_warnings)
+        gap_warning = "worse than the CV estimate"
+        assert not any(w.startswith("[holdout]") and gap_warning in w for w in result.cv_warnings)
         result.best_model_value, result.best_model_std = 1.5, 0.01  # CV claims far more than the holdout gives
         result = pipeline._score_holdout(result)
-        assert any(w.startswith("[holdout]") for w in result.cv_warnings)
+        assert any(w.startswith("[holdout]") and gap_warning in w for w in result.cv_warnings)
+
+    @pytest.mark.parametrize("positive_rate, warned", [(0.08, True), (0.5, False)])
+    def test_rare_class_in_holdout_warns(self, positive_rate, warned):
+        rng = np.random.default_rng(0)
+        n = 400
+        X = rng.standard_normal((n, len(FEATURE_NAMES)))
+        y = (X[:, 0] + rng.standard_normal(n) > np.quantile(X[:, 0], 1 - positive_rate)).astype(int)
+        store = PipelineData(X=X, feature_names=FEATURE_NAMES, y=y)  # 20% holdout: ~6 vs ~40 positives
+        with _mock_selector(FEATURE_NAMES[:3]):
+            result = _lr_pipeline(holdout_frac=0.2).run(store)
+        rare = [w for w in result.cv_warnings if w.startswith("[holdout]") and "rarest class" in w]
+        assert bool(rare) is warned
+
+    def test_rare_class_warning_skipped_for_regression(self):
+        with _mock_selector(FEATURE_NAMES[:3]):
+            result = _ridge_pipeline(holdout_frac=0.2).run(_reg_store())
+        assert not any("rarest class" in w for w in result.cv_warnings)
 
 
 # ---------------------------------------------------------------------------
