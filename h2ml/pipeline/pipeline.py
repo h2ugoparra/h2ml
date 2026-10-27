@@ -100,6 +100,12 @@ class PipelineConfig:
         min_features:        (Step 2) Hard lower bound on features kept after the
                              correlation filter; prevents the selector from removing
                              everything. Default: 1.
+        max_vif:             (Step 2) After the correlation filter, drop the lowest-ranked
+                             feature whose variance inflation factor exceeds this value,
+                             repeating until none does. Catches features that are linear
+                             combinations of several retained ones, which pairwise
+                             correlations miss. Must be > 1 (5 or 10 are common). None
+                             skips it. Default: None.
 
         n_trials:            (Step 4) Total Optuna trials budget. Each trial evaluates
                              one hyperparameter configuration using opt_n_splits-fold
@@ -187,6 +193,7 @@ class PipelineConfig:
     n_splits: int = 5
     opt_n_splits: int = 3
     corr_threshold: float = 0.7
+    max_vif: Optional[float] = None
     n_trials: int = 50
     random_state: int = 42
     verbose: bool = False
@@ -235,6 +242,8 @@ class PipelineConfig:
             )
         if not 0 < self.corr_threshold <= 1:
             raise ValueError(f"corr_threshold must be in (0, 1], got {self.corr_threshold}")
+        if self.max_vif is not None and self.max_vif <= 1:
+            raise ValueError(f"max_vif must be > 1, got {self.max_vif}")
         if self.n_trials < 1:
             raise ValueError(f"n_trials must be >= 1, got {self.n_trials}")
         if self.min_features < 1:
@@ -1266,6 +1275,7 @@ class H2MLPipeline:
             verbose=self.config.verbose,
             train_target_fn=get_train_target_fn(store.y_transform),
             n_jobs=self.config.n_jobs,
+            max_vif=self.config.max_vif,
             _splitter=splitter,
         )
 

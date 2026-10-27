@@ -21,7 +21,7 @@ from loguru import logger
 
 from h2ml.core.base import BasePreprocessor, TaskType
 from h2ml.core.feature_store import PipelineData
-from h2ml.features.correlation import remove_correlated_features
+from h2ml.features.correlation import remove_correlated_features, remove_high_vif_features
 from h2ml.features.shap_importance import get_oof_shap_values, get_shap_values
 
 
@@ -35,7 +35,8 @@ class FeatureSelector(BasePreprocessor):
            SHAP computation. Set use_oof=False to revert to full-dataset SHAP.
         2. Ranks features by mean absolute SHAP importance
         3. Removes features correlated above threshold with higher-ranked features
-        4. Stores selected_features_ for use in transform
+        4. Optionally (max_vif) removes multicollinear features, lowest-ranked first
+        5. Stores selected_features_ for use in transform
 
     Transform phase:
         - Returns a reduced PipelineData containing only selected features
@@ -64,6 +65,10 @@ class FeatureSelector(BasePreprocessor):
                         mode, so its statistics never see held-out rows.
         n_jobs:         Worker processes for the model-agnostic explainer (row chunks are
                         explained in parallel; results do not depend on n_jobs). Default 1.
+        max_vif:        When set, after the correlation filter drop the lowest-ranked
+                        feature with a variance inflation factor above this value until
+                        none is — catches features that are linear combinations of
+                        several retained ones. None (default) skips the check.
         _splitter:      Internal — a pre-built spatial splitter reused for the OOF
                         SHAP pass so it matches the pipeline's CV folds. Leave None
                         for non-spatial use; the pipeline injects it when relevant.
@@ -88,10 +93,13 @@ class FeatureSelector(BasePreprocessor):
         verbose: bool = False,
         train_target_fn: Optional[Callable] = None,
         n_jobs: int = 1,
+        max_vif: Optional[float] = None,
         _splitter: Any = None,
     ):
         if min_features < 1:
             raise ValueError(f"min_features must be >= 1, got {min_features}")
+        if max_vif is not None and max_vif <= 1:
+            raise ValueError(f"max_vif must be > 1, got {max_vif}")
         super().__init__(name="FeatureSelector", verbose=verbose)
         self.step = step
         self.task_type = task_type
@@ -104,6 +112,7 @@ class FeatureSelector(BasePreprocessor):
         self.max_background = max_background
         self.train_target_fn = train_target_fn
         self.n_jobs = n_jobs
+        self.max_vif = max_vif
         self._splitter = _splitter
 
         # Set after fit
@@ -173,6 +182,10 @@ class FeatureSelector(BasePreprocessor):
             feature_importance=self.feature_importance_,
             corr_threshold=self.corr_threshold,
         )
+        if self.max_vif is not None:
+            self.selected_features_ = remove_high_vif_features(
+                store.to_frame(), self.selected_features_, max_vif=self.max_vif
+            )
 
         # Enforce minimum — restore top SHAP-ranked features when threshold is too aggressive
         if len(self.selected_features_) < self.min_features:

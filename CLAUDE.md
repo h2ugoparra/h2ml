@@ -77,9 +77,10 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 | `n_splits` | `5` | CV folds for model screening (steps 1 and 3) |
 | `n_jobs` | `-1` | Worker processes for parallel CV in steps 1 and 3 and for chunked model-agnostic SHAP in step 2; must be non-zero |
 | `corr_threshold` | `0.7` | Drop feature if it exceeds this in any of Pearson, Spearman, or Kendall with a retained feature |
+| `max_vif` | `None` | Step 2: after the correlation filter, iteratively drop the lowest-SHAP-ranked feature with VIF > max_vif (catches multicollinearity pairwise correlation misses); None skips |
 | `min_features` | `1` | Minimum features retained after correlation filter |
 | `n_trials` | `50` | Optuna trials in step 4 |
-| `opt_n_splits` | `3` | Folds used during Optuna |
+| `opt_n_splits` | `3` | Folds used during Optuna (trials train on smaller folds than step-4 acceptance CV; set = `n_splits` to match, at higher cost) |
 | `n_hpo_repeats` | `1` | Independent HPO repeats; trials divided evenly, best repeat kept |
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers with `supports_class_weight=True`; `"auto"` only when minority-class ratio < 0.1, resolved per run |
 | `prefer_reduced_on_tie` | `False` | Step 3 1-SE rule: if the winner is `"default"` stage and a reduced candidate is `Indistinguishable` from it (paired folds, Nadeau–Bengio SE), select the best-ranked such reduced candidate; switch recorded in `cv_warnings` |
