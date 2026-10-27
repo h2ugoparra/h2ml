@@ -123,8 +123,9 @@ def pipeline_scores(
 
     Args:
         result:     PipelineResult from H2MLPipeline.run().
-        metric_col: Metric column to plot. Auto-detected from task type if None
-                    ('AUC_Test' for classification, 'R2_Test' for regression).
+        metric_col: Metric column to plot. If None, the run's selection metric
+                    ('<result.metric>_Test'); falls back to 'AUC_Test' / 'R2_Test'
+                    when result.metric is unset.
         title:      Plot title.
         save_path:  Path to save figure. If None, shows the plot.
 
@@ -138,7 +139,11 @@ def pipeline_scores(
     combined = pd.concat(frames, ignore_index=True)
 
     if metric_col is None:
-        metric_col = "AUC_Test" if "AUC_Test" in combined.columns else "R2_Test"
+        run_col = f"{result.metric}_Test"
+        if result.metric is not None and run_col in combined.columns:
+            metric_col = run_col
+        else:
+            metric_col = "AUC_Test" if "AUC_Test" in combined.columns else "R2_Test"
 
     model_scores(
         combined,
