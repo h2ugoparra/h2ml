@@ -42,6 +42,7 @@ from h2ml.evaluation.conformal import (
     _build_context,
     _time_bin,
 )
+from h2ml.pipeline.holdout import concat_stores, stage_store
 from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS, Y_TRANSFORMS, get_train_target_fn
 
 
@@ -309,7 +310,9 @@ class FinalModel:
 
 def _build_conformal_calibration(result, classes=None) -> Optional[ConformalCalibration]:
     """
-    Build a ConformalCalibration from the out-of-fold predictions in best_cv_result.
+    Build a ConformalCalibration from the holdout residuals when a holdout was scored
+    (split conformal — no selection step saw those rows), otherwise from the
+    out-of-fold predictions in best_cv_result.
 
     Regression:          nonconformity score = |y_test - y_pred_test|
     Binary classification:   nonconformity score = 1 - p(true_class)
@@ -319,7 +322,7 @@ def _build_conformal_calibration(result, classes=None) -> Optional[ConformalCali
     Returns None when no CV result is available or when the class mapping
     cannot be resolved for multiclass folds.
     """
-    cv = result.best_cv_result
+    cv = getattr(result, "holdout_cv_result", None) or result.best_cv_result
     if cv is None or not cv.folds:
         return None
 
@@ -561,6 +564,10 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     store = result.features_reduced if feature_stage == "reduced" else result.features
     if store is None:
         raise ValueError(f"Cannot build final model: the '{feature_stage}' feature store is missing from the result.")
+    holdout_store = getattr(result, "holdout_store", None)
+    if holdout_store is not None and getattr(result, "holdout_refit", "dev") == "all" and result.features is not None:
+        # Refit on dev + holdout rows, in the winner's y-space and feature set.
+        store = stage_store(concat_stores(result.features, holdout_store), result.y_transform, store.feature_names)
 
     if result.best_base_estimator is not None:
         # The estimator CV ran (constructor args and injected class_weight included);
@@ -619,7 +626,13 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
 
     local_conformal: Optional[LocalConformalCalibration] = None
     variogram = None
-    if result.splitter is not None and (store.coords is not None or store.times is not None):
+    if holdout_store is not None:
+        # Block-local thresholds need residuals spread over every spatial block; the holdout
+        # covers only a few, and the dev OOF residuals carry the selection bias it removes.
+        from loguru import logger
+
+        logger.info("Local conformal calibration skipped: a holdout was used — global holdout calibration applies.")
+    elif result.splitter is not None and (store.coords is not None or store.times is not None):
         local_conformal = _build_local_conformal(
             result,
             coords=store.coords,

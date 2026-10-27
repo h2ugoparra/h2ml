@@ -2,6 +2,14 @@
 
 `build_final_model()` automatically builds a conformal calibrator from out-of-fold CV predictions — no separate calibration set is required.
 
+!!! note "OOF vs holdout calibration"
+    The OOF predictions come from the same folds the pipeline selected the model, features
+    and hyperparameters on, so coverage can fall slightly below the nominal 1 − alpha.
+    With `PipelineConfig(holdout_frac=...)` the calibrator uses the residuals on rows no
+    selection step saw instead (split conformal), which restores the guarantee for the
+    model fitted on the dev rows (`holdout_refit="dev"`). Local calibration is then
+    skipped — see [Outer holdout](../pipeline.md#outer-holdout).
+
 A conformal calibrator is essentially a recorded history of how wrong the model has been, used to answer one question at prediction time:
 *"how much buffer do I need around my estimate to be right X% of the time?"*
 
@@ -77,6 +85,7 @@ print(final.local_conformal.time_bin_resolution)
 - No spatial CV was used (`store.coords` was `None`)
 - `result.splitter` is absent (e.g. after `PipelineResult.load()` — rebuild with `build_final_model()` before saving)
 - Fewer than 2 spatial blocks were found in the OOF data
+- A holdout was used (`holdout_frac > 0`) — the global holdout calibrator applies instead
 
 ### Local intervals at inference
 
