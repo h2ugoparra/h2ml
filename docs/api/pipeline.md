@@ -17,3 +17,9 @@
 ::: h2ml.pipeline.nested.nested_cv
 
 ::: h2ml.pipeline.nested.NestedCVResult
+
+## Seed stability
+
+::: h2ml.pipeline.stability.seed_stability
+
+::: h2ml.pipeline.stability.SeedStabilityResult
