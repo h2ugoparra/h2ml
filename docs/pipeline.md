@@ -281,6 +281,55 @@ stab.feature_frequency()   # share of seeds whose final configuration used each 
   prefer the simplest. It complements `nested_cv`: that function measures
   generalisation, while this one measures how much a run's choices depend on the seed.
 
+### Comparing selection metrics
+
+The metric decides the winner in steps 1 and 3 and what Optuna optimises in step 4.
+`multi_metric` runs the pipeline under several metrics and shares the work that does
+not depend on the metric:
+
+```python
+from h2ml import multi_metric
+
+mm = multi_metric(
+    H2MLPipeline(config), store,
+    metrics=["Brier", "LogLoss", "AUC", "AUCPR", "F1"],     # default: all metrics of the task
+    handle_imbalance={"Brier": False, "LogLoss": False},    # per-metric override of the config
+)
+
+mm.runs_df                 # per metric: Model / Stage / Feature_stage / N_features / Class_weight,
+                           # CV, CV_Std and Holdout under that metric, Step4_shared_with
+mm.results["AUC"]          # a normal PipelineResult: build_final_model(), save(), plots
+mm.summary()               # N_distinct_selections, Top_Selection(_Fraction), N_hpo_runs
+mm.selection_counts()      # how many metrics chose each (model, transform, stage)
+mm.save(path); MultiMetricResult.load(path)
+```
+
+What runs once and what runs per metric:
+
+| Work | Runs |
+|---|---|
+| Holdout split | once |
+| Step 1 CV (every model, every metric computed) | once per class-weighting setting |
+| Steps 2–3 (SHAP, filters, reduced-feature CV) | once per (class weighting, step-1 winner, y-transform) |
+| Step 1 / step 3 selection, step 4 HPO, holdout score | per metric |
+
+- With the default `reuse_step4="none"`, `mm.results[m]` equals a separate
+  `H2MLPipeline(replace(config, metric=m)).run(store)`. The speed-up comes only from
+  not repeating identical CVs.
+- `reuse_step4="model"`: when a metric selects the same (class weighting, model,
+  transform, feature stage) as an earlier one, it reuses that tuning instead of running
+  Optuna again (`Step4_shared_with` names the earlier metric). Whether the tuned params
+  beat step 3 is still decided under each metric, but they were optimised for the
+  earlier one.
+- Each metric gets its own copy of the models, so one metric's class weighting cannot
+  leak into another's. Class weights distort probabilities, which is why the example
+  keeps Brier and LogLoss unweighted.
+- Reading it: `Top_Selection_Fraction` of 1 means the choice does not depend on the
+  metric. When the metrics disagree, pick the metric that matches how predictions will
+  be used (probabilities → Brier/LogLoss, ranking → AUC/AUCPR, thresholded decisions → F1)
+  rather than the best-looking score. Scores are only comparable within a metric.
+- Classification only for now; regression is planned.
+
 ### Per-step data
 
 ```python
