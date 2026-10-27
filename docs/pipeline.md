@@ -31,12 +31,13 @@ Full parameter reference:
 | `metric` | `"AUC"` | Optimisation target. Classification: `"AUC"`, `"AUCPR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. Minimisation direction is derived automatically. `"AUC_PR"` is a deprecated alias for `"AUCPR"`. |
 | `n_splits` | `5` | CV folds for steps 1 and 3 |
 | `n_jobs` | `-1` | Worker processes used to CV models in parallel (steps 1 and 3) and to explain row chunks in step 2's SHAP pass for model-agnostic explainers (SVC/SVR with non-linear kernels, KNN, …). `-1` uses all cores; must be non-zero. Lower it when memory rather than CPU is the constraint, or to leave headroom on a shared machine. |
-| `opt_n_splits` | `3` | CV folds inside each Optuna trial (fewer = faster) |
+| `opt_n_splits` | `3` | CV folds inside each Optuna trial (fewer = faster). Trials then train on (k−1)/k = 67% of the rows while the step-4 acceptance CV trains on 80% (`n_splits=5`), so the tuned regularisation can be slightly stronger than the final fit needs. Set `opt_n_splits=n_splits` to tune on the same fold size, at about `n_splits/opt_n_splits`× the HPO cost. |
 | `corr_threshold` | `0.7` | Feature drop threshold. A feature is removed if it exceeds this value in **any** of Pearson, Spearman, or Kendall correlation with a higher-ranked feature. |
 | `min_features` | `1` | Hard lower bound on retained features after the correlation filter |
 | `n_trials` | `50` | Optuna trial budget in step 4 |
 | `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; the best repeat is kept |
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers that support it. `"auto"` injects only when the minority-class ratio is below 0.1 |
+| `max_vif` | `None` | Step 2: after the correlation filter, drop the lowest-ranked feature whose variance inflation factor exceeds this value until none does. It catches features that are linear combinations of several retained ones, which pairwise correlation misses. `5` or `10` are common choices. |
 | `prefer_reduced_on_tie` | `False` | Step 3: when an all-features winner is statistically tied (paired folds, within one corrected SE) with a reduced-feature candidate, select the best-ranked tied reduced candidate instead. See [Preferring reduced features on ties](#preferring-reduced-features-on-ties). |
 | `select_features_in_folds` | `False` | Step 3: re-run the step-2 selector on each fold's training rows and score reduced candidates on those per-fold sets, so the default-vs-reduced comparison is unbiased. Costs about `n_splits` extra step-2 runs. See [Selecting features inside CV folds](#selecting-features-inside-cv-folds). |
 | `holdout_frac` | `0.0` | Fraction of rows set aside before step 1 and scored once at the end. `0` disables it; range `[0, 0.5]`. See [Outer holdout](#outer-holdout). |

@@ -11,6 +11,8 @@ Responsibilities:
     - Iterate features in SHAP importance order
     - Remove features that exceed the correlation threshold with a
       higher-ranked feature in ANY of the three methods
+    - Optionally remove multicollinear features (variance inflation factor) that
+      no single pairwise correlation reveals
 
 What this module does NOT do:
     - SHAP computation          → features/shap_importance.py
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional, cast
 
+import numpy as np
 import pandas as pd
 from loguru import logger
 
@@ -122,3 +125,70 @@ def remove_correlated_features(
     )
 
     return selected_features
+
+
+def variance_inflation_factors(X: pd.DataFrame) -> pd.Series:
+    """
+    Variance inflation factor of each column: 1 / (1 − R²) of regressing it (with an
+    intercept) on all other columns. inf when a column is an exact linear combination
+    of the others.
+
+    Args:
+        X: DataFrame of at least two features.
+
+    Returns:
+        pd.Series of VIF indexed by column name.
+    """
+    values = X.to_numpy(dtype=float)
+    values = values - values.mean(axis=0)
+    vifs = {}
+    for j, name in enumerate(X.columns):
+        target = values[:, j]
+        others = np.delete(values, j, axis=1)
+        coef, *_ = np.linalg.lstsq(others, target, rcond=None)
+        ss_res = float(np.sum((target - others @ coef) ** 2))
+        ss_tot = float(np.sum(target**2))
+        vifs[name] = np.inf if ss_res <= 1e-12 * ss_tot else ss_tot / ss_res
+    return pd.Series(vifs, dtype=float)
+
+
+def remove_high_vif_features(
+    X: pd.DataFrame,
+    features: list[str],
+    max_vif: float,
+) -> list[str]:
+    """
+    Drop multicollinear features until every remaining VIF is at most max_vif.
+
+    The pairwise filter (remove_correlated_features) cannot see a feature that is a
+    linear combination of several retained ones while being only moderately correlated
+    with each. Here, while any VIF exceeds max_vif, the lowest-ranked feature among
+    those above it is dropped and VIFs are recomputed — so importance still decides
+    which member of a collinear group survives. VIF is a linear (Pearson-type) measure.
+
+    Args:
+        X:        DataFrame holding at least the columns in features.
+        features: Candidate features in descending importance order.
+        max_vif:  Largest acceptable VIF (> 1; 5 and 10 are common choices).
+
+    Returns:
+        Retained features in the original importance order.
+
+    Raises:
+        ValueError: If max_vif <= 1.
+    """
+    if max_vif <= 1:
+        raise ValueError(f"max_vif must be > 1, got {max_vif}")
+    kept = list(features)
+    dropped: list[str] = []
+    while len(kept) > 1:
+        vif = variance_inflation_factors(X[kept])
+        above = [f for f in kept if vif[f] > max_vif]
+        if not above:
+            break
+        worst = above[-1]  # lowest importance among the multicollinear features
+        kept.remove(worst)
+        dropped.append(worst)
+    if dropped:
+        logger.info(f"VIF filter (max_vif={max_vif}): removed {len(dropped)} multicollinear feature(s): {dropped}")
+    return kept
