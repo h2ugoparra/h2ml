@@ -32,6 +32,8 @@ from sklearn.base import clone
 from sklearn.preprocessing import StandardScaler
 
 from h2ml.core.base import TaskType
+from h2ml.core.feature_store import PipelineData
+from h2ml.evaluation.applicability import ApplicabilityDomain, build_applicability_domain
 
 # Calibration types live in evaluation/conformal.py. They are imported here both for use
 # by the factory helpers below and so that joblib pickles written before the move — which
@@ -75,6 +77,9 @@ class FinalModel:
         variogram:        Fitted VariogramResult describing the spatial autocorrelation
                           range of the model's residuals (diagnostic only; not used in
                           prediction). None when coords were absent or fitting failed.
+        applicability:    Area of applicability (Meyer & Pebesma 2021) fitted on the CV rows;
+                          powers area_of_applicability(). None when no CV folds were
+                          available or fitting failed.
 
     Example:
         >>> final = result.build_final_model()
@@ -94,6 +99,7 @@ class FinalModel:
     y_transform: Optional[str] = None
     local_conformal: Optional[LocalConformalCalibration] = field(default=None)
     variogram: Optional[Any] = field(default=None)  # VariogramResult — imported lazily
+    applicability: Optional[ApplicabilityDomain] = field(default=None)
 
     # ------------------------------------------------------------------
     # Inference
@@ -264,6 +270,34 @@ class FinalModel:
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
+
+    def area_of_applicability(self, X: pd.DataFrame | np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Dissimilarity index and area-of-applicability mask for new rows.
+
+        DI is the distance to the nearest training row in importance-weighted,
+        standardised feature space, relative to the mean distance between training
+        rows. Rows with DI above the threshold calibrated on the CV folds lie in
+        feature combinations the model never learned from: their predictions and
+        conformal intervals are not backed by the CV estimate.
+
+        Args:
+            X: DataFrame (columns aligned by name) or ndarray in feature_names order.
+
+        Returns:
+            (di, inside) — float DI per row and a boolean mask, True inside the AOA.
+
+        Raises:
+            ValueError: If the model has no applicability domain.
+        """
+        if self.applicability is None:
+            raise ValueError(
+                "No area of applicability available. Rebuild the FinalModel via result.build_final_model()."
+            )
+        if isinstance(X, pd.DataFrame):
+            X = X[self.feature_names].to_numpy()
+        di = self.applicability.dissimilarity(np.asarray(X))
+        return di, di <= self.applicability.threshold
 
     def save(self, path: str | Path) -> None:
         """Persist to *path* (single .pkl file via joblib). Parent directory is created if needed."""
@@ -564,6 +598,7 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     store = result.features_reduced if feature_stage == "reduced" else result.features
     if store is None:
         raise ValueError(f"Cannot build final model: the '{feature_stage}' feature store is missing from the result.")
+    cv_store = store  # rows the CV (and so the OOF predictions) ran on
     holdout_store = getattr(result, "holdout_store", None)
     if holdout_store is not None and getattr(result, "holdout_refit", "dev") == "all" and result.features is not None:
         # Refit on dev + holdout rows, in the winner's y-space and feature set.
@@ -641,7 +676,7 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
             time_bin_resolution=result.time_bin_resolution,
             classes=classes,
         )
-    if store.coords is not None:
+    if cv_store.coords is not None:
         oof_preds = result.oof_predictions
         oof_labels = result.oof_labels
         if oof_preds is not None and oof_labels is not None and oof_preds.ndim == 1:
@@ -651,7 +686,7 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
 
                 try:
                     variogram = autocorrelation_range(
-                        store.coords[valid],
+                        cv_store.coords[valid],
                         np.abs(oof_preds[valid] - oof_labels[valid]),
                     )
                 except Exception as e:
@@ -671,7 +706,35 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
         y_transform=result.y_transform,
         local_conformal=local_conformal,
         variogram=variogram,
+        applicability=_build_applicability(result, cv_store),
     )
+
+
+def _build_applicability(result: "PipelineResult", store: PipelineData) -> Optional[ApplicabilityDomain]:
+    """
+    Fit the area of applicability on the CV rows of the deployed feature set.
+
+    Fold ids come from the winning CV result (so a spatial run calibrates the
+    threshold on spatial folds) and feature weights from step 2's SHAP importance
+    when available. Returns None — with a warning — when it cannot be fitted.
+    """
+    from loguru import logger
+
+    cv = result.best_cv_result
+    if cv is None or not cv.folds:
+        return None
+    fold_ids = np.full(store.n_samples, -1)
+    for k, fold in enumerate(cv.folds):
+        fold_ids[fold.test_idx] = k
+    importance = getattr(result.selector, "feature_importance_", None)
+    weights = None
+    if isinstance(importance, pd.Series) and not importance.empty:
+        weights = importance.reindex(store.feature_names).fillna(0.0).to_numpy()
+    try:
+        return build_applicability_domain(store.X, store.feature_names, fold_ids, weights)
+    except ValueError as e:
+        logger.warning(f"Area of applicability skipped: {e}")
+        return None
 
 
 # ---------------------------------------------------------------------------
