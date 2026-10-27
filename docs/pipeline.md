@@ -38,6 +38,7 @@ Full parameter reference:
 | `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; the best repeat is kept |
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers that support it. `"auto"` injects only when the minority-class ratio is below 0.1 |
 | `prefer_reduced_on_tie` | `False` | Step 3: when an all-features winner is statistically tied (paired folds, within one corrected SE) with a reduced-feature candidate, select the best-ranked tied reduced candidate instead. See [Preferring reduced features on ties](#preferring-reduced-features-on-ties). |
+| `select_features_in_folds` | `False` | Step 3: re-run the step-2 selector on each fold's training rows and score reduced candidates on those per-fold sets, so the default-vs-reduced comparison is unbiased. Costs about `n_splits` extra step-2 runs. See [Selecting features inside CV folds](#selecting-features-inside-cv-folds). |
 | `holdout_frac` | `0.0` | Fraction of rows set aside before step 1 and scored once at the end. `0` disables it; range `[0, 0.5]`. See [Outer holdout](#outer-holdout). |
 | `holdout_strategy` | `"auto"` | `"auto"` — whole spatial blocks when `store.coords` is set, else random (stratified for classification). `"random"` — random even with coords. `"time"` — the latest rows by `store.times`. |
 | `holdout_refit` | `"dev"` | Rows `build_final_model()` fits on when a holdout exists: `"dev"` (the steps' rows only) or `"all"` (dev + holdout) |
@@ -138,9 +139,42 @@ recorded in `cv_warnings`, e.g.
 
 The paired SE is used rather than the classic unpaired one (std/√k of the winner's
 score) because the unpaired SE includes fold difficulty, which under spatial CV is
-large enough that almost every candidate would tie. Step 2 selects features using
-all the data, which makes the reduced stage's CV score slightly optimistic; that
-nudges toward reduced in the same direction as this rule.
+large enough that almost every candidate would tie. By default step 2 selects
+features using all the data, which makes the reduced stage's CV score slightly
+optimistic; that nudges toward reduced in the same direction as this rule.
+`select_features_in_folds=True` removes that bias.
+
+### Selecting features inside CV folds
+
+Step 2 picks the reduced feature set from SHAP importances computed on every dev row,
+including the rows step 3 then tests on. The reduced candidates' step-3 scores therefore
+reflect a feature set chosen partly on their own test folds, so `"reduced"` can beat
+`"default"` because of that leak rather than because it really generalises better.
+
+With `PipelineConfig(select_features_in_folds=True)`, step 3 re-runs the same selector
+(winning model, OOF SHAP, correlation filter) on each CV fold's **training rows only**.
+Every model's reduced candidate is then fitted and scored per fold on that fold's own
+feature subset:
+
+```python
+result = H2MLPipeline(PipelineConfig(select_features_in_folds=True)).run(store)
+result.step3_fold_features      # list per fold of the features selected on its training rows
+result.features_reduced         # the deployed set — still step 2's selection on all dev rows
+```
+
+- The reduced stage's score now estimates how well the *selection procedure* generalises,
+  which is what the default-vs-reduced choice should compare. The feature set you deploy
+  is still the one step 2 chose on all dev rows.
+- When `"reduced"` wins, step 4's acceptance CV (tuned vs untuned) also uses the per-fold
+  sets, so both sides are estimated the same way. The Optuna trials themselves still use
+  the fixed step-2 set.
+- With spatial CV, each fold's inner SHAP folds are whole blocks of the outer splitter
+  (`BlockGroupSplitter`), so the inner selection is spatially separated too.
+- Cost: one extra step-2 run per fold — about `n_splits` × step 2. That is cheap for tree
+  models (TreeExplainer) but expensive for model-agnostic SHAP (e.g. RBF SVC/SVR).
+- Comparing the sets in `step3_fold_features` with each other and with
+  `features_reduced` shows how stable the selection is. Large differences mean the
+  reduced set depends on which rows it was chosen from.
 
 ### Outer holdout
 

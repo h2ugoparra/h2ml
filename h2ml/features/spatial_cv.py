@@ -649,6 +649,52 @@ class SPCVSplitter:
 # ---------------------------------------------------------------------------
 
 
+class BlockGroupSplitter:
+    """
+    K-fold over precomputed spatial block ids: each test fold holds whole blocks.
+
+    Splits a subset of rows (e.g. an outer CV training fold) along the blocks a fitted
+    SpatialBlockSplitter / SPCVSplitter already assigned (its block_id_), so inner folds
+    stay spatially separated without re-running block construction. Blocks are shuffled
+    with random_state and dealt to folds round-robin.
+
+    Args:
+        block_ids:    (n_rows,) block id per row of the subset.
+        n_splits:     Number of folds; must not exceed the number of distinct blocks.
+        random_state: Seed for the block shuffle.
+
+    Raises:
+        ValueError: If n_splits < 2 or exceeds the number of distinct blocks.
+    """
+
+    def __init__(self, block_ids: np.ndarray, n_splits: int, random_state: Optional[int] = None):
+        self.block_ids = np.asarray(block_ids)
+        n_blocks = np.unique(self.block_ids).size
+        if not 2 <= n_splits <= n_blocks:
+            raise ValueError(f"n_splits must be in [2, {n_blocks}] (distinct blocks), got {n_splits}")
+        self.n_splits = n_splits
+        self.random_state = random_state
+
+    def get_n_splits(self, X=None, y=None, groups=None) -> int:
+        return self.n_splits
+
+    def split(
+        self,
+        X: np.ndarray,
+        y: Optional[np.ndarray] = None,
+        groups: Optional[np.ndarray] = None,
+    ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+        """Yield (train_idx, test_idx) per fold; indices are positions within the subset."""
+        if len(X) != len(self.block_ids):
+            raise ValueError(f"X has {len(X)} rows but block_ids has {len(self.block_ids)} rows.")
+        blocks = np.random.default_rng(self.random_state).permutation(np.unique(self.block_ids))
+        fold_of_block = {b: i % self.n_splits for i, b in enumerate(blocks)}
+        fold_of_row = np.array([fold_of_block[b] for b in self.block_ids])
+        all_idx = np.arange(len(self.block_ids))
+        for k in range(self.n_splits):
+            yield all_idx[fold_of_row != k], all_idx[fold_of_row == k]
+
+
 def build_splitter(
     task_type: TaskType | str,
     n_splits: int,
