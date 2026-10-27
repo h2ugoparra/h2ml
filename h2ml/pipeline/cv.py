@@ -64,6 +64,7 @@ class CrossValidator:
         coords: Optional[np.ndarray] = None,
         spatial: Optional[SpatialCVConfig] = None,
         train_target_fn: Optional[Callable] = None,
+        fold_columns: Optional[list[np.ndarray]] = None,
         _splitter=None,
         _scaled_folds: Optional[list] = None,
     ) -> CVResult:
@@ -85,6 +86,9 @@ class CrossValidator:
                          SpatialCVConfig() (block splitter, euclidean).
             train_target_fn: Fitted on and applied to each training fold's targets before
                          fit (e.g. winsorize clipping), so its statistics never see test rows.
+            fold_columns: Optional column indices into X, one array per fold — each fold
+                         fits and predicts on its own feature subset (features selected
+                         on that fold's training rows only). None uses every column.
             _splitter:   Pre-built splitter to reuse across models (internal, set by run_all).
 
         Returns:
@@ -99,6 +103,10 @@ class CrossValidator:
                 y=y,
                 coords=coords,
                 spatial=spatial,
+            )
+        if fold_columns is not None and len(fold_columns) != splitter.get_n_splits():
+            raise ValueError(
+                f"fold_columns has {len(fold_columns)} entries but the splitter yields {splitter.get_n_splits()} folds."
             )
         cv_result = CVResult(model_name=step.name, task_type=step.task_type)
 
@@ -127,6 +135,9 @@ class CrossValidator:
                 X_train, X_test = _scaled_folds[fold_id]
             else:
                 X_train, X_test = self._maybe_scale(step, X_train, X_test)
+            # Scaling is per column, so subsetting after it equals scaling the subset.
+            if fold_columns is not None:
+                X_train, X_test = X_train[:, fold_columns[fold_id]], X_test[:, fold_columns[fold_id]]
 
             # Re-instantiate with best_params if provided (optimized setting)
             fold_step = self._build_fold_model(step, best_params)
@@ -169,6 +180,7 @@ class CrossValidator:
         coords: Optional[np.ndarray] = None,
         spatial: Optional[SpatialCVConfig] = None,
         train_target_fn: Optional[Callable] = None,
+        fold_columns: Optional[list[np.ndarray]] = None,
         _splitter: Any = None,
     ) -> list[CVResult]:
         """
@@ -183,6 +195,7 @@ class CrossValidator:
             y_true:      Original-scale target array for back-transformed metrics.
             inverse_fn:  Callable to back-transform predictions before metric computation.
             train_target_fn: Per-fold training-target step forwarded to run().
+            fold_columns: Per-fold column indices forwarded to run().
             _splitter:   Pre-built splitter to reuse across pipeline steps. When provided,
                          splitter construction is skipped entirely.
         """
@@ -229,6 +242,7 @@ class CrossValidator:
                 coords=coords,
                 spatial=spatial,
                 train_target_fn=train_target_fn,
+                fold_columns=fold_columns,
                 _splitter=prebuilt_splitter,
                 _scaled_folds=sf,
             )

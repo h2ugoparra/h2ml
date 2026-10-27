@@ -38,6 +38,7 @@ from h2ml.evaluation.metrics import (
 )
 from h2ml.evaluation.ranking import KEY_COLS, ranking_robustness, ranking_warnings
 from h2ml.features.selector import FeatureSelector
+from h2ml.features.spatial_cv import BlockGroupSplitter
 from h2ml.optimization.optimizer import run_study
 from h2ml.pipeline.cv import CrossValidator, CVResult
 from h2ml.pipeline.holdout import (
@@ -156,6 +157,13 @@ class PipelineConfig:
                              favouring the simpler feature set). Skipped when the reduced
                              set kept every feature. Each switch is logged and recorded in
                              cv_warnings. Default: False.
+        select_features_in_folds: (Step 3) Re-run the step-2 selector on each CV fold's
+                             training rows and score the reduced candidates on those
+                             per-fold feature sets, so the default-vs-reduced comparison
+                             is not biased by a feature set chosen on every row. Step 4's
+                             acceptance CV uses the same per-fold sets when the reduced
+                             stage won. The deployed feature set is still step 2's.
+                             Costs about n_splits extra step-2 runs. Default: False.
 
         holdout_frac:        Fraction of rows set aside before step 1 and scored once on
                              the final selected configuration — an estimate no selection
@@ -195,6 +203,7 @@ class PipelineConfig:
     knn_neighbors: int = 15
     handle_imbalance: bool | Literal["auto"] = False
     prefer_reduced_on_tie: bool = False
+    select_features_in_folds: bool = False
     holdout_frac: float = 0.0
     holdout_strategy: Literal["auto", "random", "time"] = "auto"
     holdout_refit: Literal["dev", "all"] = "dev"
@@ -328,6 +337,9 @@ class PipelineResult:
         metric:            Short selection metric name, e.g. "AUC" or "R2".
         splitter:             Splitter built once in step 1 and reused in steps 3-4.
                               Not persisted.
+        step3_fold_features:  Feature names selected on each step-3 CV fold's training rows
+                              (select_features_in_folds=True), indexed like the splitter's
+                              folds; None otherwise.
         holdout_store:        Raw rows set aside by holdout_frac; None without a holdout.
                               features then holds only the dev rows steps 1–4 ran on.
         holdout_idx:          Row indices of holdout_store in the store passed to run().
@@ -387,6 +399,8 @@ class PipelineResult:
     metric: Optional[str] = None
     # Splitter built once in step 1 and reused in steps 3 and 4 (not persisted)
     splitter: Any = field(default=None, repr=False, compare=False)
+    # Per-fold feature sets from select_features_in_folds (step 3)
+    step3_fold_features: Optional[list[list[str]]] = None
     # Outer holdout — rows no selection step has seen, scored once on the final configuration
     holdout_store: Optional[PipelineData] = field(default=None, repr=False)
     holdout_idx: Optional[np.ndarray] = field(default=None, repr=False)
@@ -934,20 +948,7 @@ class H2MLPipeline:
         else:
             fit_store = result.features
 
-        best_model = self._get_model(result.best_model_name)
-        selector = FeatureSelector(
-            step=best_model,
-            task_type=self.config.task_type,
-            corr_threshold=self.config.corr_threshold,
-            min_features=self.config.min_features,
-            use_oof=True,
-            n_splits=self.config.n_splits,
-            random_state=self.config.random_state,
-            verbose=self.config.verbose,
-            train_target_fn=get_train_target_fn(fit_store.y_transform),
-            n_jobs=self.config.n_jobs,
-            _splitter=result.splitter,
-        )
+        selector = self._make_selector(result.best_model_name, fit_store, result.splitter)
         result.selector = selector
         result.features_reduced = selector.fit_transform(fit_store)
         return result
@@ -976,16 +977,32 @@ class H2MLPipeline:
         metadata = self._metadata_with(stage="reduced")
         if transform_name:
             metadata = replace(metadata, y_transform=transform_name)
+        cv_store, fold_columns = reduced_store, None
+        if self.config.select_features_in_folds:
+            # Score the selection procedure, not a set chosen on every row: each fold
+            # runs on the full features with the subset selected on its training rows.
+            cv_store = self._full_store(result, transform_stores)
+            if result.splitter is None:  # not persisted — rebuilt as step 1 built it
+                result.splitter = self._cv._build_splitter(
+                    self.config.task_type,
+                    X=cv_store.X,
+                    y=cv_store.y,
+                    coords=cv_store.coords,
+                    spatial=self.config.spatial_cv,
+                )
+            result.step3_fold_features = self._fold_feature_sets(result, cv_store)
+            fold_columns = self._fold_columns(cv_store, result.step3_fold_features)
         cv_results = self._cv.run_all(
             self.models,
-            reduced_store.X,
-            reduced_store.y,
-            y_true=reduced_store.y_true,
+            cv_store.X,
+            cv_store.y,
+            y_true=cv_store.y_true,
             inverse_fn=inverse_fn,
-            coords=reduced_store.coords,
+            coords=cv_store.coords,
             spatial=self.config.spatial_cv,
             n_jobs=self.config.n_jobs,
-            train_target_fn=get_train_target_fn(reduced_store.y_transform),
+            train_target_fn=get_train_target_fn(cv_store.y_transform),
+            fold_columns=fold_columns,
             _splitter=result.splitter,
         )
         result.step3_reduced_stores = {transform_name: reduced_store}
@@ -1103,6 +1120,14 @@ class H2MLPipeline:
         metadata = self._metadata_with(stage="optimized")
         if result.y_transform:
             metadata = replace(metadata, y_transform=result.y_transform)
+        # With per-fold feature sets the reduced stage's step-3 score came from them, so
+        # the acceptance CV must use them too — otherwise the tuned params would be
+        # compared against a baseline estimated a different way.
+        fold_columns = None
+        if result.step3_fold_features is not None and result.best_feature_stage == "reduced":
+            full_store = self._full_store(result, transform_stores)
+            X = full_store.X
+            fold_columns = self._fold_columns(full_store, result.step3_fold_features)
         cv_result = self._cv.run(
             best_model,
             X,
@@ -1113,6 +1138,7 @@ class H2MLPipeline:
             coords=store_for_opt.coords,
             spatial=self.config.spatial_cv,
             train_target_fn=train_target_fn,
+            fold_columns=fold_columns,
             _splitter=result.splitter,
         )
         result.step4_cv_result = cv_result
@@ -1206,11 +1232,7 @@ class H2MLPipeline:
     ) -> PipelineData:
         """Resolve the correct PipelineData for step-4 optimization."""
         # Pick the full or reduced store depending on winning stage
-        if transform_stores and result.y_transform:
-            full_store = transform_stores[result.y_transform]
-        else:
-            assert result.features is not None
-            full_store = result.features
+        full_store = self._full_store(result, transform_stores)
 
         if result.best_stage == "reduced":
             assert result.selector is not None
@@ -1219,6 +1241,65 @@ class H2MLPipeline:
                 return result.step3_reduced_stores[key]
             return result.selector.transform(full_store)
         return full_store
+
+    def _full_store(
+        self,
+        result: PipelineResult,
+        transform_stores: Optional[dict[str, PipelineData]],
+    ) -> PipelineData:
+        """All-features store in the winning y-space (the store step 2 selected on)."""
+        if transform_stores and result.y_transform:
+            return transform_stores[result.y_transform]
+        assert result.features is not None
+        return result.features
+
+    def _make_selector(self, model_name: Optional[str], store: PipelineData, splitter: Any) -> FeatureSelector:
+        """Step-2 FeatureSelector for model_name; splitter drives its OOF SHAP folds."""
+        return FeatureSelector(
+            step=self._get_model(model_name),
+            task_type=self.config.task_type,
+            corr_threshold=self.config.corr_threshold,
+            min_features=self.config.min_features,
+            use_oof=True,
+            n_splits=self.config.n_splits,
+            random_state=self.config.random_state,
+            verbose=self.config.verbose,
+            train_target_fn=get_train_target_fn(store.y_transform),
+            n_jobs=self.config.n_jobs,
+            _splitter=splitter,
+        )
+
+    def _fold_feature_sets(self, result: PipelineResult, store: PipelineData) -> list[list[str]]:
+        """
+        Re-run the step-2 selector on each CV fold's training rows.
+
+        Spatial runs split each training fold along the outer splitter's blocks
+        (BlockGroupSplitter), so the inner OOF SHAP folds stay spatially separated;
+        otherwise the selector's own stratified/plain KFold is used.
+        """
+        block_ids = getattr(result.splitter, "block_id_", None)
+        fold_sets: list[list[str]] = []
+        for k, (train_idx, _) in enumerate(result.splitter.split(store.X, store.y)):
+            inner = None
+            if block_ids is not None:
+                n_blocks = np.unique(block_ids[train_idx]).size
+                if n_blocks >= 2:
+                    inner = BlockGroupSplitter(
+                        block_ids[train_idx],
+                        n_splits=min(self.config.n_splits, n_blocks),
+                        random_state=self.config.random_state,
+                    )
+            selector = self._make_selector(result.best_model_name, store, inner)
+            selector.fit(store.take(train_idx))
+            fold_sets.append(list(selector.selected_features_))
+            self._log(f"  Fold {k}: {selector.n_selected}/{store.n_features} features selected on its training rows")
+        return fold_sets
+
+    @staticmethod
+    def _fold_columns(store: PipelineData, fold_features: list[list[str]]) -> list[np.ndarray]:
+        """Column indices into store.X for each fold's feature names."""
+        index = {name: i for i, name in enumerate(store.feature_names)}
+        return [np.array([index[f] for f in names]) for names in fold_features]
 
     def _start(self, store: PipelineData) -> tuple[PipelineResult, PipelineData]:
         """Validate store, set aside the holdout rows, and return a fresh result plus the dev rows."""

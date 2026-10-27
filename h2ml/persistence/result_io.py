@@ -74,6 +74,7 @@ _SAVED_FIELDS = frozenset(
         "metric",
         "holdout_strategy",
         "holdout_refit",
+        "step3_fold_features",
         # parquet
         "step1_fold_df",
         "step1_agg_df",
@@ -152,6 +153,7 @@ def save_result(result, path: str | Path) -> None:
             "metric": result.metric,
             "holdout_strategy": result.holdout_strategy,
             "holdout_refit": result.holdout_refit,
+            "step3_fold_features": result.step3_fold_features,
         },
         root / "metadata.json",
     )
@@ -255,6 +257,7 @@ def load_result(path: str | Path):
         holdout_cv_result=_load_pkl(root / "holdout_cv_result.pkl"),
         holdout_strategy=meta.get("holdout_strategy"),
         holdout_refit=meta.get("holdout_refit", "dev"),
+        step3_fold_features=meta.get("step3_fold_features"),
         best_model_name=meta.get("best_model_name"),
         best_model_value=meta.get("best_model_value"),
         best_model_std=meta.get("best_model_std"),
