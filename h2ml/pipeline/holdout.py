@@ -68,9 +68,14 @@ def split_holdout(
     elif resolved == "spatial":
         from h2ml.features.spatial_cv import build_splitter
 
+        n_splits = max(2, round(1 / frac))
+        # Labels the splitter's own debug lines, which step 1 repeats for its CV splitter on the dev rows.
+        logger.debug(
+            f"Holdout splitter: {n_splits} spatial folds on all {n} rows; the one closest to {frac:.0%} is set aside."
+        )
         splitter = build_splitter(
             task_type,
-            n_splits=max(2, round(1 / frac)),
+            n_splits=n_splits,
             random_state=random_state,
             coords=store.coords,
             X=store.X,
