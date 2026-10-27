@@ -79,6 +79,9 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 | `n_hpo_repeats` | `1` | Independent HPO repeats; trials divided evenly, best repeat kept |
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers with `supports_class_weight=True`; `"auto"` only when minority-class ratio < 0.1, resolved per run |
 | `prefer_reduced_on_tie` | `False` | Step 3 1-SE rule: if the winner is `"default"` stage and a reduced candidate is `Indistinguishable` from it (paired folds, Nadeau–Bengio SE), select the best-ranked such reduced candidate; switch recorded in `cv_warnings` |
+| `holdout_frac` | `0.0` | Rows set aside before step 1, scored once on the final config (`result.holdout_df`); steps run on the rest. Conformal then uses holdout residuals and local conformal is skipped |
+| `holdout_strategy` | `"auto"` | `"auto"` (spatial blocks if coords, else random/stratified), `"random"`, `"time"` (latest rows by `store.times`) |
+| `holdout_refit` | `"dev"` | `build_final_model` fits on `"dev"` rows only, or `"all"` (dev + holdout) |
 | `spatial_cv_method` | `"spcv"` | Spatial CV strategy: `"block"` or `"spcv"` (ignored when `store.coords` is `None`) |
 | `spatial_cv_metric` | `"euclidean"` | Distance metric: `"euclidean"` or `"haversine"` |
 | `time_bin_resolution` | `"month"` | Temporal bin granularity for spatial CV and local conformal calibration: `"month"` or `"season"` |
@@ -90,7 +93,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 
 ## PipelineResult
 
-Key fields: `best_model_name`, `best_stage`, `best_feature_stage`, `best_base_estimator` (unfitted winner as CV ran it), `best_params` (overrides set on top of it), `y_transform`, `metric`, `cv_type`, `cv_warnings`, `splitter`, `step3_reduced_stores`. Note: `splitter` and `step3_reduced_stores` are not persisted — both are `None` after `PipelineResult.load()`.
+Key fields: `best_model_name`, `best_stage`, `best_feature_stage`, `best_base_estimator` (unfitted winner as CV ran it), `best_params` (overrides set on top of it), `y_transform`, `metric`, `cv_type`, `cv_warnings`, `splitter`, `step3_reduced_stores`, `holdout_store`/`holdout_idx`/`holdout_df` (with a holdout, `features` holds only the dev rows). Note: `splitter` and `step3_reduced_stores` are not persisted — both are `None` after `PipelineResult.load()`.
 
 ```python
 result.summary(metric=None, ascending=False)   # combined agg DataFrame across all stages

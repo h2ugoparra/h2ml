@@ -15,6 +15,8 @@ Step 4 is skipped when the winning model has no enabled search space: `opt_enabl
 
 If step 4 runs but does not improve on the step 3 baseline, `best_stage` stays at `"default"` or `"reduced"` and `best_params` holds only fixed overrides — no HPO benefit was found.
 
+With `holdout_frac > 0`, rows are set aside before step 1, all four steps run on the remaining rows, and the final configuration is scored once on the held-out rows — see [Outer holdout](#outer-holdout).
+
 `best_params` are overrides on top of the winning model's own estimator, not full constructor kwargs. Optuna trials, the step-4 CV and `build_final_model()` all build the model as `clone(winner_estimator).set_params(**best_params)`, so arguments you passed to the estimator (and custom model names or estimators outside the registry) carry through to the deployed model. The unfitted winner is stored as `result.best_base_estimator`.
 
 ---
@@ -36,6 +38,9 @@ Full parameter reference:
 | `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; the best repeat is kept |
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers that support it. `"auto"` injects only when the minority-class ratio is below 0.1 |
 | `prefer_reduced_on_tie` | `False` | Step 3: when an all-features winner is statistically tied (paired folds, within one corrected SE) with a reduced-feature candidate, select the best-ranked tied reduced candidate instead. See [Preferring reduced features on ties](#preferring-reduced-features-on-ties). |
+| `holdout_frac` | `0.0` | Fraction of rows set aside before step 1 and scored once at the end. `0` disables it; range `[0, 0.5]`. See [Outer holdout](#outer-holdout). |
+| `holdout_strategy` | `"auto"` | `"auto"` — whole spatial blocks when `store.coords` is set, else random (stratified for classification). `"random"` — random even with coords. `"time"` — the latest rows by `store.times`. |
+| `holdout_refit` | `"dev"` | Rows `build_final_model()` fits on when a holdout exists: `"dev"` (the steps' rows only) or `"all"` (dev + holdout) |
 | `random_state` | `42` | Global seed for folds, models, and Optuna |
 | `verbose` | `False` | Log step-by-step progress |
 | `time_bin_resolution` | `"month"` | Time bin granularity for compound (spatial block × time) conformal cells: `"month"` (bins 1–12) or `"season"` (0=DJF, 1=MAM, 2=JJA, 3=SON). Only used when `store.times` is provided. |
@@ -104,6 +109,7 @@ change you opted into. Each is also logged when it is raised.
 | the metric name, e.g. `AUC with minority…`, `R2: …` | `[metric]` | step 1 | The data makes the configured metric unreliable — AUC under class imbalance, single-class test folds for AUC/AUCPR, uneven fold prevalence for AUCPR, F1 with class weights, low-variance folds for R2, heavy tails for RMSE, zero inflation for MAE. The metric is never changed. |
 | `step 1:` / `step 3:` | `[ranking]` | steps 1, 3 | Candidates tied with the winner on paired folds, or the winner ranking below 1st on the counterpart-family metric (AUC/AUCPR ↔ Brier, LogLoss/Brier ↔ AUC, F1 → AUC, R2/RMSE ↔ MAE) |
 | `step 3: prefer_reduced_on_tie →` | *(info log)* | step 3 | The tie-break switched the selection to a reduced-feature candidate |
+| `[holdout]` | `[CV]` (end of `run()`) | after step 3 or 4 | The holdout score is worse than the CV score by more than 2 fold SDs — the CV estimate is likely optimistic, or the holdout rows differ from the dev rows |
 
 ### Preferring reduced features on ties
 
@@ -136,6 +142,46 @@ large enough that almost every candidate would tie. Step 2 selects features usin
 all the data, which makes the reduced stage's CV score slightly optimistic; that
 nudges toward reduced in the same direction as this rule.
 
+### Outer holdout
+
+Every step selects on the same CV folds: models × transforms in step 1, features in
+step 2, the stage in step 3, hyperparameters in step 4. The winner's CV score is
+therefore the best of many noisy estimates and tends to be optimistic. Setting
+`holdout_frac` (0.2 is a sensible start) gives one score no selection step has seen:
+
+```python
+config = PipelineConfig(holdout_frac=0.2)          # holdout_strategy="auto"
+result = H2MLPipeline(config).run(store)
+
+result.features.n_samples       # dev rows — steps 1–4 ran on these only
+result.holdout_store            # raw held-out rows (PipelineData)
+result.holdout_idx              # their row indices in `store`
+result.holdout_strategy         # "spatial", "random" or "time"
+result.holdout_df               # holdout metrics, same *_Mean columns as the agg frames
+result.summary()                # includes a "holdout" row
+```
+
+The final configuration (model, y-transform, feature stage, `best_params`) is fitted
+on the dev rows and scored on the holdout. Scaling, winsorize clipping and inverse
+transforms are applied as in CV. The gap between `result.best_model_value` and the
+holdout score shows how much selection inflated the CV score. With a holdout of
+n rows, the score itself has sampling noise of roughly 1/√n, so read a small gap
+as "no evidence of optimism" rather than as an exact correction.
+
+- **Spatial data** — `"auto"` holds out whole blocks of the pipeline's spatial splitter
+  (the fold closest to `holdout_frac` of `round(1 / holdout_frac)` folds), so held-out
+  rows are not neighbours of training rows.
+- **Forecasting** — `holdout_strategy="time"` holds out the latest rows by
+  `store.times`, testing prediction forward in time, which spatial CV does not.
+- **Partial runs** — every entry point sets the holdout aside; `run_step1_to_step3()`,
+  `run_from_step3()` and `run_step4_only()` score it when they finish. Resuming keeps
+  the original split because `result.features` already holds only the dev rows.
+- **Final model** — conformal calibration uses the holdout residuals (split conformal),
+  and local conformal calibration is skipped. With the default `holdout_refit="dev"`,
+  the holdout score and interval coverage describe the deployed model exactly;
+  `holdout_refit="all"` refits on dev + holdout for more data, after which both are
+  approximate.
+
 ### Per-step data
 
 ```python
@@ -150,7 +196,7 @@ result.step4_agg_df           # mean/std, winning model, step 4
 ### Feature selection
 
 ```python
-result.features               # PipelineData — full feature set
+result.features               # PipelineData — full feature set (dev rows only with a holdout)
 result.features_reduced       # PipelineData — after step 2 selection
 result.selector               # FeatureSelector (fitted)
 result.selector.importance_summary()   # SHAP importances as DataFrame

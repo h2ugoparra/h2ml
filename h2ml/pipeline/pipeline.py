@@ -40,6 +40,14 @@ from h2ml.evaluation.ranking import KEY_COLS, ranking_robustness, ranking_warnin
 from h2ml.features.selector import FeatureSelector
 from h2ml.optimization.optimizer import run_study
 from h2ml.pipeline.cv import CrossValidator, CVResult
+from h2ml.pipeline.holdout import (
+    HOLDOUT_REFITS,
+    HOLDOUT_STRATEGIES,
+    FixedSplit,
+    concat_stores,
+    split_holdout,
+    stage_store,
+)
 from h2ml.preprocessing.transform_stores import build_transform_stores
 from h2ml.preprocessing.transforms import get_train_target_fn
 from h2ml.utils.registry import build_models
@@ -148,6 +156,22 @@ class PipelineConfig:
                              favouring the simpler feature set). Skipped when the reduced
                              set kept every feature. Each switch is logged and recorded in
                              cv_warnings. Default: False.
+
+        holdout_frac:        Fraction of rows set aside before step 1 and scored once on
+                             the final selected configuration — an estimate no selection
+                             step has seen. Steps 1–4 run on the remaining (dev) rows. With
+                             a holdout, conformal calibration uses the holdout residuals
+                             and local conformal calibration is skipped. Range [0, 0.5];
+                             0 disables it. Default: 0.0.
+        holdout_strategy:    How holdout rows are chosen. "auto" — whole spatial blocks
+                             when store.coords is set, else random (stratified for
+                             classification). "random" — random even with coords. "time" —
+                             the latest rows by store.times. Default: "auto".
+        holdout_refit:       Rows build_final_model fits on when a holdout exists. "dev" —
+                             the dev rows only, so the holdout score and conformal coverage
+                             describe the deployed model exactly. "all" — dev + holdout
+                             rows; more data, but both are then approximate.
+                             Default: "dev".
     """
 
     task_type: TaskType | str = TaskType.CLASSIFICATION
@@ -171,6 +195,9 @@ class PipelineConfig:
     knn_neighbors: int = 15
     handle_imbalance: bool | Literal["auto"] = False
     prefer_reduced_on_tie: bool = False
+    holdout_frac: float = 0.0
+    holdout_strategy: Literal["auto", "random", "time"] = "auto"
+    holdout_refit: Literal["dev", "all"] = "dev"
 
     def __post_init__(self):
         # Accept the string "classification" / "regression" so callers need not import TaskType.
@@ -213,6 +240,12 @@ class PipelineConfig:
             raise ValueError(f"spatial_cv_method must be 'block' or 'spcv', got {self.spatial_cv_method!r}")
         if not (isinstance(self.handle_imbalance, bool) or self.handle_imbalance == "auto"):
             raise ValueError(f"handle_imbalance must be True, False or 'auto', got {self.handle_imbalance!r}")
+        if not 0 <= self.holdout_frac <= 0.5:
+            raise ValueError(f"holdout_frac must be in [0, 0.5], got {self.holdout_frac}")
+        if self.holdout_strategy not in HOLDOUT_STRATEGIES:
+            raise ValueError(f"holdout_strategy must be one of {HOLDOUT_STRATEGIES}, got {self.holdout_strategy!r}")
+        if self.holdout_refit not in HOLDOUT_REFITS:
+            raise ValueError(f"holdout_refit must be one of {HOLDOUT_REFITS}, got {self.holdout_refit!r}")
         if not isinstance(self.prefer_reduced_on_tie, bool):
             raise ValueError(f"prefer_reduced_on_tie must be True or False, got {self.prefer_reduced_on_tie!r}")
 
@@ -295,6 +328,16 @@ class PipelineResult:
         metric:            Short selection metric name, e.g. "AUC" or "R2".
         splitter:             Splitter built once in step 1 and reused in steps 3-4.
                               Not persisted.
+        holdout_store:        Raw rows set aside by holdout_frac; None without a holdout.
+                              features then holds only the dev rows steps 1–4 ran on.
+        holdout_idx:          Row indices of holdout_store in the store passed to run().
+        holdout_strategy:     Resolved holdout strategy: "spatial", "random" or "time".
+        holdout_refit:        "dev" or "all" — rows build_final_model fits on (from
+                              PipelineConfig.holdout_refit).
+        holdout_cv_result:    One-fold CVResult: the final configuration fitted on the dev
+                              rows and scored on the holdout rows.
+        holdout_df:           Holdout metrics, same _Mean columns as the agg DataFrames
+                              (_Std is NaN — there is one fold).
     """
 
     # Input data
@@ -344,6 +387,13 @@ class PipelineResult:
     metric: Optional[str] = None
     # Splitter built once in step 1 and reused in steps 3 and 4 (not persisted)
     splitter: Any = field(default=None, repr=False, compare=False)
+    # Outer holdout — rows no selection step has seen, scored once on the final configuration
+    holdout_store: Optional[PipelineData] = field(default=None, repr=False)
+    holdout_idx: Optional[np.ndarray] = field(default=None, repr=False)
+    holdout_strategy: Optional[str] = None
+    holdout_refit: str = "dev"
+    holdout_cv_result: Optional[CVResult] = field(default=None, repr=False)
+    holdout_df: Optional[pd.DataFrame] = None
     # Transient cache — populated on first call to shap_summary_plot / shap_dependence
     # Not persisted (result_io.py enumerates fields explicitly).
     _final_shap_cache: Optional[tuple] = field(default=None, repr=False, compare=False, init=False)
@@ -395,7 +445,8 @@ class PipelineResult:
 
     def summary(self, metric: Optional[str] = None, ascending: bool = False) -> pd.DataFrame:
         """
-        Combined agg DataFrame across all completed stages.
+        Combined agg DataFrame across all completed stages, plus a "holdout" row
+        when a holdout was scored.
 
         Args:
             metric:    Column name to sort by (e.g. "AUC_Test_Mean"). When None,
@@ -413,6 +464,7 @@ class PipelineResult:
             (self.step1_agg_df, "default"),
             (self.step3_agg_df, "reduced"),
             (self.step4_agg_df, "optimized"),
+            (self.holdout_df, "holdout"),
         ]:
             if agg_df is not None:
                 row = agg_df.copy()
@@ -589,14 +641,13 @@ class H2MLPipeline:
         Returns:
             PipelineResult with all four steps completed.
         """
-        self._validate_store(store)
-        self._resolve_class_weights(store.y)
-        result = self._new_result(store)
+        result, store = self._start(store)
         transform_stores = self._build_transform_stores(store, transforms)
         result = self._run_step1(result, transform_stores)
         result = self._run_step2(result, transform_stores)
         result = self._run_step3(result, transform_stores)
         result = self._run_step4(result, transform_stores)
+        result = self._score_holdout(result)
         self._log_summary(result)
         return result
 
@@ -616,13 +667,9 @@ class H2MLPipeline:
         Returns:
             PipelineResult with step 1 completed.
         """
-        self._validate_store(store)
-        self._resolve_class_weights(store.y)
+        result, store = self._start(store)
         transform_stores = self._build_transform_stores(store, transforms)
-        return self._run_step1(
-            self._new_result(store),
-            transform_stores,
-        )
+        return self._run_step1(result, transform_stores)
 
     def run_step1_to_step2(
         self,
@@ -636,10 +683,8 @@ class H2MLPipeline:
         Returns:
             PipelineResult with steps 1-2 completed.
         """
-        self._validate_store(store)
-        self._resolve_class_weights(store.y)
+        result, store = self._start(store)
         transform_stores = self._build_transform_stores(store, transforms)
-        result = self._new_result(store)
         result = self._run_step1(result, transform_stores)
         result = self._run_step2(result, transform_stores)
         return result
@@ -658,14 +703,12 @@ class H2MLPipeline:
         Returns:
             PipelineResult with steps 1-3 completed (no HPO).
         """
-        self._validate_store(store)
-        self._resolve_class_weights(store.y)
+        result, store = self._start(store)
         transform_stores = self._build_transform_stores(store, transforms)
-        result = self._new_result(store)
         result = self._run_step1(result, transform_stores)
         result = self._run_step2(result, transform_stores)
         result = self._run_step3(result, transform_stores)
-        return result
+        return self._score_holdout(result)
 
     def run_from_step3(
         self,
@@ -701,7 +744,7 @@ class H2MLPipeline:
         transform_stores = self._rebuild_transform_stores(result, transform_stores)
         result = self._run_step3(result, transform_stores)
         result = self._run_step4(result, transform_stores)
-        return result
+        return self._score_holdout(result)
 
     def run_step4_only(
         self,
@@ -750,7 +793,8 @@ class H2MLPipeline:
         self._resolve_class_weights(result.features.y)
         result.class_weight_balanced = self._class_weight_active
         transform_stores = self._rebuild_transform_stores(result, transform_stores)
-        return self._run_step4(result, transform_stores)
+        result = self._run_step4(result, transform_stores)
+        return self._score_holdout(result)
 
     # ------------------------------------------------------------------
     # Step implementations
@@ -1176,6 +1220,31 @@ class H2MLPipeline:
             return result.selector.transform(full_store)
         return full_store
 
+    def _start(self, store: PipelineData) -> tuple[PipelineResult, PipelineData]:
+        """Validate store, set aside the holdout rows, and return a fresh result plus the dev rows."""
+        self._validate_store(store)
+        holdout_store, holdout_idx, holdout_strategy = None, None, None
+        if self.config.holdout_frac > 0:
+            dev_idx, holdout_idx, holdout_strategy = split_holdout(
+                store,
+                self.config.task_type,
+                frac=self.config.holdout_frac,
+                strategy=self.config.holdout_strategy,
+                random_state=self.config.random_state,
+                spatial=self.config.spatial_cv,
+            )
+            holdout_store = store.take(holdout_idx)
+            store = store.take(dev_idx)
+            self._log(
+                f"Holdout ({holdout_strategy}): {holdout_idx.size}/{holdout_idx.size + dev_idx.size} rows set aside"
+            )
+        self._resolve_class_weights(store.y)
+        result = self._new_result(store)
+        result.holdout_store = holdout_store
+        result.holdout_idx = holdout_idx
+        result.holdout_strategy = holdout_strategy
+        return result, store
+
     def _new_result(self, store: PipelineData) -> PipelineResult:
         """Build a fresh PipelineResult seeded with store and CV metadata from config."""
         return PipelineResult(
@@ -1184,7 +1253,64 @@ class H2MLPipeline:
             spatial_cv_metric=self.config.spatial_cv_metric,
             time_bin_resolution=self.config.time_bin_resolution,
             class_weight_balanced=self._class_weight_active,
+            holdout_refit=self.config.holdout_refit,
         )
+
+    def _score_holdout(self, result: PipelineResult) -> PipelineResult:
+        """
+        Fit the final configuration on the dev rows and score it once on the holdout rows.
+
+        Reuses CrossValidator.run with a one-fold split over dev + holdout, so scaling,
+        per-fold winsorize clipping and inverse transforms match the CV runs exactly.
+        No-op without a holdout. Adds a [holdout] warning when the holdout score is worse
+        than the CV score by more than two fold standard deviations.
+        """
+        if result.holdout_store is None:
+            return result
+        assert result.features is not None and result.best_model_value is not None
+        feature_stage = result.best_feature_stage or result.best_stage
+        reduced_names = (
+            result.features_reduced.feature_names
+            if feature_stage == "reduced" and result.features_reduced is not None
+            else None
+        )
+        store = stage_store(
+            concat_stores(result.features, result.holdout_store),
+            result.y_transform,
+            reduced_names,
+        )
+        cv_result = self._cv.run(
+            self._get_model(result.best_model_name),
+            store.X,
+            store.y,
+            best_params=result.best_params,
+            y_true=store.y_true,
+            inverse_fn=self._get_inverse_fn(store),
+            train_target_fn=get_train_target_fn(store.y_transform),
+            _splitter=FixedSplit(result.features.n_samples, store.n_samples),
+        )
+        if not cv_result.folds:
+            result.cv_warnings.append("[holdout] Fitting the final configuration on the dev rows failed.")
+            return result
+
+        result.holdout_cv_result = cv_result
+        metadata = self._metadata_with(stage="holdout")
+        if result.y_transform:
+            metadata = replace(metadata, y_transform=result.y_transform)
+        result.holdout_df = aggregate_metrics(compute_metrics_all([cv_result], metadata=metadata), group_by_stage=False)
+
+        holdout_value = float(result.holdout_df.iloc[0][self.config.metric_col])
+        cv_value, cv_std = result.best_model_value, result.best_model_std
+        self._log(f"  Holdout {self.config.metric}={holdout_value:.4f} (CV {cv_value:.4f})")
+        if cv_std is not None and np.isfinite(cv_std):
+            gap = holdout_value - cv_value if self.config.minimize_metric else cv_value - holdout_value
+            if gap > 2 * cv_std:
+                result.cv_warnings.append(
+                    f"[holdout] {self.config.metric} on the holdout ({holdout_value:.4f}) is worse than the "
+                    f"CV estimate ({cv_value:.4f} ± {cv_std:.4f}) by more than 2 fold SDs — the CV score "
+                    "is likely optimistic (selection bias) or the holdout differs from the dev rows."
+                )
+        return result
 
     def _validate_store(self, store: PipelineData) -> None:
         """

@@ -129,6 +129,21 @@ class PipelineData:
             times=self.times,
         )
 
+    def take(self, idx: np.ndarray) -> "PipelineData":
+        """Return a new PipelineData with only the rows at idx.
+
+        X, y, y_true, coords and times are subset together; features and y_transform are kept.
+        """
+        return PipelineData(
+            X=self.X[idx],
+            feature_names=list(self.feature_names),
+            y=self.y[idx],
+            y_true=self.y_true[idx] if self.y_true is not None else None,
+            y_transform=self.y_transform,
+            coords=self.coords[idx] if self.coords is not None else None,
+            times=self.times[idx] if self.times is not None else None,
+        )
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
