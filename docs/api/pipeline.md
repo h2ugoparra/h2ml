@@ -11,3 +11,9 @@
 ## PipelineResult
 
 ::: h2ml.pipeline.pipeline.PipelineResult
+
+## Nested CV
+
+::: h2ml.pipeline.nested.nested_cv
+
+::: h2ml.pipeline.nested.NestedCVResult

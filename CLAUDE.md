@@ -39,6 +39,8 @@ FinalModel (pipeline/final_model.py)         → predict/predict_proba + optiona
 DeltaFinalModel (pipeline/final_model.py)    → P(present) × E(count|present); built via build_delta_final_model()
 model registry (utils/registry.py)           → CLASSIFIER_REGISTRY / REGRESSOR_REGISTRY dicts of ModelEntry; build_models(task)
 optimizer (optimization/optimizer.py)        → run_study(); optimize_all() for batch use  [module functions, no class]
+nested_cv (pipeline/nested.py)              → full pipeline per outer fold, scored via _score_holdout → NestedCVResult
+                                               (folds_df, summary() optimism, selection_counts(), feature_frequency())
 ranking (evaluation/ranking.py)              → ranking_robustness() / ranking_warnings(): paired-fold + cross-metric
                                                robustness of a selection; drives prefer_reduced_on_tie
 
