@@ -182,6 +182,40 @@ as "no evidence of optimism" rather than as an exact correction.
   `holdout_refit="all"` refits on dev + holdout for more data, after which both are
   approximate.
 
+### Nested CV
+
+A holdout scores one run once. `nested_cv` runs the whole pipeline inside each of k
+outer folds and scores each run's final configuration on its outer test fold. That
+estimates how well the *procedure* generalises and shows how stable its choices are:
+
+```python
+from h2ml import nested_cv
+
+nested = nested_cv(H2MLPipeline(config), store, outer_splits=5)   # transforms=[...] for regression
+
+nested.summary()             # Outer_<metric>_Mean/_Std, Inner_<metric>_Mean, Optimism_Mean
+nested.folds_df              # per outer fold: chosen Model / Y_transform / Stage / N_features,
+                             # Inner_<metric> (the CV estimate the run reported) and outer test metrics
+nested.selection_counts()    # how often each (model, transform, stage) won
+nested.feature_frequency()   # fraction of folds whose final configuration used each feature
+nested.results               # the inner PipelineResults (outer test fold attached as their holdout)
+```
+
+- `Optimism_Mean` is sign-adjusted: positive always means the inner CV estimate was
+  too optimistic.
+- Outer folds follow the pipeline's own rules: spatial blocks when `store.coords` is set,
+  else stratified (classification) or plain KFold. Each inner run builds its own splitter
+  on the outer training rows, so no selection step sees the outer test rows.
+- Outer folds run one after another; `n_jobs` applies inside each run. The cost is about
+  `outer_splits` × one `run()`.
+- `holdout_frac` is ignored inside the loop because the outer test fold plays that role.
+  A fold whose inner run raises is logged, listed in `failed_folds`, and skipped.
+- It does not produce a model to deploy. For that, run `run()` on all the data (optionally
+  with a holdout); `nested_cv` tells you what to expect from it.
+- Many distinct winners across folds, or features used in only some folds, mean the
+  pipeline's choices depend on which rows it sees. Read the reported winner as one of
+  several near-equivalent options.
+
 ### Per-step data
 
 ```python

@@ -1,4 +1,5 @@
 from h2ml.core.base import TaskType
+from h2ml.pipeline.nested import NestedCVResult, nested_cv
 from h2ml.pipeline.pipeline import (
     H2MLPipeline,
     PipelineConfig,
@@ -8,8 +9,10 @@ from h2ml.pipeline.pipeline import (
 
 __all__ = [
     "H2MLPipeline",
+    "NestedCVResult",
     "PipelineConfig",
     "PipelineData",
     "PipelineResult",
     "TaskType",
+    "nested_cv",
 ]
