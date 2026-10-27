@@ -43,6 +43,8 @@ model registry (utils/registry.py)           → CLASSIFIER_REGISTRY / REGRESSOR
 optimizer (optimization/optimizer.py)        → run_study(); optimize_all() for batch use  [module functions, no class]
 nested_cv (pipeline/nested.py)              → full pipeline per outer fold, scored via _score_holdout → NestedCVResult
                                                (folds_df, summary() optimism, selection_counts(), feature_frequency())
+seed_stability (pipeline/stability.py)       → rerun with random_state per seed (through step 1/3/4) → SeedStabilityResult
+                                               (runs_df, summary() score spread + top-selection share)
 ranking (evaluation/ranking.py)              → ranking_robustness() / ranking_warnings(): paired-fold + cross-metric
                                                robustness of a selection; drives prefer_reduced_on_tie
 
