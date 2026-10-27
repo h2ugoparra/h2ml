@@ -1,7 +1,8 @@
 """
 tests/plots/test_plots.py
 
-Tests for cv_diagnostics input validation (binary-only classification panel).
+Tests for cv_diagnostics input validation (binary-only classification panel)
+and pipeline_scores' default metric.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import pytest
 
 from h2ml.core.base import TaskType
 from h2ml.core.cv_result import CVResult, FoldResult
-from h2ml.plots.plots import cv_diagnostics
+from h2ml.plots.plots import cv_diagnostics, pipeline_scores
 
 matplotlib.use("Agg")  # headless — tests only save, never show
 
@@ -103,3 +104,28 @@ class TestCvDiagnosticsFoldAuc:
         pooled = next(label for label in labels if label.startswith("Pooled AUC"))
         assert float(pooled.split("= ")[1]) < 1.0
         assert "Folds" in labels
+
+
+class TestPipelineScoresMetric:
+    """pipeline_scores plots the run's own metric unless told otherwise."""
+
+    @staticmethod
+    def _result(metric):
+        from types import SimpleNamespace
+
+        import pandas as pd
+
+        fold_df = pd.DataFrame(
+            {"Model": ["m"] * 2, "Stage": ["default"] * 2, "AUC_Test": [0.7, 0.8], "Brier_Test": [0.2, 0.1]}
+        )
+        return SimpleNamespace(metric=metric, step1_fold_df=fold_df, step3_fold_df=None, step4_fold_df=None)
+
+    @pytest.mark.parametrize(
+        "metric, metric_col, expected",
+        [("Brier", None, "Brier_Test"), (None, None, "AUC_Test"), ("Brier", "AUC_Test", "AUC_Test")],
+    )
+    def test_metric_column(self, monkeypatch, metric, metric_col, expected):
+        calls = {}
+        monkeypatch.setattr("h2ml.plots.plots.model_scores", lambda df, **kw: calls.update(kw))
+        pipeline_scores(self._result(metric), metric_col=metric_col)
+        assert calls["metric_col"] == expected
