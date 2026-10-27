@@ -829,6 +829,18 @@ class H2MLPipeline:
         transform_stores: Optional[dict[str, PipelineData]] = None,
     ) -> PipelineResult:
         """CV all models (× transforms) on all features, then select best."""
+        fold_indices = self._cv_step1(result, transform_stores)
+        return self._select_step1(result, fold_indices)
+
+    def _cv_step1(
+        self,
+        result: PipelineResult,
+        transform_stores: Optional[dict[str, PipelineData]] = None,
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        """
+        Step-1 CV of all models (× transforms) on all features. Metric-independent:
+        sets the splitter and step1_* fields and returns the step-1 fold indices.
+        """
         assert result.features is not None, "result.features must be set before step 1."
         n_transforms = len(transform_stores) if transform_stores else 1
         self._log(
@@ -856,7 +868,6 @@ class H2MLPipeline:
         # transforms, so scaler fits are the same for every (transform, model) pair.
         # Workers receive the pre-computed arrays and skip _maybe_scale() entirely.
         fold_indices = list(result.splitter.split(first_store.X, first_store.y))
-        result.cv_warnings.extend(self._check_metric_suitability(result.features.y, fold_indices))
         has_scaling = any(getattr(m, "requires_scaling", False) for m in self.models)
         precomputed_scaled_folds = None
         if has_scaling:
@@ -917,7 +928,17 @@ class H2MLPipeline:
         result.step1_fold_df = pd.concat(all_fold_dfs, ignore_index=True)
         result.step1_agg_df = aggregate_metrics(result.step1_fold_df)
         result.cv_warnings.extend(self._collect_cv_warnings(all_cv_results))
+        return fold_indices
 
+    def _select_step1(
+        self,
+        result: PipelineResult,
+        fold_indices: list[tuple[np.ndarray, np.ndarray]],
+    ) -> PipelineResult:
+        """Select the step-1 winner under config.metric from the step-1 CV (see _cv_step1)."""
+        assert result.features is not None and result.step1_agg_df is not None
+        assert result.step1_fold_df is not None
+        result.cv_warnings.extend(self._check_metric_suitability(result.features.y, fold_indices))
         best = select_best(
             result.step1_agg_df,
             metric=self.config.metric_col,
@@ -968,6 +989,18 @@ class H2MLPipeline:
         transform_stores: Optional[dict[str, PipelineData]] = None,
     ) -> PipelineResult:
         """CV all models on reduced features (step-1-winning transform only), then select best stage."""
+        self._cv_step3(result, transform_stores)
+        return self._select_step3(result)
+
+    def _cv_step3(
+        self,
+        result: PipelineResult,
+        transform_stores: Optional[dict[str, PipelineData]] = None,
+    ) -> None:
+        """
+        Step-3 CV of all models on the reduced features. Metric-independent given the
+        step-2 selection: sets step3_* fields (and step3_fold_features when per-fold).
+        """
         assert result.features_reduced is not None, "features_reduced must be set before step 3."
         assert result.selector is not None, "selector must be set before step 3."
         n_features = result.features_reduced.n_features
@@ -1020,6 +1053,8 @@ class H2MLPipeline:
         result.step3_agg_df = aggregate_metrics(result.step3_fold_df)
         result.cv_warnings.extend(self._collect_cv_warnings(cv_results))
 
+    def _select_step3(self, result: PipelineResult) -> PipelineResult:
+        """Select the best (model, stage) under config.metric from the step-1 and step-3 CVs."""
         # Compare step1 (default) and step3 (reduced) agg dfs directly — pick the best row
         assert result.step1_agg_df is not None and result.step3_agg_df is not None
         all_stages_agg = pd.concat([result.step1_agg_df, result.step3_agg_df], ignore_index=True)
@@ -1059,6 +1094,23 @@ class H2MLPipeline:
         transform_stores: Optional[dict[str, PipelineData]] = None,
     ) -> PipelineResult:
         """Hyperparameter optimization + final CV + select overall best."""
+        tuned_params, fixed_params = self._tune_step4(result, transform_stores)
+        return self._select_step4(result, tuned_params, fixed_params)
+
+    def _tune_step4(
+        self,
+        result: PipelineResult,
+        transform_stores: Optional[dict[str, PipelineData]] = None,
+    ) -> tuple[Optional[dict], dict]:
+        """
+        Optuna HPO of the step-3 winner under config.metric, then the acceptance CV with
+        the tuned params (sets step4_* fields).
+
+        Returns:
+            (tuned_params, fixed_params): the tuned overrides merged with the fixed ones, or
+            None when the winner has no enabled search space; and the fixed params
+            (class_weight) every candidate carries.
+        """
         assert result.features is not None, "result.features must be set before step 4."
         assert result.features_reduced is not None, "features_reduced must be set before step 4."
         assert result.best_model_value is not None, "best_model_value must be set before step 4."
@@ -1092,8 +1144,7 @@ class H2MLPipeline:
 
         if not self._is_opt_enabled(estimator_name):
             self._log(f"  {estimator_name} has no enabled search space — skipping optimization.")
-            result.best_params = dict(fixed_params)
-            return result
+            return None, fixed_params
 
         study = run_study(
             name=estimator_name,
@@ -1153,7 +1204,20 @@ class H2MLPipeline:
         result.step4_cv_result = cv_result
         result.step4_fold_df = compute_metrics_all([cv_result], metadata=metadata)
         result.step4_agg_df = aggregate_metrics(result.step4_fold_df, group_by_stage=False)
+        return merged_params, fixed_params
 
+    def _select_step4(
+        self,
+        result: PipelineResult,
+        tuned_params: Optional[dict],
+        fixed_params: dict,
+    ) -> PipelineResult:
+        """Keep the tuned params when their acceptance CV (step4_agg_df) beats the step-3
+        winner under config.metric; otherwise the winner's defaults (plus fixed_params)."""
+        if tuned_params is None:
+            result.best_params = dict(fixed_params)
+            return result
+        assert result.step4_agg_df is not None and result.best_model_value is not None
         optimized_value = float(result.step4_agg_df.iloc[0][self.config.metric_col])
         std_col = self.config.metric_col.replace("_Mean", "_Std")
         optimized_std = float(result.step4_agg_df.iloc[0].get(std_col, float("nan")))
@@ -1166,7 +1230,7 @@ class H2MLPipeline:
             result.best_model_value = optimized_value
             result.best_model_std = optimized_std
             result.best_stage = "optimized"
-            result.best_params = merged_params
+            result.best_params = dict(tuned_params)
         else:
             result.best_params = dict(fixed_params)
 
