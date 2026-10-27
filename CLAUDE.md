@@ -45,6 +45,10 @@ nested_cv (pipeline/nested.py)              → full pipeline per outer fold, sc
                                                (folds_df, summary() optimism, selection_counts(), feature_frequency())
 seed_stability (pipeline/stability.py)       → rerun with random_state per seed (through step 1/3/4) → SeedStabilityResult
                                                (runs_df, summary() score spread + top-selection share)
+multi_metric (pipeline/multi_metric.py)      → pipeline per selection metric (classification only); shares step-1 CV
+                                               per class weighting and steps 2–3 per step-1 winner via the split
+                                               _cv_step*/_select_step*/_tune_step4 halves → MultiMetricResult
+                                               (runs_df, results, save/load); models deep-copied per metric
 ranking (evaluation/ranking.py)              → ranking_robustness() / ranking_warnings(): paired-fold + cross-metric
                                                robustness of a selection; drives prefer_reduced_on_tie
 
