@@ -200,7 +200,7 @@ def multi_metric(
                           unweighted. Metrics not listed use the config value.
         reuse_step4:      "none" (default) tunes step 4 for every metric. "model" reuses an
                           earlier metric's tuning when the same (class weighting, model,
-                          transform, feature stage) won; whether the tuned params beat
+                          transform, feature stage, feature set) won; whether the tuned params beat
                           step 3 is still decided under each metric. Cheaper, but the
                           params were optimised for the earlier metric.
 
@@ -278,7 +278,15 @@ def multi_metric(
                 step23[key].apply(result)
             p._select_step3(result)
 
-            key4 = (weighted, result.best_model_name, result.y_transform, result.best_feature_stage)
+            # The final feature list, not just the stage: "reduced" sets differ when the metrics'
+            # step-1 winners differ, and tuning or its acceptance CV must not cross feature sets
+            key4 = (
+                weighted,
+                result.best_model_name,
+                result.y_transform,
+                result.best_feature_stage,
+                tuple(final_feature_names(result)),
+            )
             shared_with = None
             if reuse_step4 == "model" and key4 in step4:
                 shared_with, tuned = step4[key4]

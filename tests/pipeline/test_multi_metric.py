@@ -165,11 +165,20 @@ class TestSharing:
     def test_reuse_step4_model_tunes_once_per_selection(self):
         with _mock_selector(), _spy("_tune_step4") as tune:
             result = multi_metric(_pipeline(), _store(), metrics=METRICS, reuse_step4="model")
-        keys = result.runs_df[["Class_weight", "Model", "Feature_stage"]].astype(str).agg("|".join, axis=1)
+        features = result.runs_df["Metric"].map(lambda m: ",".join(result.selected_features[m]))
+        keys = result.runs_df[["Class_weight", "Model", "Feature_stage"]].astype(str).assign(Features=features)
+        keys = keys.agg("|".join, axis=1)
         assert tune.call_count == keys.nunique()
         shared = result.runs_df.dropna(subset=["Step4_shared_with"])
         assert len(shared) == len(METRICS) - keys.nunique()
         assert result.summary().iloc[0]["N_hpo_runs"] == keys.nunique()
+
+    def test_reuse_step4_never_crosses_feature_sets(self):
+        with _mock_selector():
+            result = multi_metric(_pipeline(), _store(), metrics=METRICS, reuse_step4="model")
+        for _, row in result.runs_df.dropna(subset=["Step4_shared_with"]).iterrows():
+            source = row["Step4_shared_with"]
+            assert result.selected_features[row["Metric"]] == result.selected_features[source]
 
     def test_source_pipeline_weights_do_not_leak(self):
         source = _pipeline(handle_imbalance=True)
