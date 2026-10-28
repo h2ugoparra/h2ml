@@ -1376,7 +1376,7 @@ class H2MLPipeline:
         index = {name: i for i, name in enumerate(store.feature_names)}
         return [np.array([index[f] for f in names]) for names in fold_features]
 
-    def _start(self, store: PipelineData) -> tuple[PipelineResult, PipelineData]:
+    def _start(self, store: PipelineData, log_class_weights: bool = True) -> tuple[PipelineResult, PipelineData]:
         """Validate store, set aside the holdout rows, and return a fresh result plus the dev rows."""
         self._validate_store(store)
         holdout_store, holdout_idx, holdout_strategy = None, None, None
@@ -1394,7 +1394,7 @@ class H2MLPipeline:
             self._log(
                 f"Holdout ({holdout_strategy}): {holdout_idx.size}/{holdout_idx.size + dev_idx.size} rows set aside"
             )
-        self._resolve_class_weights(store.y)
+        self._resolve_class_weights(store.y, log=log_class_weights)
         result = self._new_result(store)
         result.holdout_store = holdout_store
         result.holdout_idx = holdout_idx
@@ -1720,13 +1720,14 @@ class H2MLPipeline:
         if injected:
             logger.debug(f"handle_imbalance: class_weight={class_weight!r} set on {injected}")
 
-    def _resolve_class_weights(self, y: np.ndarray) -> None:
+    def _resolve_class_weights(self, y: np.ndarray, log: bool = True) -> None:
         """Resolve handle_imbalance="auto" against the run's target.
 
         Injects class_weight="balanced" when the minority-class ratio is below
         IMBALANCE_RATIO_THRESHOLD. If an earlier run on this pipeline injected
         weights and this target is balanced, they are reset to None so a reused
         pipeline does not carry a stale decision. No-op unless "auto" + classification.
+        log=False leaves the decision unlogged (multi_metric logs one line for all metrics).
         """
         if self.config.handle_imbalance != "auto" or self.config.task_type != TaskType.CLASSIFICATION:
             return
@@ -1738,6 +1739,8 @@ class H2MLPipeline:
         elif self._class_weight_active:
             self._inject_class_weights(None)
         self._class_weight_active = active
+        if not log:
+            return
         logger.info(
             f"handle_imbalance='auto': minority class ratio={minority_ratio:.3f} → "
             f"class_weight={'balanced' if active else 'not applied'}"

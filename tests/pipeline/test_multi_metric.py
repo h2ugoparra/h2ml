@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pandas as pd
 import pytest
+from loguru import logger
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.naive_bayes import GaussianNB
@@ -181,6 +182,23 @@ class TestSharing:
             assert brier_lr.best_base_estimator.class_weight is None
         # the caller's pipeline keeps its own (weighted) models
         assert source._model_map["LR"].estimator.class_weight == "balanced"
+
+    def test_class_weight_decision_logged_once(self):
+        logged = []
+        handler_id = logger.add(lambda msg: logged.append(msg), level="INFO")
+        try:
+            with _mock_selector():
+                multi_metric(
+                    _pipeline(handle_imbalance="auto"),
+                    _store(),
+                    metrics=["Brier", "AUC", "F1"],
+                    handle_imbalance={"Brier": False},
+                )
+        finally:
+            logger.remove(handler_id)
+        lines = [m for m in logged if "handle_imbalance" in m]
+        assert len(lines) == 1
+        assert "Brier → off" in lines[0] and "AUC, F1 → not applied" in lines[0]
 
 
 class TestFailures:

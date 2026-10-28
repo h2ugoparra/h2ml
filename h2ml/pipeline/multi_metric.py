@@ -19,6 +19,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Iterable, Literal, Mapping, Optional
 
+import numpy as np
 import pandas as pd
 from loguru import logger
 
@@ -152,6 +153,24 @@ class MultiMetricResult:
         )
 
 
+def _log_class_weights(pipelines: Mapping[str, H2MLPipeline], y) -> None:
+    """One log line for every metric's class-weight decision, logged only if any metric uses "auto"."""
+    if not any(p.config.handle_imbalance == "auto" for p in pipelines.values()):
+        return
+    groups: dict[str, list[str]] = {}
+    for m, p in pipelines.items():
+        if p._class_weight_active:
+            label = "balanced"
+        elif p.config.handle_imbalance == "auto":
+            label = "not applied"
+        else:
+            label = "off"
+        groups.setdefault(label, []).append(m)
+    _, counts = np.unique(y, return_counts=True)
+    decisions = "; ".join(f"{', '.join(ms)} → {label}" for label, ms in groups.items())
+    logger.info(f"handle_imbalance (minority class ratio={counts.min() / counts.sum():.3f}): {decisions}")
+
+
 def multi_metric(
     pipeline: H2MLPipeline,
     store: PipelineData,
@@ -218,10 +237,11 @@ def multi_metric(
         for m in metrics
     }
     first = pipelines[metrics[0]]
-    start, dev = first._start(store)  # holdout split + validation, once
+    start, dev = first._start(store, log_class_weights=False)  # holdout split + validation, once
     transform_stores = first._build_transform_stores(dev, transforms)
     for p in list(pipelines.values())[1:]:
-        p._resolve_class_weights(dev.y)
+        p._resolve_class_weights(dev.y, log=False)
+    _log_class_weights(pipelines, dev.y)
 
     step1: dict[bool, _Shared] = {}
     step23: dict[tuple, _Shared] = {}
