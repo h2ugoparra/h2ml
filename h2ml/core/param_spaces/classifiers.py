@@ -113,7 +113,7 @@ def catboost_c_params(trial):
         "od_wait": trial.suggest_int("od_wait", 20, 50),
         "thread_count": -1,
         "random_seed": 42,
-        "verbose": 0,
+        "silent": True,
     }
 
 

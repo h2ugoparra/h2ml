@@ -11,6 +11,7 @@ refit uses the real key from study.best_params.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
@@ -59,3 +60,13 @@ class TestParamSpaceConsistency:
         trial = _StubTrial()
         params = entry.param_fn(trial)
         entry.model_cls(**params)
+
+    def test_params_fit_on_top_of_default_estimator(self, name, entry):
+        """Step 4 does clone(base_estimator).set_params(**params), so the emitted
+        params must coexist with default_kwargs at fit time (e.g. CatBoost rejects
+        'silent' from the defaults alongside 'verbose' from the search space)."""
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(40, 3))
+        y = np.tile([0, 1], 20) if name in CLASSIFIER_REGISTRY else rng.poisson(3, size=40).astype(float)
+        params = entry.param_fn(_StubTrial())
+        entry.model_cls(**entry.default_kwargs).set_params(**params).fit(X, y)
