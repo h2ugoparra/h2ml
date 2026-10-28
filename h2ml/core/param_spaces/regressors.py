@@ -42,25 +42,20 @@ def gradientboosting_r_params(trial):
 
 
 def svr_r_params(trial):
-    """Support Vector Machine (SVM) Optuna trials"""
-    # Define kernel first
-    kernel = trial.suggest_categorical("kernel", ["linear", "poly", "rbf", "sigmoid"])
+    """Support Vector Machine (SVM) Optuna trials.
 
-    # define degree but will only be used for 'poly'
-    degree = trial.suggest_int("degree", 2, 5)
-
+    Same reshaping as svc_c_params: rbf/linear only, C <= 10, max_iter cap,
+    continuous gamma for rbf.
+    """
+    kernel = trial.suggest_categorical("kernel", ["rbf", "linear"])
     params = {
-        "C": trial.suggest_float("C", 0.1, 100, log=True),  # Regularization parameter
+        "C": trial.suggest_float("C", 0.01, 10, log=True),  # Regularization parameter
         "epsilon": trial.suggest_float("epsilon", 0.01, 1.0),  # Epsilon-tube within which no penalty is given
         "kernel": kernel,
-        "gamma": trial.suggest_categorical("gamma", ["scale", "auto"]),
-        "degree": degree,
+        "max_iter": 1_000_000,
     }
-
-    # Pass `degree=3` for non-poly kernels (ignored by SVR)
-    if kernel != "poly":
-        params["degree"] = 3  # Default value (ignored for non-poly kernels)
-
+    if kernel == "rbf":
+        params["gamma"] = trial.suggest_float("gamma", 1e-4, 1.0, log=True)
     return params
 
 

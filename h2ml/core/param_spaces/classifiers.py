@@ -46,15 +46,25 @@ def histgradientboosting_c_params(trial):
 
 
 def svc_c_params(trial):
-    """SVC Optuna trials"""
-    return {
-        "C": trial.suggest_float("C", 0.1, 100, log=True),
-        "kernel": trial.suggest_categorical("kernel", ["linear", "poly", "rbf", "sigmoid"]),
-        "gamma": trial.suggest_categorical("gamma", ["scale", "auto"]),
+    """SVC Optuna trials.
+
+    poly/sigmoid and C > 10 are left out: on overlapping classes libsvm needs
+    millions of iterations there (minutes per fit at ~1k rows); max_iter bounds
+    whatever slow tail remains. gamma is tuned continuously because after the
+    in-fold scaling "scale" and "auto" resolve to nearly the same value.
+    """
+    kernel = trial.suggest_categorical("kernel", ["rbf", "linear"])
+    params = {
+        "C": trial.suggest_float("C", 0.01, 10, log=True),
+        "kernel": kernel,
         "class_weight": trial.suggest_categorical("class_weight", ["balanced", None]),
+        "max_iter": 1_000_000,
         "random_state": 42,
         "probability": True,  # required for predict_proba in CV and SHAP
     }
+    if kernel == "rbf":
+        params["gamma"] = trial.suggest_float("gamma", 1e-4, 1.0, log=True)
+    return params
 
 
 def randomforest_c_params(trial):

@@ -48,8 +48,20 @@ All notable changes to this project will be documented in this file.
   Results saved before this change keep the old registry-based rebuild.
 - A winning estimator that is not in the registry no longer crashes step 4 with
   `KeyError`; it is treated like `opt_enabled=False` and HPO is skipped.
+- CatBoostClassifier HPO no longer fails every trial with "Only one of parameters
+  ['verbose', 'logging_level', 'verbose_eval', 'silent'] should be set". Its search
+  space set `verbose=0` on top of the registry's `silent=True`.
 
 ### Changed
+
+- The SVC and SVR search spaces are narrowed so HPO trials no longer stall for
+  minutes. On noisy data, a linear kernel with large C made libsvm run millions of
+  iterations per fit (over 80s for one fit at ~1k rows). Kernels are now `rbf` and
+  `linear` (`poly` and `sigmoid` removed, along with SVR's `degree`). `C` ranges
+  over 0.01–10 instead of 0.1–100, `max_iter=1_000_000` caps any remaining slow
+  fits, and `gamma` for `rbf` is tuned log-uniformly over 1e-4–1. It replaces the
+  `"scale"`/`"auto"` choice, which gives nearly the same value once features are
+  scaled. Tuned SVC/SVR results will differ from earlier runs.
 
 - `PipelineResult.best_params` now holds only the overrides applied on top of the
   winning estimator (tuned params plus fixed ones like `class_weight`), not the
