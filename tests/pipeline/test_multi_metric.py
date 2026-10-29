@@ -2,7 +2,8 @@
 tests/pipeline/test_multi_metric.py
 
 Tests for multi_metric / MultiMetricResult. Step 2 (SHAP) is mocked; RF is tuned
-in step 4 (n_trials=2), LR and NB have no enabled search space.
+in step 4 (n_trials=2), LR and NB have no enabled search space. Regression runs
+Ridge + RF regressors with a y-transform sweep.
 """
 
 from __future__ import annotations
@@ -13,8 +14,8 @@ import numpy as np
 import pandas as pd
 import pytest
 from loguru import logger
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.naive_bayes import GaussianNB
 
 from h2ml import MultiMetricResult, multi_metric
@@ -22,11 +23,13 @@ from h2ml.core.feature_store import PipelineData
 from h2ml.evaluation.metrics import METRIC_COL, METRIC_MINIMIZE, select_best
 from h2ml.features.selector import FeatureSelector
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig
-from h2ml.pipeline.step import make_classifier
+from h2ml.pipeline.step import make_classifier, make_regressor
 
 FEATURE_NAMES = [f"feat_{i}" for i in range(6)]
 SELECTED = FEATURE_NAMES[:3]
 METRICS = ["Brier", "LogLoss", "AUC", "AUCPR", "F1"]
+REG_METRICS = ["R2", "MAE", "RMSE"]
+TRANSFORMS = ["log"]
 
 
 def _store(n: int = 240, positive_rate: float = 0.4, seed: int = 0) -> PipelineData:
@@ -34,6 +37,13 @@ def _store(n: int = 240, positive_rate: float = 0.4, seed: int = 0) -> PipelineD
     X = rng.standard_normal((n, len(FEATURE_NAMES)))
     score = 2 * X[:, 0] * X[:, 1] + 0.5 * rng.standard_normal(n)  # interaction: favours the tunable RF
     y = (score > np.quantile(score, 1 - positive_rate)).astype(int)
+    return PipelineData(X=X, feature_names=FEATURE_NAMES, y=y)
+
+
+def _reg_store(n: int = 240, seed: int = 0) -> PipelineData:
+    rng = np.random.default_rng(seed)
+    X = rng.standard_normal((n, len(FEATURE_NAMES)))
+    y = np.exp(0.6 * X[:, 0] * X[:, 1] + 0.3 * X[:, 2] + 0.2 * rng.standard_normal(n))  # positive: "log" applies
     return PipelineData(X=X, feature_names=FEATURE_NAMES, y=y)
 
 
@@ -62,6 +72,26 @@ def _pipeline(**kwargs) -> H2MLPipeline:
         make_classifier(LogisticRegression(max_iter=500), name="LR"),
         make_classifier(RandomForestClassifier(n_estimators=10, random_state=0), name="RF"),
         make_classifier(GaussianNB(), name="NB"),
+    ]
+    return H2MLPipeline(config=config, models=models)
+
+
+def _reg_pipeline(**kwargs) -> H2MLPipeline:
+    config = PipelineConfig(
+        **{
+            "task_type": "regression",
+            "metric": "R2",
+            "n_splits": 3,
+            "opt_n_splits": 2,
+            "n_trials": 2,
+            "n_jobs": 1,
+            "verbose": False,
+            **kwargs,
+        }
+    )
+    models = [
+        make_regressor(Ridge(), name="Ridge"),
+        make_regressor(RandomForestRegressor(n_estimators=10, random_state=0), name="RF"),
     ]
     return H2MLPipeline(config=config, models=models)
 
@@ -226,11 +256,6 @@ class TestFailures:
 
 
 class TestValidation:
-    def test_regression_not_supported_yet(self):
-        pipeline = H2MLPipeline(PipelineConfig(task_type="regression", metric="R2"))
-        with pytest.raises(NotImplementedError, match="classification"):
-            multi_metric(pipeline, _store())
-
     @pytest.mark.parametrize(
         "kwargs, match",
         [
@@ -249,3 +274,85 @@ class TestValidation:
         with _mock_selector():
             result = multi_metric(_pipeline(n_trials=1), _store(), reuse_step4="model")
         assert sorted(result.metrics) == sorted(METRICS)
+
+    def test_transforms_rejected_for_classification(self):
+        with pytest.raises(ValueError, match="regression"):
+            multi_metric(_pipeline(), _store(), metrics=["AUC"], transforms=TRANSFORMS)
+
+
+@pytest.fixture(scope="module")
+def reg_mm() -> MultiMetricResult:
+    with _mock_selector():
+        return multi_metric(_reg_pipeline(holdout_frac=0.2), _reg_store(), metrics=REG_METRICS, transforms=TRANSFORMS)
+
+
+class TestRegression:
+    @pytest.mark.parametrize("metric", REG_METRICS)
+    def test_matches_separate_run(self, reg_mm, metric):
+        with _mock_selector():
+            separate = _reg_pipeline(holdout_frac=0.2, metric=metric).run(_reg_store(), transforms=TRANSFORMS)
+        shared = reg_mm.results[metric]
+
+        assert shared.metric == separate.metric == metric
+        for name in ("best_model_name", "best_stage", "best_feature_stage", "y_transform"):
+            assert getattr(shared, name) == getattr(separate, name), name
+        assert shared.best_model_value == pytest.approx(separate.best_model_value)
+        assert shared.best_model_std == pytest.approx(separate.best_model_std)
+        assert shared.best_params == separate.best_params
+        assert shared.cv_warnings == separate.cv_warnings
+        np.testing.assert_array_equal(shared.holdout_idx, separate.holdout_idx)
+        for name in ("holdout_df", "step1_agg_df", "step3_agg_df", "step4_agg_df"):
+            _assert_scores_equal(getattr(shared, name), getattr(separate, name))
+
+    def test_runs_df_and_holdout(self, reg_mm):
+        assert list(reg_mm.runs_df["Metric"]) == REG_METRICS
+        assert not reg_mm.runs_df["Class_weight"].any()
+        assert set(reg_mm.runs_df["Y_transform"].dropna()) <= {"log"}
+        for metric in REG_METRICS:
+            row = reg_mm.runs_df.set_index("Metric").loc[metric]
+            assert row["Holdout"] == pytest.approx(reg_mm.results[metric].holdout_df.iloc[0][METRIC_COL[metric]])
+
+    def test_step1_cv_runs_once(self):
+        with _mock_selector(), _spy("_cv_step1") as cv1:
+            multi_metric(_reg_pipeline(), _reg_store(), metrics=REG_METRICS, transforms=TRANSFORMS)
+        assert cv1.call_count == 1
+
+    def test_reuse_step4_keyed_on_transform_and_features(self):
+        with _mock_selector(), _spy("_tune_step4") as tune:
+            result = multi_metric(
+                _reg_pipeline(), _reg_store(), metrics=REG_METRICS, transforms=TRANSFORMS, reuse_step4="model"
+            )
+        runs = result.runs_df
+        features = runs["Metric"].map(lambda m: ",".join(result.selected_features[m]))
+        keys = runs[["Model", "Y_transform", "Feature_stage"]].astype(str).assign(Features=features)
+        keys = keys.agg("|".join, axis=1)
+        assert tune.call_count == keys.nunique()
+        for _, row in runs.dropna(subset=["Step4_shared_with"]).iterrows():
+            source = runs.set_index("Metric").loc[row["Step4_shared_with"]]
+            assert row["Y_transform"] == source["Y_transform"]
+            assert result.selected_features[row["Metric"]] == result.selected_features[row["Step4_shared_with"]]
+
+    def test_defaults_to_all_regression_metrics_in_order(self):
+        with _mock_selector():
+            result = multi_metric(_reg_pipeline(n_trials=1), _reg_store(), reuse_step4="model")
+        assert result.metrics == REG_METRICS
+
+    def test_save_load_round_trip(self, reg_mm, tmp_path):
+        for result in reg_mm.results.values():
+            result.selector = None  # the mocked selector cannot be pickled
+        reg_mm.save(tmp_path / "reg_mm")
+        loaded = MultiMetricResult.load(tmp_path / "reg_mm")
+        assert loaded.metrics == REG_METRICS
+        assert loaded.results["RMSE"].y_transform == reg_mm.results["RMSE"].y_transform
+        pd.testing.assert_frame_equal(loaded.runs_df, reg_mm.runs_df, check_dtype=False)
+
+    @pytest.mark.parametrize(
+        "kwargs, match",
+        [
+            ({"metrics": ["R2", "AUC"]}, "not regression metrics"),
+            ({"metrics": ["R2"], "handle_imbalance": {"R2": False}}, "classification only"),
+        ],
+    )
+    def test_invalid_arguments(self, kwargs, match):
+        with pytest.raises(ValueError, match=match):
+            multi_metric(_reg_pipeline(), _reg_store(), **kwargs)

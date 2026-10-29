@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `multi_metric` supports regression pipelines: R2, MAE and RMSE (default order) with
+  an optional `transforms=` y-transform sweep, shared exactly as for classification
+  (step 1 once, steps 2–3 per step-1 winner and transform). Each metric's result still
+  equals a separate `run(store, transforms=...)` under that metric. `handle_imbalance`
+  is rejected for regression.
 - `PipelineConfig(prefer_reduced_on_tie=True)` applies a one-standard-error rule in
   step 3: when the winner uses all features and a reduced-feature candidate is tied
   with it on paired folds (within one Nadeau–Bengio corrected SE), the best-ranked
@@ -30,6 +35,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `multi_metric(reuse_step4="model")` only shares step-4 tuning between metrics whose
+  final feature lists match. Before, a matching (model, transform, feature stage) was
+  enough, so a later metric with a different "reduced" feature set reused tuned params
+  — and their acceptance CV — computed on another feature set.
 - `build_final_model()` now keeps `class_weight="balanced"` when `handle_imbalance`
   was active but step 4 did not run (e.g. after `run_step1_to_step3`). Previously
   the final model was refit from registry defaults without the weights CV used.

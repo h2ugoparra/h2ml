@@ -4,11 +4,12 @@ h2ml/pipeline/multi_metric.py
 Multi-metric comparison: run the pipeline under several selection metrics while
 running each metric-independent CV only once.
 
-Steps 1 and 3 CV every model and compute every metric; step 2 depends only on
-the step-1 winner (and the class weighting). Those are shared across metrics, and
-only the selections — and step 4's metric-specific HPO — run per metric. With
-reuse_step4="none" every metric's PipelineResult equals a separate run() with
-that metric.
+Steps 1 and 3 CV every model (× y-transform, regression) and compute every metric of
+the task; step 2 depends only on the step-1 winner (and, for classification, the class
+weighting). Those are shared across metrics, and only the selections — and step 4's
+metric-specific HPO — run per metric. With reuse_step4="none" every metric's
+PipelineResult equals a separate run() with that metric. Classification and regression
+are both supported.
 """
 
 from __future__ import annotations
@@ -182,8 +183,8 @@ def multi_metric(
     """
     Run the full pipeline under each selection metric, sharing the metric-independent work.
 
-    Shared, run once: the holdout split; step 1's CV per class-weighting setting; steps 2-3
-    per (class weighting, step-1 winner, y-transform). Per metric: the step-1 and step-3
+    Shared, run once: the holdout split; step 1's CV per class-weighting setting (one for
+    regression); steps 2-3 per (class weighting, step-1 winner, y-transform). Per metric: the step-1 and step-3
     selections, step 4 (Optuna optimises the metric) and the holdout score. Each metric
     runs under a copy of pipeline.config with that metric, so results[m] equals
     H2MLPipeline(replace(config, metric=m)).run(store) when reuse_step4="none".
@@ -198,6 +199,7 @@ def multi_metric(
         handle_imbalance: Per-metric override of config.handle_imbalance, e.g.
                           {"Brier": False, "LogLoss": False} to keep probability metrics
                           unweighted. Metrics not listed use the config value.
+                          Classification only.
         reuse_step4:      "none" (default) tunes step 4 for every metric. "model" reuses an
                           earlier metric's tuning when the same (class weighting, model,
                           transform, feature stage, feature set) won; whether the tuned params beat
@@ -208,14 +210,12 @@ def multi_metric(
         MultiMetricResult.
 
     Raises:
-        NotImplementedError: For regression pipelines (not supported yet).
         ValueError: If a metric is unknown or not a metric of the task, metrics is empty,
-            handle_imbalance names a metric not compared, or reuse_step4 is invalid.
+            handle_imbalance is given for regression or names a metric not compared,
+            transforms are given for classification, or reuse_step4 is invalid.
         RuntimeError: If every metric's run failed.
     """
     config = pipeline.config
-    if config.task_type != TaskType.CLASSIFICATION:
-        raise NotImplementedError("multi_metric supports classification pipelines only (regression is planned).")
     if reuse_step4 not in REUSE_STEP4:
         raise ValueError(f"reuse_step4 must be one of {REUSE_STEP4}, got {reuse_step4!r}")
     task_metrics = TASK_METRICS[config.task_type]
@@ -225,6 +225,8 @@ def multi_metric(
     invalid = [m for m in metrics if m not in task_metrics]
     if invalid:
         raise ValueError(f"metrics {invalid} are not {config.task_type.value} metrics: {list(task_metrics)}")
+    if handle_imbalance and config.task_type != TaskType.CLASSIFICATION:
+        raise ValueError("handle_imbalance applies to classification only (class weighting).")
     overrides = {resolve_metric(m): v for m, v in (handle_imbalance or {}).items()}
     unknown = [m for m in overrides if m not in metrics]
     if unknown:
@@ -241,7 +243,8 @@ def multi_metric(
     transform_stores = first._build_transform_stores(dev, transforms)
     for p in list(pipelines.values())[1:]:
         p._resolve_class_weights(dev.y, log=False)
-    _log_class_weights(pipelines, dev.y)
+    if config.task_type == TaskType.CLASSIFICATION:
+        _log_class_weights(pipelines, dev.y)
 
     step1: dict[bool, _Shared] = {}
     step23: dict[tuple, _Shared] = {}
