@@ -63,6 +63,11 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- `multi_metric`'s default metric order is now explicit: Brier, LogLoss, AUC, AUCPR,
+  F1 for classification (was AUC, AUCPR, LogLoss, F1, Brier) and RMSE, R2, MAE for
+  regression (was R2, MAE, RMSE). It only changes results when `metrics=` is omitted
+  and `reuse_step4="model"`: shared step-4 tuning is now optimised for the proper
+  scoring rule rather than AUC/R2. Otherwise only the row order changes.
 - The SVC and SVR search spaces are narrowed so HPO trials no longer stall for
   minutes. On noisy data, a linear kernel with large C made libsvm run millions of
   iterations per fit (over 80s for one fit at ~1k rows). Kernels are now `rbf` and

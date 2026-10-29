@@ -28,7 +28,7 @@ from h2ml.pipeline.step import make_classifier, make_regressor
 FEATURE_NAMES = [f"feat_{i}" for i in range(6)]
 SELECTED = FEATURE_NAMES[:3]
 METRICS = ["Brier", "LogLoss", "AUC", "AUCPR", "F1"]
-REG_METRICS = ["R2", "MAE", "RMSE"]
+REG_METRICS = ["RMSE", "R2", "MAE"]  # also the default order
 TRANSFORMS = ["log"]
 
 
@@ -270,10 +270,18 @@ class TestValidation:
         with pytest.raises(ValueError, match=match):
             multi_metric(_pipeline(), _store(), **kwargs)
 
+    def test_default_order_covers_every_task_metric(self):
+        from h2ml.core.base import TaskType
+        from h2ml.optimization.optimizer import CLF_METRICS, REG_METRICS
+        from h2ml.pipeline.multi_metric import TASK_METRICS
+
+        assert sorted(TASK_METRICS[TaskType.CLASSIFICATION]) == sorted(CLF_METRICS)
+        assert sorted(TASK_METRICS[TaskType.REGRESSION]) == sorted(REG_METRICS)
+
     def test_defaults_to_all_task_metrics(self):
         with _mock_selector():
             result = multi_metric(_pipeline(n_trials=1), _store(), reuse_step4="model")
-        assert sorted(result.metrics) == sorted(METRICS)
+        assert result.metrics == METRICS  # METRICS is also the default order
 
     def test_transforms_rejected_for_classification(self):
         with pytest.raises(ValueError, match="regression"):
