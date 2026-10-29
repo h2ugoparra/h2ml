@@ -309,12 +309,25 @@ mm.selection_counts()      # how many metrics chose each (model, transform, stag
 mm.save(path); MultiMetricResult.load(path)
 ```
 
+Regression works the same way, with the regression metrics and an optional y-transform
+sweep (`handle_imbalance` is classification-only and rejected here):
+
+```python
+mm = multi_metric(
+    H2MLPipeline(reg_config), store,
+    metrics=["RMSE", "R2", "MAE"],      # default: R2, MAE, RMSE
+    transforms=["log"],                 # swept in step 1, as in run(store, transforms=...)
+    reuse_step4="model",
+)
+mm.runs_df["Y_transform"]               # winning transform per metric
+```
+
 What runs once and what runs per metric:
 
 | Work | Runs |
 |---|---|
 | Holdout split | once |
-| Step 1 CV (every model, every metric computed) | once per class-weighting setting |
+| Step 1 CV (every model × y-transform, every metric computed) | once per class-weighting setting (once for regression) |
 | Steps 2–3 (SHAP, filters, reduced-feature CV) | once per (class weighting, step-1 winner, y-transform) |
 | Step 1 / step 3 selection, step 4 HPO, holdout score | per metric |
 
@@ -322,7 +335,7 @@ What runs once and what runs per metric:
   `H2MLPipeline(replace(config, metric=m)).run(store)`. The speed-up comes only from
   not repeating identical CVs.
 - `reuse_step4="model"`: when a metric selects the same (class weighting, model,
-  transform, feature stage) as an earlier one, it reuses that tuning instead of running
+  transform, feature stage, feature set) as an earlier one, it reuses that tuning instead of running
   Optuna again (`Step4_shared_with` names the earlier metric). Whether the tuned params
   beat step 3 is still decided under each metric, but they were optimised for the
   earlier one.
@@ -333,7 +346,9 @@ What runs once and what runs per metric:
   metric. When the metrics disagree, pick the metric that matches how predictions will
   be used (probabilities → Brier/LogLoss, ranking → AUC/AUCPR, thresholded decisions → F1)
   rather than the best-looking score. Scores are only comparable within a metric.
-- Classification only for now; regression is planned.
+- Regression: RMSE and R2 usually agree (per fold, R2 = 1 − MSE / fold variance), so
+  with `reuse_step4="model"` put first the metric whose tuning you want reused. MAE
+  targets the median rather than the mean and more often picks a different model.
 
 ### Per-step data
 
