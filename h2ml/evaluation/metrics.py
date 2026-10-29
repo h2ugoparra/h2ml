@@ -380,18 +380,59 @@ def aggregate_metrics(fold_df: pd.DataFrame, group_by_stage: bool = True) -> pd.
     return agg_df[ordered_cols]
 
 
+_CANDIDATE_KEYS = ("Model", "Y_transform", "Stage")
+
+
+def _fold_centered_std(agg_df: pd.DataFrame, fold_df: pd.DataFrame, metric: str) -> pd.Series:
+    """
+    Per-candidate std of fold scores after removing each fold's median across candidates.
+
+    The raw fold std mixes model instability with fold difficulty (e.g. Brier's
+    p(1 − p) floor moving with each fold's prevalence), which every model shares.
+    Centring each fold on the candidates' median cancels the shared part, so the
+    penalty only reflects how erratically a model departs from the field. Aligned to
+    agg_df's rows; NaN fold scores (e.g. AUC on a single-class fold) are skipped.
+    """
+    test_col = metric.removesuffix("_Mean")
+    keys = [c for c in _CANDIDATE_KEYS if c in agg_df.columns and c in fold_df.columns]
+
+    def key_of(values) -> tuple:
+        # None/NaN never compare equal — Y_transform is None/NaN without a transform
+        return tuple("" if v is None or (isinstance(v, float) and np.isnan(v)) else v for v in values)
+
+    wide = pd.DataFrame(
+        {
+            key_of(k if isinstance(k, tuple) else (k,)): g.set_index("Fold")[test_col]
+            for k, g in fold_df.groupby(keys, dropna=False)
+        }
+    )
+    std = wide.sub(wide.median(axis=1), axis=0).std(ddof=1)
+    return pd.Series([std.get(key_of(row), np.nan) for row in agg_df[keys].itertuples(index=False)], index=agg_df.index)
+
+
 def selection_score(
     agg_df: pd.DataFrame,
     metric: str,
     minimize: bool = False,
     n_folds: Optional[int] = None,
+    fold_df: Optional[pd.DataFrame] = None,
 ) -> pd.Series:
-    """Per-row score select_best() ranks by: the confidence bound when n_folds is given, else the mean."""
-    std_col = metric.replace("_Mean", "_Std")
-    if n_folds is not None and std_col in agg_df.columns:
-        penalty = agg_df[std_col] / np.sqrt(n_folds)
-        return agg_df[metric] + penalty if minimize else agg_df[metric] - penalty
-    return agg_df[metric]
+    """
+    Per-row score select_best() ranks by: the confidence bound when n_folds is given, else
+    the mean. The bound's spread is the fold-centred std when fold_df is given (see
+    _fold_centered_std), else agg_df's raw fold std.
+    """
+    if n_folds is None:
+        return agg_df[metric]
+    if fold_df is not None and metric.removesuffix("_Mean") in fold_df.columns:
+        spread = _fold_centered_std(agg_df, fold_df, metric)
+    else:
+        std_col = metric.replace("_Mean", "_Std")
+        if std_col not in agg_df.columns:
+            return agg_df[metric]
+        spread = agg_df[std_col]
+    penalty = spread / np.sqrt(n_folds)
+    return agg_df[metric] + penalty if minimize else agg_df[metric] - penalty
 
 
 def select_best(
@@ -399,6 +440,7 @@ def select_best(
     metric: str = "AUC_Test_Mean",
     minimize: bool = False,
     n_folds: Optional[int] = None,
+    fold_df: Optional[pd.DataFrame] = None,
 ) -> dict:
     """
     Select the best model from an aggregated metrics DataFrame.
@@ -413,12 +455,19 @@ def select_best(
     penalising fold variance in proportion to 1/sqrt(n_folds).
     When n_folds is None the raw mean is used (original behaviour).
 
+    With fold_df, std is the fold-centred std: each fold's scores minus that fold's
+    median across candidates. Fold difficulty shared by every model (e.g. Brier's floor
+    moving with fold prevalence) then neither penalises the model that tracks the data
+    nor rewards one that hedges every prediction towards the middle.
+
     Args:
         agg_df:   Output of aggregate_metrics().
         metric:   Column name to rank by (must end in _Mean, e.g. AUC_Test_Mean).
         minimize: If True, select the row with the lowest value (e.g. RMSE, MAE).
         n_folds:  Number of CV folds used to produce agg_df. When provided,
                   selection uses confidence-bound scoring instead of raw mean.
+        fold_df:  Per-fold metrics behind agg_df (same candidates). With n_folds, the
+                  bound uses the fold-centred std instead of agg_df's std.
 
     Returns:
         Dict with keys model_name, metric, value, row.
@@ -431,7 +480,7 @@ def select_best(
     if metric not in agg_df.columns:
         raise ValueError(f"Metric '{metric}' not found. Available: {list(agg_df.columns)}")
 
-    score = selection_score(agg_df, metric, minimize, n_folds)
+    score = selection_score(agg_df, metric, minimize, n_folds, fold_df)
 
     if score.isna().all():
         raise RuntimeError(

@@ -63,6 +63,16 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Steps 1 and 3 rank candidates by a confidence bound built from the fold-centred std
+  (each fold's scores minus that fold's median across candidates) instead of the raw
+  fold std. The same score orders `ranking_robustness` and therefore the candidate
+  `prefer_reduced_on_tie` switches to. The raw std counted fold difficulty that every
+  model shares as instability. Under uneven spatial folds, e.g. prevalence from 1 % to
+  53 %, it favoured models that hedge every prediction towards the middle: they score
+  uniformly mediocre, while a better model is penalised for its one bad fold. This
+  changes selections. On 12 presence/absence targets it changed 34 of 60 step-3 picks,
+  and 22 of the 29 scorable changes improved the pooled out-of-fold score.
+  `select_best(..., fold_df=None)` and `selection_score` keep the raw-std bound.
 - `multi_metric`'s default metric order is now explicit: Brier, LogLoss, AUC, AUCPR,
   F1 for classification (was AUC, AUCPR, LogLoss, F1, Brier) and RMSE, R2, MAE for
   regression (was R2, MAE, RMSE). It only changes results when `metrics=` is omitted

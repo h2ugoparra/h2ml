@@ -945,6 +945,7 @@ class H2MLPipeline:
             metric=self.config.metric_col,
             minimize=self.config.minimize_metric,
             n_folds=self.config.n_splits,
+            fold_df=result.step1_fold_df,
         )
         result.best_model_name = best["model_name"]
         result.best_model_value = float(best["value"])
@@ -1059,14 +1060,15 @@ class H2MLPipeline:
         # Compare step1 (default) and step3 (reduced) agg dfs directly — pick the best row
         assert result.step1_agg_df is not None and result.step3_agg_df is not None
         all_stages_agg = pd.concat([result.step1_agg_df, result.step3_agg_df], ignore_index=True)
+        assert result.step1_fold_df is not None and result.step3_fold_df is not None
+        both_stages_fold_df = pd.concat([result.step1_fold_df, result.step3_fold_df], ignore_index=True)
         best = select_best(
             all_stages_agg,
             metric=self.config.metric_col,
             minimize=self.config.minimize_metric,
             n_folds=self.config.n_splits,
+            fold_df=both_stages_fold_df,
         )
-        assert result.step1_fold_df is not None and result.step3_fold_df is not None
-        both_stages_fold_df = pd.concat([result.step1_fold_df, result.step3_fold_df], ignore_index=True)
         robust_df = ranking_robustness(both_stages_fold_df, self.config.metric, n_folds=self.config.n_splits)
         result.cv_warnings.extend(self._check_ranking_robustness(robust_df, step=3))
         best_row = best["row"]
