@@ -30,9 +30,23 @@ class TestRankingRobustness:
     def test_winner_matches_select_best(self):
         df = _fold_df({"A": {"AUC": HARD_EASY}, "B": {"AUC": [s - 0.01 for s in HARD_EASY]}})
         out = ranking_robustness(df, "AUC")
-        best = select_best(aggregate_metrics(df), METRIC_COL["AUC"], n_folds=5)
+        best = select_best(aggregate_metrics(df), METRIC_COL["AUC"], n_folds=5, fold_df=df)
         assert out.loc[0, "Model"] == best["model_name"] == "A"
         assert out.loc[0, "Is_Winner"] and out["Is_Winner"].sum() == 1
+
+    def test_ranks_use_fold_centered_spread(self):
+        """A hedger with uniform but worse fold scores must not outrank the model with the
+        better mean whose one bad fold inflates its raw std — the order prefer_reduced_on_tie
+        picks tied candidates from."""
+        df = _fold_df(
+            {
+                "Tracker": {"Brier": [0.05, 0.40, 0.05, 0.10, 0.02]},
+                "Hedger": {"Brier": [0.15, 0.25, 0.13, 0.14, 0.12]},
+            }
+        )
+        out = ranking_robustness(df, "Brier")
+        assert list(out["Model"]) == ["Tracker", "Hedger"]
+        assert out.loc[0, "Is_Winner"]
 
     def test_pairing_cancels_fold_difficulty(self):
         """Marginal std (~0.12) dwarfs the 0.01 gap, but the paired gap is consistent."""

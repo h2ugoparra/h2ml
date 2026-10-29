@@ -44,7 +44,7 @@ def ranking_robustness(fold_df: pd.DataFrame, metric: str, n_folds: Optional[int
     Paired-fold and cross-metric robustness of the selection made on fold_df.
 
     The winner is re-derived with select_best() exactly as the pipeline selects it
-    (confidence-bound score). Each other candidate is compared with it on the folds
+    (confidence-bound score with the fold-centred std). Each other candidate is compared with it on the folds
     both completed (a NaN score, e.g. AUC on a single-class fold, drops that fold
     from that pair only).
 
@@ -65,12 +65,12 @@ def ranking_robustness(fold_df: pd.DataFrame, metric: str, n_folds: Optional[int
             Is_Winner          — the select_best winner, i.e. before any
                                  prefer_reduced_on_tie switch in the pipeline
             Rank_<m>           — rank (1 = best) under each metric present, by the same
-                                 confidence-bound score select_best uses
+                                 confidence-bound score select_best uses (fold-centred std)
     """
     n_folds = n_folds or int(fold_df["Fold"].nunique())
     keys = [c for c in KEY_COLS if c in fold_df.columns]
     agg = aggregate_metrics(fold_df)
-    best = select_best(agg, METRIC_COL[metric], METRIC_MINIMIZE[metric], n_folds)
+    best = select_best(agg, METRIC_COL[metric], METRIC_MINIMIZE[metric], n_folds, fold_df)
     winner = tuple(best["row"][k] for k in keys)
 
     test_col = f"{metric}_Test"
@@ -101,7 +101,7 @@ def ranking_robustness(fold_df: pd.DataFrame, metric: str, n_folds: Optional[int
     rank_cols = []
     for m, col in METRIC_COL.items():
         if col in agg.columns:
-            score = selection_score(agg, col, METRIC_MINIMIZE[m], n_folds)
+            score = selection_score(agg, col, METRIC_MINIMIZE[m], n_folds, fold_df)
             agg[f"Rank_{m}"] = score.rank(ascending=METRIC_MINIMIZE[m], method="min")
             rank_cols.append(f"Rank_{m}")
 

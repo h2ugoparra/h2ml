@@ -40,6 +40,8 @@ Coverage:
         - returns correct model name by min metric
         - raises when metric column is missing
         - returns dict with expected keys
+        - fold-centred spread: ignores shared fold difficulty, still penalises an
+          erratic model, skips NaN folds
 """
 
 from __future__ import annotations
@@ -58,6 +60,7 @@ from h2ml.evaluation.metrics import (
     rename_deprecated_columns,
     resolve_metric,
     select_best,
+    selection_score,
 )
 from h2ml.pipeline.base import TaskType
 from h2ml.pipeline.cv import CVResult, FoldResult
@@ -614,6 +617,67 @@ class TestSelectBest:
             select_best(agg_df, metric="AUC_Test_Mean", n_folds=None)["model_name"]
             == select_best(agg_df, metric="AUC_Test_Mean")["model_name"]
         )
+
+    # Fold-centred spread (fold_df given)
+
+    @staticmethod
+    def _fold_df(scores: dict[str, list[float]], metric: str, **extra) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {"Model": m, "Fold": f, f"{metric}_Test": v, **extra}
+                for m, vals in scores.items()
+                for f, v in enumerate(vals)
+            ]
+        )
+
+    def _agg(self, fold_df: pd.DataFrame, metric: str) -> pd.DataFrame:
+        g = fold_df.groupby("Model")[f"{metric}_Test"]
+        return pd.DataFrame({f"{metric}_Test_Mean": g.mean(), f"{metric}_Test_Std": g.std()}).reset_index()
+
+    def test_fold_centered_ignores_shared_fold_difficulty(self):
+        """Brier: fold 1 is an odd fold (prevalence far from training). The model tracking
+        the data is better on the other four and on the mean, but its one bad fold gives it
+        the larger raw std; the hedger, mediocre everywhere, wins under the raw bound only."""
+        fold_df = self._fold_df(
+            {
+                "Tracker": [0.05, 0.40, 0.05, 0.10, 0.02],
+                "Hedger": [0.15, 0.25, 0.13, 0.14, 0.12],
+            },
+            "Brier",
+        )
+        agg = self._agg(fold_df, "Brier")
+        raw = select_best(agg, "Brier_Test_Mean", minimize=True, n_folds=5)
+        centered = select_best(agg, "Brier_Test_Mean", minimize=True, n_folds=5, fold_df=fold_df)
+        assert raw["model_name"] == "Hedger"
+        assert centered["model_name"] == "Tracker"
+        assert centered["value"] == pytest.approx(0.124)  # value stays the raw mean
+
+    def test_fold_centered_still_penalises_erratic_model(self):
+        """A model that swings against the field loses despite a slightly better mean."""
+        difficulty = np.array([0.60, 0.70, 0.80, 0.90, 0.65])
+        fold_df = self._fold_df(
+            {
+                "A": list(difficulty),
+                "B": list(difficulty - 0.01),
+                "Erratic": list(difficulty + np.array([0.15, -0.12, 0.14, -0.11, 0.0])),
+            },
+            "AUC",
+        )
+        agg = self._agg(fold_df, "AUC")
+        assert select_best(agg, "AUC_Test_Mean")["model_name"] == "Erratic"  # best raw mean
+        assert select_best(agg, "AUC_Test_Mean", n_folds=5, fold_df=fold_df)["model_name"] == "A"
+
+    def test_fold_centered_skips_nan_folds_and_none_keys(self):
+        """NaN fold scores (single-class AUC folds) are skipped; None Y_transform keys match."""
+        fold_df = self._fold_df(
+            {"A": [0.70, np.nan, 0.72, 0.71, 0.70], "B": [0.60, 0.65, np.nan, 0.61, 0.62]},
+            "AUC",
+            Y_transform=None,
+        )
+        agg = self._agg(fold_df, "AUC").assign(Y_transform=None)
+        score = selection_score(agg, "AUC_Test_Mean", n_folds=5, fold_df=fold_df)
+        assert score.notna().all()
+        assert select_best(agg, "AUC_Test_Mean", n_folds=5, fold_df=fold_df)["model_name"] == "A"
 
 
 # ---------------------------------------------------------------------------
