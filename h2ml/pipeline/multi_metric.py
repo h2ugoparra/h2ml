@@ -27,13 +27,17 @@ from loguru import logger
 from h2ml.core.base import TaskType
 from h2ml.core.feature_store import PipelineData
 from h2ml.evaluation.metrics import METRIC_COL, resolve_metric
-from h2ml.optimization.optimizer import CLF_METRICS, REG_METRICS
 from h2ml.pipeline.nested import feature_frequency, final_feature_names, selection_counts
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineResult
 
+# Default run order. It matters with reuse_step4="model": the first metric to select a
+# configuration tunes it, and later metrics selecting the same one reuse that tuning. Proper
+# scoring rules go first so shared tuning targets calibrated predictions — Brier/LogLoss
+# (probabilities), RMSE (the conditional mean, with R2 close behind) — and the metrics that
+# rarely share or that others should not inherit from (F1 thresholds, MAE medians) go last.
 TASK_METRICS: dict[TaskType, tuple[str, ...]] = {
-    TaskType.CLASSIFICATION: tuple(CLF_METRICS),
-    TaskType.REGRESSION: tuple(REG_METRICS),
+    TaskType.CLASSIFICATION: ("Brier", "LogLoss", "AUC", "AUCPR", "F1"),
+    TaskType.REGRESSION: ("RMSE", "R2", "MAE"),
 }
 REUSE_STEP4 = ("none", "model")
 
@@ -194,7 +198,9 @@ def multi_metric(
                           config.metric is ignored). Its models are copied per metric, so
                           one metric's class weighting cannot leak into another's.
         store:            Full dataset.
-        metrics:          Metrics to compare, in run order. Defaults to all metrics of the task.
+        metrics:          Metrics to compare, in run order. Defaults to every metric of the
+                          task in TASK_METRICS order: Brier, LogLoss, AUC, AUCPR, F1
+                          (classification); RMSE, R2, MAE (regression).
         transforms:       y-transform names swept in step 1 (regression only).
         handle_imbalance: Per-metric override of config.handle_imbalance, e.g.
                           {"Brier": False, "LogLoss": False} to keep probability metrics

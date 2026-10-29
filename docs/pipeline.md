@@ -297,7 +297,7 @@ from h2ml import multi_metric
 
 mm = multi_metric(
     H2MLPipeline(config), store,
-    metrics=["Brier", "LogLoss", "AUC", "AUCPR", "F1"],     # default: all metrics of the task
+    metrics=["Brier", "LogLoss", "AUC", "AUCPR", "F1"],     # the default (all metrics, this order)
     handle_imbalance={"Brier": False, "LogLoss": False},    # per-metric override of the config
 )
 
@@ -315,7 +315,7 @@ sweep (`handle_imbalance` is classification-only and rejected here):
 ```python
 mm = multi_metric(
     H2MLPipeline(reg_config), store,
-    metrics=["RMSE", "R2", "MAE"],      # default: R2, MAE, RMSE
+    metrics=["RMSE", "R2", "MAE"],      # the default (all metrics, this order)
     transforms=["log"],                 # swept in step 1, as in run(store, transforms=...)
     reuse_step4="model",
 )
@@ -346,9 +346,12 @@ What runs once and what runs per metric:
   metric. When the metrics disagree, pick the metric that matches how predictions will
   be used (probabilities → Brier/LogLoss, ranking → AUC/AUCPR, thresholded decisions → F1)
   rather than the best-looking score. Scores are only comparable within a metric.
-- Regression: RMSE and R2 usually agree (per fold, R2 = 1 − MSE / fold variance), so
-  with `reuse_step4="model"` put first the metric whose tuning you want reused. MAE
-  targets the median rather than the mean and more often picks a different model.
+- Run order matters with `reuse_step4="model"`: the first metric to select a
+  configuration tunes it, and later metrics reuse that tuning. The default order puts
+  proper scoring rules first — Brier then LogLoss (probabilities), RMSE then R2 (the
+  conditional mean; per fold, R2 = 1 − MSE / fold variance, so the two usually agree) —
+  and F1 and MAE (a median target, more often a different model) last. Pass `metrics=`
+  to put first the metric your predictions are judged by.
 
 ### Per-step data
 
