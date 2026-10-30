@@ -66,6 +66,13 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **Breaking:** `FinalModel.predict()` now returns the original y scale when a
+  y-transform won, matching `predict_interval()` and `DeltaFinalModel.predict()`.
+  Before, it returned the transformed space, so scoring it against `y` was wrong.
+  Remove any manual `INVERSE_TRANSFORMS` step after `predict()`, which would now
+  invert twice; models saved earlier behave the same way once loaded. `predict_map`
+  now maps original-scale values too: it never inverted, so transformed models drew
+  log- or sqrt-scale maps. Use `final.estimator.predict()` for the transformed space.
 - Steps 1 and 3 rank candidates by a confidence bound built from the fold-centred std
   (each fold's scores minus that fold's median across candidates) instead of the raw
   fold std. The same score orders `ranking_robustness` and therefore the candidate
