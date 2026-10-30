@@ -33,6 +33,7 @@ from h2ml.evaluation.metrics import RunMetadata
 from h2ml.features.feature_store import PipelineData
 from h2ml.features.selector import FeatureSelector
 from h2ml.pipeline.base import TaskType
+from h2ml.pipeline.cv import CVResult
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig, PipelineResult
 from h2ml.pipeline.step import make_classifier, make_regressor
 from h2ml.preprocessing.transforms import clip_upper_outliers
@@ -1657,3 +1658,71 @@ class TestWinnerEstimatorReuse:
             result = pipeline.run_step1_only(clf_store)
         assert result.best_base_estimator is not pipeline.models[0].estimator
         assert not hasattr(result.best_base_estimator, "coef_")
+
+
+class TestBestCvResult:
+    """best_cv_result must be the CV of the selected configuration, not the latest step run."""
+
+    @staticmethod
+    def _cv(name: str, y_transform: str = None) -> CVResult:
+        return CVResult(model_name=name, task_type=TaskType.REGRESSION, y_transform=y_transform)
+
+    def _result(self, **kwargs) -> PipelineResult:
+        self.s1_log, self.s1_sqrt = self._cv("RF", "log"), self._cv("RF", "sqrt")
+        self.s3, self.s4 = self._cv("RF", "sqrt"), self._cv("RF", "sqrt")
+        return PipelineResult(
+            step1_cv_result=[self.s1_log, self._cv("SVR", "sqrt"), self.s1_sqrt],
+            step3_cv_result=[self._cv("SVR", "sqrt"), self.s3],
+            step4_cv_result=self.s4,
+            best_model_name="RF",
+            y_transform="sqrt",
+            **kwargs,
+        )
+
+    def test_optimized_returns_tuned_cv(self):
+        result = self._result(best_stage="optimized", best_feature_stage="reduced")
+        assert result.best_cv_result is self.s4
+
+    def test_rejected_tuning_returns_reduced_cv(self):
+        result = self._result(best_stage="reduced", best_feature_stage="reduced")
+        assert result.best_cv_result is self.s3
+
+    def test_rejected_tuning_returns_default_cv_of_selected_transform(self):
+        result = self._result(best_stage="default", best_feature_stage="default")
+        assert result.best_cv_result is self.s1_sqrt
+
+    def test_no_transform(self):
+        cv = self._cv("RF")
+        result = PipelineResult(step1_cv_result=[cv], best_model_name="RF", best_stage="default")
+        assert result.best_cv_result is cv
+
+    def test_saved_before_y_transform_field_falls_back_to_model_name(self):
+        cv = self._cv("RF")
+        result = PipelineResult(step3_cv_result=[cv], best_model_name="RF", best_stage="reduced", y_transform="log")
+        assert result.best_cv_result is cv
+
+    def test_cv_results_record_their_transform(self):
+        """End to end: the transform sweep labels step-1 and step-3 CV results."""
+        pipeline = H2MLPipeline(models=_reg_steps(), config=_reg_config())
+        with patch.object(H2MLPipeline, "_is_opt_enabled", return_value=False), _mock_selector():
+            result = pipeline.run(_make_positive_reg_store(), transforms=["log", "sqrt"])
+        assert {cv.y_transform for cv in result.step1_cv_result} == {"log", "sqrt"}
+        assert {cv.y_transform for cv in result.step3_cv_result} == {result.y_transform}
+        selected = result.best_cv_result
+        assert selected.model_name == result.best_model_name
+        assert selected.y_transform == result.y_transform
+
+
+class TestStep4RejectsTunedWithFailedFolds:
+    def test_tuned_model_with_failed_fold_is_rejected(self):
+        """A tuned mean over fewer folds isn't comparable with the untuned score."""
+        pipeline = H2MLPipeline(models=_reg_steps(), config=_reg_config(metric="RMSE"))
+        result = PipelineResult(
+            best_model_value=5.0,
+            best_stage="reduced",
+            step4_agg_df=pd.DataFrame({"RMSE_Test_Mean": [1.0], "RMSE_Test_Std": [0.1]}),
+            step4_cv_result=CVResult(model_name="RF", task_type=TaskType.REGRESSION, failed_folds=[3]),
+        )
+        pipeline._select_step4(result, {"n_estimators": 10}, {})
+        assert result.best_stage == "reduced"
+        assert result.best_params == {}

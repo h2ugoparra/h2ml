@@ -87,7 +87,7 @@ def zero_y() -> np.ndarray:
 
 @pytest.fixture
 def single_outlier_y() -> np.ndarray:
-    base = np.ones(50) * 5.0
+    base = np.linspace(1.0, 10.0, 50)
     return np.append(base, 9999.0)
 
 
@@ -325,3 +325,27 @@ class TestPerFoldWinsorize:
     @pytest.mark.parametrize("name", ["count", "log", "sqrt", None])
     def test_no_train_target_fn_for_stateless_transforms(self, name):
         assert get_train_target_fn(name) is None
+
+
+class TestWinsorizeZeroInflated:
+    """With Q3 == Q1 == min (>= 75 % zeros) the IQR limit equals the minimum: clipping
+    would flatten every value to one constant, so there is nothing to winsorize."""
+
+    @pytest.fixture
+    def zero_inflated_y(self) -> np.ndarray:
+        return np.array([0.0] * 80 + [1.0, 2.0, 5.0, 40.0] * 5)
+
+    def test_winsorize_returns_none_instead_of_flattening(self, zero_inflated_y):
+        assert winsorize(zero_inflated_y) is None
+
+    @pytest.mark.parametrize("name", ["wincount", "winlog", "winsqrt"])
+    def test_registry_skips_win_transforms(self, zero_inflated_y, name):
+        assert Y_TRANSFORMS[name](zero_inflated_y) is None
+
+    def test_clip_upper_outliers_keeps_targets(self, zero_inflated_y):
+        """A training fold that is mostly zeros stays fittable."""
+        np.testing.assert_array_equal(clip_upper_outliers(zero_inflated_y), zero_inflated_y)
+
+    def test_nonzero_q3_still_clips(self):
+        y = np.array([0.0] * 60 + [1.0] * 39 + [100.0])
+        assert winsorize(y).max() == 2.5

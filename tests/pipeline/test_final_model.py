@@ -347,6 +347,24 @@ class TestTransformScale:
             final.estimator.predict(final._prepare(X)), clip_upper_outliers(np.log1p(y)), rtol=1e-6
         )
 
+    def test_default_stage_refit_keeps_log_scale_without_outliers_to_clip(self):
+        """When the refit rows leave winsorize nothing to clip, only the clipping is
+        skipped. Fitting raw y would then be inverted with expm1 on the wrong scale."""
+        rng = np.random.default_rng(5)
+        X = rng.standard_normal((60, 3))
+        y = np.zeros(60)
+        y[:6] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        result = PipelineResult(
+            features=PipelineData(X=X, feature_names=["a", "b", "c"], y=y),
+            step1_cv_result=[CVResult(model_name="KNeighborsRegressor", task_type=TaskType.REGRESSION)],
+            best_model_name="KNeighborsRegressor",
+            best_stage="default",
+            best_feature_stage="default",
+            y_transform="winlog",
+        )
+        final = result.build_final_model()
+        np.testing.assert_allclose(final.estimator.predict(final._prepare(X)), np.log1p(y), rtol=1e-6)
+
     def test_predict_interval_bounds_in_original_scale(self):
         """q is calibrated on original-scale OOF residuals, so the bounds must be
         centred on the inverse-transformed point estimate — not on the

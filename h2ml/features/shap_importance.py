@@ -421,6 +421,7 @@ def get_oof_shap_values(
     logger.info(f"Computing OOF SHAP values for {estimator_cls.__name__} ({n_splits}-fold, n_samples={n_samples})")
 
     oof_shap = np.zeros((n_samples, n_features), dtype=np.float64)
+    explained = np.zeros(n_samples, dtype=bool)
 
     def fit_fold(train_idx: np.ndarray, test_idx: np.ndarray) -> tuple[Any, pd.DataFrame, pd.DataFrame]:
         X_train, X_test = X[train_idx], X[test_idx]
@@ -443,36 +444,49 @@ def get_oof_shap_values(
         chunk_rows: list[np.ndarray] = []
         chunks: list[tuple[Any, pd.DataFrame, pd.DataFrame]] = []
         for train_idx, test_idx in splitter.split(X, y):
-            model, X_train_frame, X_test_frame = fit_fold(train_idx, test_idx)
+            try:
+                model, X_train_frame, X_test_frame = fit_fold(train_idx, test_idx)
+            except Exception as e:
+                logger.warning(f"OOF SHAP: fold skipped — {e}")
+                continue
             background = _summarize_background(X_train_frame, max_background)
             for rows in _split_rows(X_test_frame):
                 chunk_rows.append(test_idx[rows])
                 chunks.append((model, background, X_test_frame.iloc[rows]))
-        values = _explain_chunks(chunks, task_type, class_index, max_background, random_state, n_jobs)
+        values = _explain_chunks(chunks, task_type, class_index, max_background, random_state, n_jobs) if chunks else []
         for idx, chunk_values in zip(chunk_rows, values, strict=True):
             oof_shap[idx] = chunk_values
+            explained[idx] = True
     else:
         for train_idx, test_idx in splitter.split(X, y):
-            model, X_train_frame, X_test_frame = fit_fold(train_idx, test_idx)
+            try:
+                model, X_train_frame, X_test_frame = fit_fold(train_idx, test_idx)
 
-            explainer = _select_explainer(
-                model,
-                task_type,
-                X_test_frame,
-                X_background=X_train_frame,
-                max_background=max_background,
-            )
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message=".*does not have valid feature names.*")
-                shap_output = explainer(X_test_frame)
+                explainer = _select_explainer(
+                    model,
+                    task_type,
+                    X_test_frame,
+                    X_background=X_train_frame,
+                    max_background=max_background,
+                )
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message=".*does not have valid feature names.*")
+                    shap_output = explainer(X_test_frame)
 
-            oof_shap[test_idx] = _extract_shap_array(shap_output, class_index=class_index)
+                oof_shap[test_idx] = _extract_shap_array(shap_output, class_index=class_index)
+                explained[test_idx] = True
+            except Exception as e:
+                logger.warning(f"OOF SHAP: fold skipped — {e}")
+
+    if not explained.any():
+        raise RuntimeError(f"OOF SHAP: every fold failed for {estimator_cls.__name__}.")
 
     if save_path is not None:
         np.save(save_path, oof_shap)
         logger.info(f"OOF SHAP values saved at {save_path}")
 
-    importance = np.abs(oof_shap).mean(axis=0)
+    # Rows of skipped folds hold zeros, which would dilute the importance of every feature
+    importance = np.abs(oof_shap[explained]).mean(axis=0)
     feature_importance = pd.Series(importance, index=feature_names).sort_values(ascending=False)
 
     return oof_shap, feature_importance

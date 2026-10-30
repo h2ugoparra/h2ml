@@ -45,7 +45,12 @@ from h2ml.evaluation.conformal import (
     _time_bin,
 )
 from h2ml.pipeline.holdout import concat_stores, stage_store
-from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS, Y_TRANSFORMS, get_train_target_fn
+from h2ml.preprocessing.transforms import (
+    INVERSE_TRANSFORMS,
+    PRE_CLIP_TRANSFORMS,
+    Y_TRANSFORMS,
+    get_train_target_fn,
+)
 
 
 @dataclass
@@ -641,9 +646,9 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     y_fit = store.y
     if result.y_transform and store.y_transform is None:
         transformed = Y_TRANSFORMS[result.y_transform](store.y)
-        # win* transforms return None when y has no outliers — identity in that case
-        if transformed is not None:
-            y_fit = transformed
+        # win* transforms return None when there is nothing to clip — only the clipping
+        # is skipped: predictions are still inverted with the log/sqrt step underneath
+        y_fit = PRE_CLIP_TRANSFORMS[result.y_transform](store.y) if transformed is None else transformed
     else:
         # Winsorize-based transform stores hold y before clipping (the limit is fitted
         # per CV fold) — clip here with the limit fitted on the full training set.
