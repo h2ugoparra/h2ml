@@ -57,6 +57,9 @@ df = predict_for_year(
 
 When the model has a `LocalConformalCalibration` (built when `store.coords` and/or `store.times` were provided during training), passing `local=True` makes `predict_for_year` extract `lon`, `lat`, and `time` from the scan and produce interval widths that vary by location and season.
 
+!!! warning "Coordinate order"
+    `local=True` passes coordinates as `(lat, lon)`, so the model must have been trained with `store.coords` in that order. With `(lon, lat)` the intervals use the wrong spatial block's width, and no error is raised.
+
 `local` defaults to `False`, so intervals use the global constant-width threshold unless you opt in:
 
 ```python

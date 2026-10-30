@@ -85,7 +85,8 @@ def _predict_single(
     idx = df_clean["index"]
     n = len(df_original)
 
-    coords = df_clean.select(["lon", "lat"]).to_numpy() if "lon" in geo_cols and "lat" in geo_cols else None
+    # (lat, lon): the order local conformal was calibrated on (store.coords)
+    coords = df_clean.select(["lat", "lon"]).to_numpy() if "lon" in geo_cols and "lat" in geo_cols else None
     times = df_clean["time"].cast(pl.Utf8).to_numpy() if "time" in geo_cols else None
     extra = _aoa_series(model, X, idx, n, col_name) if aoa else ()
 
@@ -177,7 +178,8 @@ def _predict_delta_single(
     idx = df_clean["index"]
     n = len(df_original)
 
-    coords = df_clean.select(["lon", "lat"]).to_numpy() if "lon" in geo_cols and "lat" in geo_cols else None
+    # (lat, lon): the order local conformal was calibrated on (store.coords)
+    coords = df_clean.select(["lat", "lon"]).to_numpy() if "lon" in geo_cols and "lat" in geo_cols else None
     times = df_clean["time"].cast(pl.Utf8).to_numpy() if "time" in geo_cols else None
 
     X_clf = df_clean.select(clf_features).to_numpy()
