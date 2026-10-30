@@ -58,6 +58,11 @@ All notable changes to this project will be documented in this file.
   Optuna trials and the step-4 CV had the same problem and are fixed too. The
   unfitted winner is stored and persisted as `PipelineResult.best_base_estimator`.
   Results saved before this change keep the old registry-based rebuild.
+- `predict_for_year` and `predict_for_year_delta` with `local=True` passed coordinates
+  as (lon, lat) to local conformal, which is calibrated on `store.coords` as (lat, lon),
+  so intervals used the wrong spatial block's width. Predictions were unaffected.
+  Rerun any maps made this way. `store.coords` must be (lat, lon) for `local=True`: a
+  model trained on (lon, lat) got correct widths before and needs retraining now.
 - A winning estimator that is not in the registry no longer crashes step 4 with
   `KeyError`; it is treated like `opt_enabled=False` and HPO is skipped.
 - CatBoostClassifier HPO no longer fails every trial with "Only one of parameters
