@@ -306,13 +306,20 @@ class TestTransformScale:
         winner and callers invert an already original-scale output."""
         result, X, y = self._result_with_log_transform("default")
         final = result.build_final_model()
-        np.testing.assert_allclose(final.predict(X), np.log1p(y), rtol=1e-6)
+        np.testing.assert_allclose(final.estimator.predict(final._prepare(X)), np.log1p(y), rtol=1e-6)
 
     def test_reduced_stage_does_not_double_transform(self):
         """features_reduced already carries transformed y — it must be used as-is."""
         result, X, y = self._result_with_log_transform("reduced")
         final = result.build_final_model()
-        np.testing.assert_allclose(final.predict(X), np.log1p(y), rtol=1e-6)
+        np.testing.assert_allclose(final.estimator.predict(final._prepare(X)), np.log1p(y), rtol=1e-6)
+
+    @pytest.mark.parametrize("stage", ["default", "reduced"])
+    def test_predict_returns_original_scale(self, stage):
+        """predict() inverts the y-transform, whichever feature stage won."""
+        result, X, y = self._result_with_log_transform(stage)
+        final = result.build_final_model()
+        np.testing.assert_allclose(final.predict(X), y, rtol=1e-6)
 
     @pytest.mark.parametrize("stage", ["default", "reduced"])
     def test_winsorize_refit_clips_with_full_training_limit(self, stage):
@@ -336,7 +343,9 @@ class TestTransformScale:
                 X=X, feature_names=["a", "b", "c"], y=np.log1p(y), y_true=y, y_transform="winlog"
             )
         final = result.build_final_model()
-        np.testing.assert_allclose(final.predict(X), clip_upper_outliers(np.log1p(y)), rtol=1e-6)
+        np.testing.assert_allclose(
+            final.estimator.predict(final._prepare(X)), clip_upper_outliers(np.log1p(y)), rtol=1e-6
+        )
 
     def test_predict_interval_bounds_in_original_scale(self):
         """q is calibrated on original-scale OOF residuals, so the bounds must be
@@ -360,6 +369,29 @@ class TestTransformScale:
         q = fm.conformal.threshold(0.10)
         np.testing.assert_allclose(lower, y - q, rtol=1e-6, atol=1e-8)
         np.testing.assert_allclose(upper, y + q, rtol=1e-6, atol=1e-8)
+        np.testing.assert_allclose((lower + upper) / 2, fm.predict(X), rtol=1e-6, atol=1e-8)
+
+    def test_delta_inverts_regressor_transform_once(self):
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.neighbors import KNeighborsRegressor
+
+        rng = np.random.default_rng(6)
+        X = rng.standard_normal((40, 3))
+        y = rng.uniform(1.0, 30.0, size=40)
+        names = ["a", "b", "c"]
+        reg = FinalModel(
+            estimator=KNeighborsRegressor(weights="distance").fit(X, np.log1p(y)),
+            feature_names=names,
+            task_type=TaskType.REGRESSION,
+            y_transform="log",
+        )
+        clf = FinalModel(
+            estimator=LogisticRegression().fit(X, rng.integers(0, 2, size=40)),
+            feature_names=names,
+            task_type=TaskType.CLASSIFICATION,
+        )
+        delta = DeltaFinalModel(clf=clf, reg=reg)
+        np.testing.assert_allclose(delta.predict(X), clf.predict_proba(X) * y, rtol=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -814,6 +846,20 @@ class TestBuildDeltaConformal:
         cal = _build_delta_conformal(clf_r, reg_r, reg_f, X, y, pos)
         assert cal is not None
         assert isinstance(cal, ConformalCalibration)
+
+    def test_zero_count_residuals_invert_transform_once(self):
+        """A transformed regressor must give the same residuals as the equivalent
+        untransformed one: zero-count samples go through reg_final.predict()."""
+        clf_r, reg_r, reg_f, X, y, pos = self._setup()
+        expected = _build_delta_conformal(clf_r, reg_r, reg_f, X, y, pos)
+        # expm1(log1p(p)) == p, so this estimator's inverted output equals reg_f's.
+        log_est = MagicMock()
+        log_est.predict.side_effect = lambda A: np.log1p(reg_f.estimator.predict(A))
+        log_reg = FinalModel(
+            estimator=log_est, feature_names=DELTA_FEATURES, task_type=TaskType.REGRESSION, y_transform="log"
+        )
+        cal = _build_delta_conformal(clf_r, reg_r, log_reg, X, y, pos)
+        np.testing.assert_allclose(cal.scores, expected.scores)
 
     def test_scores_non_negative(self):
         clf_r, reg_r, reg_f, X, y, pos = self._setup()

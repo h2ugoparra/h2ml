@@ -162,16 +162,11 @@ df = predict_for_year(target="sparrow", year=2023, ..., alpha=0.10)
 # columns: sparrow_v1, sparrow_v1_pi_lower, sparrow_v1_pi_upper
 ```
 
-Bounds are in the original (inverse-transformed) count scale. Computed in transform space before inverting, giving correct asymmetric intervals:
+Bounds are in the original (inverse-transformed) count scale, because `q` is calibrated on original-scale residuals. They are symmetric around the prediction, with or without a y-transform, apart from the clip at zero:
 
 ```
-# without y_transform (symmetric)
 pi_lower = max(0, ŷ − q)
 pi_upper = ŷ + q
-
-# with y_transform (asymmetric — e.g. log or sqrt)
-pi_lower = max(0, inverse_fn(raw − q))
-pi_upper = inverse_fn(raw + q)
 ```
 
 When `local=True`, `q` is a per-sample value from `LocalConformalCalibration.threshold()`. The default is `local=False`, which uses the global constant `q`.
@@ -292,7 +287,7 @@ With local calibration, `q` is looked up per sample from the compound (block × 
 - **Symmetric intervals (regression):** `ŷ ± q` — same offset above and below, which can produce negative lower bounds for count data. Local calibration changes *which* `q` is used per sample but keeps the symmetric form. Conformalized Quantile Regression (CQR) is the principled fix for asymmetric intervals and is forward-compatible with `LocalConformalCalibration` — only the score-generation step would change.
 - **Marginal coverage only:** the guarantee holds on average over the training distribution. Out-of-distribution inputs (spatial extrapolation, future years with no training data in nearby blocks) may not achieve nominal coverage.
 - **Temporal block sparsity:** with SPCVSplitter producing many AHC blocks and monthly bins, compound cells can be very small. Use `time_bin_resolution="season"` and check the diagnostic output to ensure cells have enough samples.
-- **Transformed targets:** `FinalModel.predict_interval()` returns bounds in the transformed space. `predict_for_year` handles inversion automatically. `DeltaFinalModel` always outputs in the original count scale.
+- **Transformed targets:** `predict()`, `predict_interval()`, `predict_for_year` and `DeltaFinalModel` all return the original scale. Intervals built from original-scale residuals are symmetric, so they can't follow the skew of a log or sqrt target.
 
 ---
 

@@ -67,9 +67,9 @@ class FinalModel:
                           powers predict_interval / predict_set. None when no calibration
                           was available (e.g. partial pipeline run).
         y_transform:      Name of the y-transform applied during training (e.g. "log"),
-                          or None. predict() returns the transformed space and the
-                          caller inverts it; predict_interval() bounds are already in
-                          the original scale. See preprocessing/transforms.py.
+                          or None. predict() and predict_interval() invert it, so both
+                          return the original scale; estimator.predict() stays in the
+                          transformed space. See preprocessing/transforms.py.
         local_conformal:  Space-time block-local conformal calibrator. Used instead of
                           `conformal` when coords/times are passed to predict_interval/
                           predict_set, giving per-sample thresholds. None unless the run
@@ -114,9 +114,12 @@ class FinalModel:
                 (columns must match feature_names order).
 
         Returns:
-            1-D array of predictions.
+            1-D array of predictions, in the original y scale when the pipeline
+            used a y-transform.
         """
-        return self.estimator.predict(self._prepare(X))
+        y_hat = self.estimator.predict(self._prepare(X))
+        inverse_fn = INVERSE_TRANSFORMS.get(self.y_transform) if self.y_transform else None
+        return inverse_fn(y_hat) if inverse_fn is not None else y_hat
 
     def predict_proba(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
         """
@@ -159,10 +162,9 @@ class FinalModel:
         spatial block's residual distribution, giving wider intervals in
         high-error regions and narrower ones where the model is well calibrated.
 
-        Note: bounds are always in the original y scale. q is calibrated on
-        original-scale OOF residuals, so when the pipeline used a y-transform the
-        point estimate is inverted internally before the interval is applied —
-        do not apply the inverse transform to the returned bounds.
+        Note: bounds are always in the original y scale, like predict(). q is
+        calibrated on original-scale OOF residuals, so do not apply the inverse
+        transform to the returned bounds.
 
         Args:
             X:      Input features (DataFrame or ndarray).
@@ -186,14 +188,9 @@ class FinalModel:
                 "No conformal calibration available. "
                 "Rebuild FinalModel via result.build_final_model() after a full pipeline run."
             )
-        y_hat = self.predict(X)
         # q is calibrated on original-scale OOF residuals (CV inverse-transforms
-        # predictions before storing them), so the interval must be applied in the
-        # original scale — invert the point estimate first when a transform is set.
-        if self.y_transform is not None:
-            inverse_fn = INVERSE_TRANSFORMS.get(self.y_transform)
-            if inverse_fn is not None:
-                y_hat = inverse_fn(y_hat)
+        # predictions before storing them), so it applies to predict()'s output.
+        y_hat = self.predict(X)
         if (coords is not None or times is not None) and self.local_conformal is not None:
             q = self.local_conformal.threshold(alpha, coords=coords, times=times)
         else:
@@ -639,9 +636,8 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     # The refit target must be in the same y-space the winning model was validated
     # in. The "default" feature stage keeps the raw input store, so when a
     # y-transform won the sweep the transform is re-applied here — otherwise the
-    # deployed model would differ from the CV winner and callers that invert
-    # predictions (DeltaFinalModel, geo_predict) would invert an already
-    # original-scale output.
+    # deployed model would differ from the CV winner and predict() would invert
+    # an already original-scale output.
     y_fit = store.y
     if result.y_transform and store.y_transform is None:
         transformed = Y_TRANSFORMS[result.y_transform](store.y)
@@ -762,7 +758,7 @@ def _delta_oof_residuals(
     P_oof (all N samples) comes from clf_result.best_cv_result.
     count_oof_pos (positive samples, already inverse-transformed by CV) comes from
     reg_result.best_cv_result. For zero-count samples the regressor is called as a
-    regular predictor (not OOF) and the inverse transform is applied manually.
+    regular predictor (not OOF).
 
     Pass X_full as a DataFrame (with all feature column names) when the clf and reg
     were trained on different feature sets — reg_final.predict selects its own columns.
@@ -831,7 +827,7 @@ def _delta_oof_residuals(
     count_hat_full = np.full(n_full, np.nan)
     count_hat_full[positive_indices] = count_oof_pos
 
-    # For zero-count samples, call the final regressor (not OOF) and inverse-transform manually
+    # For zero-count samples, call the final regressor (not OOF)
     zero_mask = np.ones(n_full, dtype=bool)
     zero_mask[positive_indices] = False
     zero_indices = np.where(zero_mask)[0]
@@ -839,12 +835,7 @@ def _delta_oof_residuals(
         # Slice preserving type: DataFrame slicing keeps column names so _prepare
         # can select the reg's feature subset when clf and reg have different features.
         X_zero = X_full.iloc[zero_indices] if isinstance(X_full, pd.DataFrame) else X_full[zero_indices]
-        zero_preds = reg_final.predict(X_zero)  # transform space
-        if reg_final.y_transform is not None:
-            inverse_fn = INVERSE_TRANSFORMS.get(reg_final.y_transform)
-            if inverse_fn is not None:
-                zero_preds = inverse_fn(zero_preds)
-        count_hat_full[zero_indices] = zero_preds
+        count_hat_full[zero_indices] = reg_final.predict(X_zero)
 
     delta_oof = P_oof * count_hat_full
     delta_resid = np.abs(y_full - delta_oof)
@@ -897,9 +888,8 @@ class DeltaFinalModel:
     Conformal interval: [max(0, delta − q), delta + q]
     where q is calibrated from combined out-of-fold residuals on the full delta output.
 
-    The regressor's y-transform (if any) is inverted inside predict() so the output is
-    always in the original count scale. This differs from FinalModel, where the caller
-    handles inversion — the multiplication P × count requires the original scale.
+    The regressor's predict() inverts its y-transform (if any), so the output is always
+    in the original count scale — the multiplication P × count requires that scale.
 
     Attributes:
         clf:             Presence/absence classifier — supplies P(present).
@@ -935,10 +925,9 @@ class DeltaFinalModel:
         """
         Delta prediction: P(present) × E(count | present).
 
-        The regressor's y-transform is inverted here so the result is in the
-        original count scale. Pass a DataFrame to let each sub-model select its own
-        features by name; pass an ndarray only when both models share the same
-        feature set and column order.
+        The result is in the original count scale. Pass a DataFrame to let each
+        sub-model select its own features by name; pass an ndarray only when both
+        models share the same feature set and column order.
 
         Args:
             X: Input features (DataFrame preferred; ndarray only when clf and reg
@@ -947,13 +936,7 @@ class DeltaFinalModel:
         Returns:
             1-D array of expected counts in the original scale.
         """
-        p = self.clf.predict_proba(X)
-        count = self.reg.predict(X)
-        if self.reg.y_transform is not None:
-            inverse_fn = INVERSE_TRANSFORMS.get(self.reg.y_transform)
-            if inverse_fn is not None:
-                count = inverse_fn(count)
-        return p * count
+        return self.clf.predict_proba(X) * self.reg.predict(X)
 
     def predict_interval(
         self,
