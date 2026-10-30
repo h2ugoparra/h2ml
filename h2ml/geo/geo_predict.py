@@ -16,7 +16,6 @@ from loguru import logger
 
 from h2ml.core.base import TaskType
 from h2ml.pipeline.final_model import DeltaFinalModel, FinalModel
-from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS
 
 
 def _aoa_series(model: FinalModel, X: np.ndarray, idx: pl.Series, n: int, col_name: str) -> tuple[pl.Series, ...]:
@@ -85,7 +84,8 @@ def _predict_single(
     idx = df_clean["index"]
     n = len(df_original)
 
-    coords = df_clean.select(["lon", "lat"]).to_numpy() if "lon" in geo_cols and "lat" in geo_cols else None
+    # (lat, lon): the order local conformal was calibrated on (store.coords)
+    coords = df_clean.select(["lat", "lon"]).to_numpy() if "lon" in geo_cols and "lat" in geo_cols else None
     times = df_clean["time"].cast(pl.Utf8).to_numpy() if "time" in geo_cols else None
     extra = _aoa_series(model, X, idx, n, col_name) if aoa else ()
 
@@ -115,12 +115,9 @@ def _predict_single(
             return (pred_series, lower_series, upper_series) + extra
         return (pred_series,) + extra
 
-    # Regression: predictions are inverse-transformed to the original scale first;
-    # q is calibrated on original-scale OOF residuals, so intervals are built
-    # around the original-scale point estimate (never in transform space).
-    raw = model.predict(X)
-    inverse_fn = INVERSE_TRANSFORMS.get(model.y_transform) if model.y_transform else None
-    preds = inverse_fn(raw).astype(np.float32) if inverse_fn else raw.astype(np.float32)
+    # Regression: predict() returns the original scale; q is calibrated on
+    # original-scale OOF residuals, so intervals are built around that estimate.
+    preds = model.predict(X).astype(np.float32)
     pred_series = pl.Series(col_name, [None] * n, dtype=pl.Float32).scatter(idx, preds)
 
     if alpha is not None and model.conformal is not None:
@@ -149,8 +146,7 @@ def _predict_delta_single(
     Generate delta predictions (and optional conformal intervals) for one target.
 
     Rows where any feature needed by either sub-model is null are excluded.
-    The regressor's y-transform is inverted before multiplying so the delta is
-    in the original count scale. Interval semantics mirror _predict_single —
+    The delta is in the original count scale. Interval semantics mirror _predict_single —
     local=True uses LocalConformalCalibration when available.
 
     Args:
@@ -177,7 +173,8 @@ def _predict_delta_single(
     idx = df_clean["index"]
     n = len(df_original)
 
-    coords = df_clean.select(["lon", "lat"]).to_numpy() if "lon" in geo_cols and "lat" in geo_cols else None
+    # (lat, lon): the order local conformal was calibrated on (store.coords)
+    coords = df_clean.select(["lat", "lon"]).to_numpy() if "lon" in geo_cols and "lat" in geo_cols else None
     times = df_clean["time"].cast(pl.Utf8).to_numpy() if "time" in geo_cols else None
 
     X_clf = df_clean.select(clf_features).to_numpy()
@@ -185,10 +182,6 @@ def _predict_delta_single(
 
     p = model.clf.predict_proba(X_clf)
     count = model.reg.predict(X_reg)
-    if model.reg.y_transform is not None:
-        inverse_fn = INVERSE_TRANSFORMS.get(model.reg.y_transform)
-        if inverse_fn is not None:
-            count = inverse_fn(count)
 
     delta = (p * count).astype(np.float32)
     pred_series = pl.Series(col_name, [None] * n, dtype=pl.Float32).scatter(idx, delta)

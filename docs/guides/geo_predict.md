@@ -57,6 +57,9 @@ df = predict_for_year(
 
 When the model has a `LocalConformalCalibration` (built when `store.coords` and/or `store.times` were provided during training), passing `local=True` makes `predict_for_year` extract `lon`, `lat`, and `time` from the scan and produce interval widths that vary by location and season.
 
+!!! warning "Coordinate order"
+    `local=True` passes coordinates as `(lat, lon)`, so the model must have been trained with `store.coords` in that order. With `(lon, lat)` the intervals use the wrong spatial block's width, and no error is raised.
+
 `local` defaults to `False`, so intervals use the global constant-width threshold unless you opt in:
 
 ```python
@@ -71,16 +74,11 @@ See [Conformal Prediction — Spatio-temporal local calibration](conformal.md#sp
 
 The meaning of the bound columns differs by task type:
 
-**Regression** — per-sample outcome bounds in the original (inverse-transformed) count scale. The bounds are computed in the transform space before inverting, which gives correct asymmetric intervals:
+**Regression** — per-sample outcome bounds in the original (inverse-transformed) count scale. They are symmetric around the prediction, with or without a y-transform, apart from the clip at zero:
 
 ```
-# without y_transform (symmetric)
 pi_lower = max(0, ŷ − q)
 pi_upper = ŷ + q
-
-# with y_transform (asymmetric — e.g. log or sqrt)
-pi_lower = max(0, inverse_fn(raw − q))
-pi_upper = inverse_fn(raw + q)
 ```
 
 where `q` is a per-sample threshold when `local=True`, or the global quantile when `local=False`.

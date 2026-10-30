@@ -207,7 +207,7 @@ Both methods work on any input — held-out test samples, a prediction grid, spa
 
 - Intervals are **constant-width** — the same `q` is added to every prediction, so regions of the input space with higher inherent variance get the same interval as low-variance regions.
 - Coverage is **marginal**, not conditional: the guarantee holds on average over new draws from the training distribution. Predictions on out-of-distribution inputs (e.g. spatial extrapolation beyond the training extent) may not achieve nominal coverage.
-- If `result.y_transform` is set, the interval is in the **transformed space**. Apply `INVERSE_TRANSFORMS[result.y_transform]` to the bounds if you need original-scale intervals.
+- If `result.y_transform` is set, `predict()` and `predict_interval()` both return the **original scale** — don't apply the inverse transform to their output. Intervals stay symmetric, so they can't follow the skew of a log or sqrt target.
 
 ### Delta model (presence/abundance)
 

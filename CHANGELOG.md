@@ -35,6 +35,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `predict_map` failed on a fresh install with an `ImportError`: `h2mare` 0.9.0 moved
+  `cartopy` to its `viz` extra, and the lock pinned 0.1.1, so nothing caught it. h2ml
+  now depends on `h2mare[viz]>=0.9.0`.
 - `multi_metric(reuse_step4="model")` only shares step-4 tuning between metrics whose
   final feature lists match. Before, a matching (model, transform, feature stage) was
   enough, so a later metric with a different "reduced" feature set reused tuned params
@@ -55,6 +58,11 @@ All notable changes to this project will be documented in this file.
   Optuna trials and the step-4 CV had the same problem and are fixed too. The
   unfitted winner is stored and persisted as `PipelineResult.best_base_estimator`.
   Results saved before this change keep the old registry-based rebuild.
+- `predict_for_year` and `predict_for_year_delta` with `local=True` passed coordinates
+  as (lon, lat) to local conformal, which is calibrated on `store.coords` as (lat, lon),
+  so intervals used the wrong spatial block's width. Predictions were unaffected.
+  Rerun any maps made this way. `store.coords` must be (lat, lon) for `local=True`: a
+  model trained on (lon, lat) got correct widths before and needs retraining now.
 - A winning estimator that is not in the registry no longer crashes step 4 with
   `KeyError`; it is treated like `opt_enabled=False` and HPO is skipped.
 - CatBoostClassifier HPO no longer fails every trial with "Only one of parameters
@@ -63,6 +71,13 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **Breaking:** `FinalModel.predict()` now returns the original y scale when a
+  y-transform won, matching `predict_interval()` and `DeltaFinalModel.predict()`.
+  Before, it returned the transformed space, so scoring it against `y` was wrong.
+  Remove any manual `INVERSE_TRANSFORMS` step after `predict()`, which would now
+  invert twice; models saved earlier behave the same way once loaded. `predict_map`
+  now maps original-scale values too: it never inverted, so transformed models drew
+  log- or sqrt-scale maps. Use `final.estimator.predict()` for the transformed space.
 - Steps 1 and 3 rank candidates by a confidence bound built from the fold-centred std
   (each fold's scores minus that fold's median across candidates) instead of the raw
   fold std. The same score orders `ranking_robustness` and therefore the candidate

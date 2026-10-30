@@ -11,7 +11,7 @@ store = PipelineData(
     X=X_arr,
     feature_names=cols,
     y=y_arr,
-    coords=np.column_stack([lats, lons]),  # (n_samples, 2) — activates spatial CV
+    coords=np.column_stack([lats, lons]),  # (n_samples, 2), lat then lon — activates spatial CV
     times=date_array,                      # (n_samples,) YYYY-MM-DD — activates temporal conformal cells
 )
 result = pipeline.run(store)
