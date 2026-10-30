@@ -42,12 +42,14 @@ def sqrt_transform(y: np.ndarray) -> np.ndarray:
 def winsorize(y: np.ndarray) -> Optional[np.ndarray]:
     """
     Replaces upper outliers with IQR upper limit.
-    Returns None if no outliers found — caller should skip this transform.
+    Returns None if no outliers found — caller should skip this transform. Also None
+    when the limit sits at the minimum (e.g. >= 75 % zeros, so Q3 = Q1 = 0): clipping
+    would flatten y to a constant.
     """
     Q1, Q3 = np.percentile(y, [25, 75])
     upper_limit = Q3 + 1.5 * (Q3 - Q1)
 
-    if (y > upper_limit).sum() == 0:
+    if upper_limit <= np.min(y) or (y > upper_limit).sum() == 0:
         return None
 
     return np.where(y > upper_limit, upper_limit, y)

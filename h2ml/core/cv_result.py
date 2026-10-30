@@ -91,6 +91,7 @@ class CVResult:
         failed_folds: Indices of folds that raised during fit/predict and were
                       skipped. A non-empty list means metrics are computed on fewer
                       than the requested number of folds.
+        y_transform:  y-transform the folds were run under; None without a transform.
     """
 
     model_name: str
@@ -99,6 +100,7 @@ class CVResult:
     # Indices of folds that raised during fit/predict and were skipped. A non-empty
     # list means metrics are computed on fewer than the requested number of folds.
     failed_folds: list[int] = field(default_factory=list)
+    y_transform: Optional[str] = None
 
     @property
     def n_folds(self) -> int:

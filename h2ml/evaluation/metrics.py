@@ -316,6 +316,10 @@ def compute_metrics_all(
     """
     Compute per-fold metrics for a list of CVResults (all models).
 
+    Models with failed folds are left out when another model completed every fold,
+    because means over different fold sets can't be ranked against each other: a model
+    that fails on the hard folds would look better than one scored on all of them.
+
     Args:
         cv_results: Output of CrossValidator.run_all().
         metadata:   Optional RunMetadata to attach to every row.
@@ -326,7 +330,8 @@ def compute_metrics_all(
     Raises:
         RuntimeError: If every model has empty folds (all CV runs failed).
     """
-    frames = [compute_metrics(r, metadata) for r in cv_results if r.folds]
+    usable = [r for r in cv_results if r.folds]
+    frames = [compute_metrics(r, metadata) for r in [r for r in usable if not r.failed_folds] or usable]
     if not frames:
         raise RuntimeError("All CV results are empty — every model/fold failed.")
     return pd.concat(frames, ignore_index=True)

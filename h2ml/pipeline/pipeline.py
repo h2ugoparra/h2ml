@@ -441,17 +441,16 @@ class PipelineResult:
     @property
     def best_cv_result(self) -> Optional[CVResult]:
         """
-        CVResult for the final winning model.
-        Returns step4_cv_result when HPO ran, otherwise the best model's
-        CVResult from step3 (used when opt_enabled=False).
+        CVResult of the selected configuration: step 4 only when the tuned params were
+        kept, otherwise the winner's step-3 (reduced) or step-1 (default) CVResult.
         """
-        if self.step4_cv_result is not None:
+        if self.best_stage == "optimized":
             return self.step4_cv_result
-        if self.step3_cv_result and self.best_model_name:
-            for cv in self.step3_cv_result:
-                if cv.model_name == self.best_model_name:
-                    return cv
-        return None
+        feature_stage = self.best_feature_stage or self.best_stage
+        cv_results = self.step3_cv_result if feature_stage == "reduced" else self.step1_cv_result
+        matches = [cv for cv in cv_results or [] if cv.model_name == self.best_model_name]
+        # Results saved before CVResult.y_transform existed can only match by model name
+        return next((cv for cv in matches if cv.y_transform == (self.y_transform or None)), next(iter(matches), None))
 
     @property
     def completed_steps(self) -> list[int]:
@@ -916,6 +915,7 @@ class H2MLPipeline:
         # Group by transform and compute metrics — identical to the serial path.
         by_transform: dict[str, list[CVResult]] = {}
         for transform_name, cv_result in raw:
+            cv_result.y_transform = transform_name or None
             by_transform.setdefault(transform_name, []).append(cv_result)
 
         for transform_name, cv_results in by_transform.items():
@@ -1049,6 +1049,8 @@ class H2MLPipeline:
             fold_columns=fold_columns,
             _splitter=result.splitter,
         )
+        for cv_result in cv_results:
+            cv_result.y_transform = transform_name or None
         result.step3_reduced_stores = {transform_name: reduced_store}
         result.step3_cv_result = cv_results
         result.step3_fold_df = compute_metrics_all(cv_results, metadata=metadata)
@@ -1229,7 +1231,8 @@ class H2MLPipeline:
             if self.config.minimize_metric
             else optimized_value > result.best_model_value
         )
-        if improved:
+        # A tuned mean over fewer folds isn't comparable with the untuned score
+        if improved and not result.step4_cv_result.failed_folds:
             result.best_model_value = optimized_value
             result.best_model_std = optimized_std
             result.best_stage = "optimized"

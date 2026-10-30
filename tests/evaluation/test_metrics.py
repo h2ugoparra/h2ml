@@ -751,3 +751,26 @@ class TestMulticlassClassificationMetrics:
     def test_logloss_is_positive(self, multiclass_cv_result):
         df = compute_metrics(multiclass_cv_result)
         assert (df["LogLoss_Test"] > 0).all()
+
+
+class TestComputeMetricsAllFailedFolds:
+    """Means over different fold sets can't be ranked: a model that fails on the hard
+    folds would look better than one scored on all of them."""
+
+    @staticmethod
+    def _cv(name: str, fold_ids: list[int], failed: list[int]) -> CVResult:
+        y = np.array([1.0, 2.0, 3.0, 4.0])
+        folds = [
+            FoldResult(fold_id=i, model_name=name, y_train=y, y_test=y, y_pred_train=y, y_pred_test=y + 0.1)
+            for i in fold_ids
+        ]
+        return CVResult(model_name=name, task_type=TaskType.REGRESSION, folds=folds, failed_folds=failed)
+
+    def test_incomplete_candidate_excluded_when_another_is_complete(self):
+        df = compute_metrics_all([self._cv("complete", [0, 1, 2], []), self._cv("partial", [0], [1, 2])])
+        assert set(df["Model"]) == {"complete"}
+
+    def test_incomplete_candidate_kept_when_none_is_complete(self):
+        """Step 4 scores one model: a failed fold must not turn into 'every model failed'."""
+        df = compute_metrics_all([self._cv("only", [0, 1], [2])])
+        assert list(df["Model"]) == ["only", "only"]

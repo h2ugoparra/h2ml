@@ -38,6 +38,25 @@ All notable changes to this project will be documented in this file.
 - `predict_map` failed on a fresh install with an `ImportError`: `h2mare` 0.9.0 moved
   `cartopy` to its `viz` extra, and the lock pinned 0.1.1, so nothing caught it. h2ml
   now depends on `h2mare[viz]>=0.9.0`.
+- `PipelineResult.best_cv_result` (and so `oof_predictions`, `oof_labels`, the variogram,
+  conformal calibration and `cv_diagnostics`) now follows the selected configuration.
+  Before, it returned the step-4 CV whenever tuning ran, even if the tuned model was
+  rejected, and otherwise the step-3 CV matched by model name only, even when the
+  default feature stage won. `CVResult.y_transform` records the transform so step-1
+  results can be told apart. Results saved earlier load with it as `None` and match by
+  model name.
+- `winsorize` returns `None` when its limit sits at the minimum (e.g. ≥ 75 % zeros), so
+  the transform is skipped and a training fold keeps its targets. Before, every target
+  was clipped to one constant: models predicted exactly 0, and CatBoost raised
+  `All train targets are equal`.
+- `build_final_model()` refits on the log/sqrt scale when a win* transform has nothing
+  to clip on the refit rows. Before, it fitted raw y and then inverted predictions.
+- Candidates with failed folds no longer take part in selection when another candidate
+  completed every fold. Means over fewer folds favoured models that failed on the hard
+  folds. A tuned model with a failed fold is not accepted in step 4.
+- `get_oof_shap_values` skips a fold that fails, with a warning, and computes importance
+  over the explained rows. It raises only when every fold fails. Before, one failed
+  fold lost step 2, and with it the whole metric.
 - `multi_metric(reuse_step4="model")` only shares step-4 tuning between metrics whose
   final feature lists match. Before, a matching (model, transform, feature stage) was
   enough, so a later metric with a different "reduced" feature set reused tuned params

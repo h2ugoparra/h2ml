@@ -538,3 +538,54 @@ class TestParallelModelAgnosticShap:
         serial, _ = get_oof_shap_values(step, clf_store, TaskType.CLASSIFICATION, n_splits=3, n_jobs=1)
         parallel, _ = get_oof_shap_values(step, clf_store, TaskType.CLASSIFICATION, n_splits=3, n_jobs=2)
         assert np.array_equal(serial, parallel)
+
+
+class TestOofShapFailedFolds:
+    """A fold that can't be fitted must not lose the whole selection step."""
+
+    def test_failed_fold_skipped_and_excluded_from_importance(self, reg_store):
+        marker = reg_store.X[0]
+
+        class FailsWithoutRowZero(RandomForestRegressor):
+            def fit(self, X, y, **kw):
+                if not (X == marker).all(axis=1).any():
+                    raise ValueError("All train targets are equal")
+                return super().fit(X, y, **kw)
+
+        splitter = KFold(n_splits=3, shuffle=True, random_state=0)
+        step = make_regressor(FailsWithoutRowZero(n_estimators=5, random_state=42))
+        oof, importance = get_oof_shap_values(step, reg_store, TaskType.REGRESSION, _splitter=splitter)
+
+        failed_test = next(te for _, te in splitter.split(reg_store.X) if 0 in te)
+        explained = np.setdiff1d(np.arange(reg_store.n_samples), failed_test)
+        assert np.all(oof[failed_test] == 0)
+        expected = np.abs(oof[explained]).mean(axis=0)
+        np.testing.assert_allclose(importance.reindex(FEATURE_NAMES).to_numpy(), expected)
+
+    def test_failed_fold_skipped_for_model_agnostic_explainer(self, reg_store, monkeypatch):
+        # The explainer is routed by class name, so this patches SVR rather than subclassing it
+        original_fit, fits = SVR.fit, []
+
+        def fails_on_first_fold(self, X, y, **kw):
+            fits.append(1)
+            if len(fits) == 1:
+                raise ValueError("boom")
+            return original_fit(self, X, y, **kw)
+
+        monkeypatch.setattr(SVR, "fit", fails_on_first_fold)
+        splitter = KFold(n_splits=3, shuffle=True, random_state=0)
+        step = make_regressor(SVR(kernel="rbf"), requires_scaling=True)
+        oof, _ = get_oof_shap_values(step, reg_store, TaskType.REGRESSION, _splitter=splitter)
+
+        _, failed_test = next(splitter.split(reg_store.X))
+        assert np.all(oof[failed_test] == 0)
+        assert np.abs(oof).sum() > 0
+
+    def test_all_folds_failing_raises(self, reg_store):
+        class AlwaysFails(RandomForestRegressor):
+            def fit(self, X, y, **kw):
+                raise ValueError("boom")
+
+        step = make_regressor(AlwaysFails(n_estimators=5))
+        with pytest.raises(RuntimeError, match="every fold failed"):
+            get_oof_shap_values(step, reg_store, TaskType.REGRESSION, n_splits=3)
