@@ -35,6 +35,9 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `predict_map` failed on a fresh install with an `ImportError`: `h2mare` 0.9.0 moved
+  `cartopy` to its `viz` extra, and the lock pinned 0.1.1, so nothing caught it. h2ml
+  now depends on `h2mare[viz]>=0.9.0`.
 - `multi_metric(reuse_step4="model")` only shares step-4 tuning between metrics whose
   final feature lists match. Before, a matching (model, transform, feature stage) was
   enough, so a later metric with a different "reduced" feature set reused tuned params
