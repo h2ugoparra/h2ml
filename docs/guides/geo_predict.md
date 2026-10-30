@@ -74,16 +74,11 @@ See [Conformal Prediction — Spatio-temporal local calibration](conformal.md#sp
 
 The meaning of the bound columns differs by task type:
 
-**Regression** — per-sample outcome bounds in the original (inverse-transformed) count scale. The bounds are computed in the transform space before inverting, which gives correct asymmetric intervals:
+**Regression** — per-sample outcome bounds in the original (inverse-transformed) count scale. They are symmetric around the prediction, with or without a y-transform, apart from the clip at zero:
 
 ```
-# without y_transform (symmetric)
 pi_lower = max(0, ŷ − q)
 pi_upper = ŷ + q
-
-# with y_transform (asymmetric — e.g. log or sqrt)
-pi_lower = max(0, inverse_fn(raw − q))
-pi_upper = inverse_fn(raw + q)
 ```
 
 where `q` is a per-sample threshold when `local=True`, or the global quantile when `local=False`.

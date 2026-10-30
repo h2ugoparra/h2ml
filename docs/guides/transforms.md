@@ -32,14 +32,13 @@ The IQR upper limit is a statistic of the data, so computing it on the full `y` 
 
 CV metrics in steps 1 and 3 are computed in the **original scale** when `y_true` is provided — the inverse transform is applied to predictions before metric computation. This ensures `R2`, `MAE`, and `RMSE` are comparable across transforms.
 
-## Conformal intervals and transforms
+## Predictions and transforms
 
-When `result.y_transform` is set, `FinalModel.predict_interval()` returns bounds in the **transformed space**. Apply the inverse to get original-scale intervals:
+When `result.y_transform` is set, `FinalModel.predict()` and `FinalModel.predict_interval()` both return the **original scale**, so don't apply the inverse transform to their output:
 
 ```python
-from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS
-
+y_hat = final.predict(X_new)
 lower, upper = final.predict_interval(X_new, alpha=0.10)
-inv = INVERSE_TRANSFORMS[result.y_transform]
-lower_orig, upper_orig = inv(lower), inv(upper)
 ```
+
+To get the transformed space, call `final.estimator.predict()` directly.
