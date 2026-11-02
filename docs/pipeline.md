@@ -203,9 +203,13 @@ holdout score shows how much selection inflated the CV score. With a holdout of
 n rows, the score itself has sampling noise of roughly 1/√n, so read a small gap
 as "no evidence of optimism" rather than as an exact correction.
 
-- **Spatial data** — `"auto"` holds out whole blocks of the pipeline's spatial splitter
-  (the fold closest to `holdout_frac` of `round(1 / holdout_frac)` folds), so held-out
-  rows are not neighbours of training rows.
+- **Spatial data** — `"auto"` draws whole blocks of the pipeline's spatial splitter at
+  random until the total is closest to `holdout_frac`. The holdout estimates typical
+  performance away from immediate neighbours, while spatial CV tests extrapolation.
+  Scattered blocks sit closer to training rows than one held-out region would, and
+  `spcv` blocks are small, so the score may be somewhat less strict. Blocks depend only
+  on coordinates, so the same rows and seed give the same holdout for any target or
+  feature set.
 - **Forecasting** — `holdout_strategy="time"` holds out the latest rows by
   `store.times`, testing prediction forward in time, which spatial CV does not.
 - **Partial runs** — every entry point sets the holdout aside; `run_step1_to_step3()`,
@@ -221,6 +225,10 @@ as "no evidence of optimism" rather than as an exact correction.
   prevalence. Below 20 such rows, a `[holdout]` warning is added. For very rare
   targets, prefer `holdout_frac=0`: CV scores, with conformal calibrated on the CV
   residuals.
+- **Other `[holdout]` warnings** — `cv_warnings` also flags fewer than 30 rows and a
+  size more than 25% from the request. For regression it flags fewer than 20 non-zero
+  rows on a target with zeros, and a mean or non-zero rate more than 2× from the dev
+  rows. A time holdout can trigger the last check through real drift.
 
 ### Nested CV
 

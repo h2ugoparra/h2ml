@@ -47,6 +47,7 @@ from h2ml.pipeline.holdout import (
     MIN_HOLDOUT_MINORITY,
     FixedSplit,
     concat_stores,
+    holdout_warnings,
     split_holdout,
     stage_store,
 )
@@ -148,6 +149,10 @@ class PipelineConfig:
                              Default: 5 000.
         knn_neighbors:       k for the k-NN connectivity graph in approximate AHC.
                              Default: 15.
+        spcv_use_target:     Include the target view when SPCVSplitter assigns CV folds.
+                             False assigns folds from location and covariates alone, so
+                             targets on the same rows and X share folds. Holdouts and
+                             nested_cv outer folds never use the target. Default: True.
 
         handle_imbalance:    (Classification only) Inject class_weight="balanced" into
                              every model whose registry entry has
@@ -178,10 +183,11 @@ class PipelineConfig:
                              a holdout, conformal calibration uses the holdout residuals
                              and local conformal calibration is skipped. Range [0, 0.5];
                              0 disables it. Default: 0.0.
-        holdout_strategy:    How holdout rows are chosen. "auto" — whole spatial blocks
-                             when store.coords is set, else random (stratified for
-                             classification). "random" — random even with coords. "time" —
-                             the latest rows by store.times. Default: "auto".
+        holdout_strategy:    How holdout rows are chosen. "auto" — whole spatial blocks,
+                             drawn at random up to holdout_frac, when store.coords is set,
+                             else random (stratified for classification). "random" —
+                             random even with coords. "time" — the latest rows by
+                             store.times. Default: "auto".
         holdout_refit:       Rows build_final_model fits on when a holdout exists. "dev" —
                              the dev rows only, so the holdout score and conformal coverage
                              describe the deployed model exactly. "all" — dev + holdout
@@ -209,6 +215,7 @@ class PipelineConfig:
     pca_components: float = 0.95
     exact_max_samples: int = 5_000
     knn_neighbors: int = 15
+    spcv_use_target: bool = True
     handle_imbalance: bool | Literal["auto"] = False
     prefer_reduced_on_tie: bool = False
     select_features_in_folds: bool = False
@@ -289,6 +296,7 @@ class PipelineConfig:
             pca_components=self.pca_components,
             exact_max_samples=self.exact_max_samples,
             knn_neighbors=self.knn_neighbors,
+            use_target=self.spcv_use_target,
         )
 
 
@@ -1404,6 +1412,10 @@ class H2MLPipeline:
         result.holdout_store = holdout_store
         result.holdout_idx = holdout_idx
         result.holdout_strategy = holdout_strategy
+        if holdout_store is not None:
+            result.cv_warnings.extend(
+                holdout_warnings(store, holdout_store, self.config.task_type, self.config.holdout_frac)
+            )
         return result, store
 
     def _new_result(self, store: PipelineData) -> PipelineResult:

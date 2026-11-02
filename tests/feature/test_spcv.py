@@ -219,6 +219,25 @@ class TestStage2Folds:
 # ---------------------------------------------------------------------------
 
 
+class TestUseTarget:
+    def test_default_includes_the_target_view(self, coords, X, y):
+        a = SPCVSplitter(coords, X, y, n_splits=5, random_state=0)
+        b = SPCVSplitter(coords, X, np.random.default_rng(9).permutation(y), n_splits=5, random_state=0)
+        assert not np.array_equal(a._fold_of_sample, b._fold_of_sample)
+
+    def test_off_makes_folds_independent_of_y(self, coords, X, y):
+        kwargs = dict(n_splits=5, random_state=0, use_target=False)
+        a = SPCVSplitter(coords, X, y, **kwargs)
+        b = SPCVSplitter(coords, X, np.random.default_rng(9).permutation(y), **kwargs)
+        np.testing.assert_array_equal(a._fold_of_sample, b._fold_of_sample)
+
+    def test_clone_keeps_the_setting(self, coords, X, y):
+        kwargs = dict(n_splits=5, random_state=0, use_target=False)
+        a = SPCVSplitter(coords, X, y, **kwargs).clone_with_n_splits(3)
+        b = SPCVSplitter(coords, X, np.random.default_rng(9).permutation(y), **kwargs).clone_with_n_splits(3)
+        np.testing.assert_array_equal(a._fold_of_sample, b._fold_of_sample)
+
+
 class TestReproducibility:
     def test_two_splitters_same_args_identical_folds(self, coords, X, y):
         sp1 = SPCVSplitter(coords, X, y, n_splits=5, random_state=42)

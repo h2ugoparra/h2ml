@@ -25,7 +25,8 @@ from h2ml.core.spatial_config import SpatialCVConfig
 from h2ml.features.selector import FeatureSelector
 from h2ml.features.spatial_cv import build_splitter
 from h2ml.persistence.result_io import load_result, save_result
-from h2ml.pipeline.holdout import concat_stores, split_holdout, stage_store
+from h2ml.pipeline.holdout import _draw_blocks, concat_stores, holdout_warnings, split_holdout, stage_store
+from h2ml.pipeline.multi_metric import multi_metric
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig
 from h2ml.pipeline.step import make_classifier, make_regressor
 
@@ -148,7 +149,7 @@ class TestSplitHoldout:
         with pytest.raises(ValueError, match="requires store.times"):
             split_holdout(_reg_store(), TaskType.REGRESSION, 0.2, "time", random_state=0)
 
-    def test_auto_with_coords_holds_out_a_spatial_fold(self):
+    def test_auto_with_coords_holds_out_whole_blocks(self):
         base = _reg_store(n=200)
         rng = np.random.default_rng(2)
         coords = rng.uniform(0, 100, size=(200, 2))
@@ -160,10 +161,39 @@ class TestSplitHoldout:
         splitter = build_splitter(
             TaskType.REGRESSION, n_splits=4, random_state=0, coords=coords, X=store.X, y=store.y, spatial=spatial
         )
-        folds = [np.sort(te) for _, te in splitter.split(store.X, store.y)]
-        assert any(np.array_equal(test, f) for f in folds)
         # whole blocks: no spatial block is split between dev and holdout
         assert np.intersect1d(splitter.block_id_[test], splitter.block_id_[dev]).size == 0
+
+    @pytest.mark.parametrize("method", ["block", "spcv"])
+    def test_spatial_holdout_reaches_the_requested_size_on_uneven_data(self, method):
+        rng = np.random.default_rng(3)
+        centres = rng.uniform(0, 100, size=(12, 2))
+        weights = rng.dirichlet(np.full(12, 0.4))
+        n = 600
+        coords = centres[rng.choice(12, n, p=weights)] + rng.normal(0, 2, (n, 2))
+        store = PipelineData(
+            X=rng.standard_normal((n, 6)), feature_names=FEATURE_NAMES, y=rng.exponential(size=n), coords=coords
+        )
+        spatial = SpatialCVConfig(spatial_cv_method=method)
+        _, test, _ = split_holdout(store, TaskType.REGRESSION, 0.2, "auto", random_state=0, spatial=spatial)
+        assert 0.15 <= test.size / n <= 0.25
+
+    @pytest.mark.parametrize("method", ["block", "spcv"])
+    def test_spatial_holdout_ignores_y_and_X(self, method):
+        rng = np.random.default_rng(4)
+        n = 200
+        coords = rng.uniform(0, 100, size=(n, 2))
+        a = PipelineData(X=rng.normal(size=(n, 6)), feature_names=FEATURE_NAMES, y=rng.normal(size=n), coords=coords)
+        b = PipelineData(X=rng.normal(size=(n, 6)), feature_names=FEATURE_NAMES, y=rng.normal(size=n), coords=coords)
+        spatial = SpatialCVConfig(spatial_cv_method=method)
+        _, test_a, _ = split_holdout(a, TaskType.REGRESSION, 0.2, "auto", random_state=0, spatial=spatial)
+        _, test_b, _ = split_holdout(b, TaskType.REGRESSION, 0.2, "auto", random_state=0, spatial=spatial)
+        np.testing.assert_array_equal(test_a, test_b)
+
+    def test_draw_blocks_falls_back_to_the_smallest_block(self):
+        block_ids = np.repeat([0, 1, 2], [50, 40, 60])
+        test = _draw_blocks(block_ids, 5, random_state=0)
+        np.testing.assert_array_equal(test, np.flatnonzero(block_ids == 1))
 
     def test_random_strategy_ignores_coords(self):
         base = _reg_store()
@@ -181,6 +211,78 @@ class TestSplitHoldout:
         store = PipelineData(X=store.X, feature_names=FEATURE_NAMES, y=y, times=times)
         with pytest.raises(ValueError, match="single class"):
             split_holdout(store, TaskType.CLASSIFICATION, 0.2, "time", random_state=0)
+
+
+# ---------------------------------------------------------------------------
+# holdout_warnings
+# ---------------------------------------------------------------------------
+
+
+def _y_store(y: np.ndarray) -> PipelineData:
+    y = np.asarray(y, dtype=float)
+    return PipelineData(X=np.zeros((y.size, 6)), feature_names=FEATURE_NAMES, y=y)
+
+
+class TestHoldoutWarnings:
+    def _warnings(self, dev_y, holdout_y, task_type=TaskType.REGRESSION, frac=None):
+        frac = len(holdout_y) / (len(dev_y) + len(holdout_y)) if frac is None else frac
+        return holdout_warnings(_y_store(dev_y), _y_store(holdout_y), task_type, frac)
+
+    def test_matching_holdout_raises_nothing(self):
+        assert self._warnings(np.arange(1.0, 401.0), np.arange(1.5, 101.5) * 4) == []
+
+    def test_small_holdout(self):
+        assert any("only 10 rows" in w for w in self._warnings(np.ones(400), np.ones(10)))
+
+    def test_size_far_from_requested(self):
+        warnings = self._warnings(np.ones(300), np.ones(100), frac=0.1)
+        assert any("100 rows against 40 requested" in w for w in warnings)
+
+    def test_few_non_zero_rows(self):
+        dev_y = np.r_[np.ones(100), np.zeros(300)]
+        holdout_y = np.r_[np.ones(5), np.zeros(15)]
+        warnings = self._warnings(dev_y, holdout_y, frac=0.05)
+        assert any("only 5 non-zero" in w for w in warnings)
+
+    def test_target_without_zeros_skips_the_non_zero_guard(self):
+        assert not any("non-zero" in w for w in self._warnings(np.ones(80), np.ones(20)))
+
+    @pytest.mark.parametrize("scale", [0.1, 10.0])
+    def test_mean_drift(self, scale):
+        warnings = self._warnings(np.ones(400), np.ones(100) * scale)
+        assert any("mean" in w and "differs" in w for w in warnings)
+
+    def test_non_zero_rate_drift(self):
+        dev_y = np.r_[np.ones(100), np.zeros(300)]
+        holdout_y = np.r_[np.full(80, 0.3), np.zeros(20)]  # about dev's mean, over 3× its non-zero rate
+        warnings = self._warnings(dev_y, holdout_y)
+        assert any("non-zero rate" in w for w in warnings)
+        assert not any("mean" in w for w in warnings)
+
+    def test_negative_mean_skips_the_drift_check(self):
+        assert self._warnings(-np.ones(400), np.ones(100)) == []
+
+    def test_classification_skips_regression_guards(self):
+        dev_y = np.r_[np.ones(10), np.zeros(390)]
+        assert self._warnings(dev_y, np.r_[np.ones(50), np.zeros(50)], TaskType.CLASSIFICATION) == []
+
+    def _zero_tail_store(self) -> PipelineData:
+        rng = np.random.default_rng(0)
+        y = np.r_[rng.exponential(size=100), np.zeros(20)]  # time holdout: the last rows are all zero
+        times = np.arange(N).astype("datetime64[D]")
+        return PipelineData(X=_reg_store().X, feature_names=FEATURE_NAMES, y=y, times=times)
+
+    def test_pipeline_records_them_in_cv_warnings(self):
+        with _mock_selector(FEATURE_NAMES[:2]):
+            result = _ridge_pipeline(holdout_frac=0.16, holdout_strategy="time").run(self._zero_tail_store())
+        assert any("0 non-zero" in w for w in result.cv_warnings)
+
+    def test_multi_metric_records_them_for_every_metric(self):
+        pipeline = _ridge_pipeline(holdout_frac=0.16, holdout_strategy="time")
+        with _mock_selector(FEATURE_NAMES[:2]):
+            result = multi_metric(pipeline, self._zero_tail_store(), metrics=["R2", "RMSE"])
+        for metric_result in result.results.values():
+            assert any("0 non-zero" in w for w in metric_result.cv_warnings)
 
 
 # ---------------------------------------------------------------------------

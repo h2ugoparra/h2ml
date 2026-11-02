@@ -18,6 +18,7 @@ from sklearn.model_selection import StratifiedKFold
 from h2ml import NestedCVResult, nested_cv
 from h2ml.core.feature_store import PipelineData
 from h2ml.features.selector import FeatureSelector
+from h2ml.features.spatial_cv import build_splitter
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig
 from h2ml.pipeline.step import make_classifier, make_regressor
 
@@ -120,6 +121,15 @@ class TestNestedCV:
         dev, test = result.features.select(names), result.holdout_store.select(names)
         pred = np.expm1(Ridge().fit(dev.X, np.log1p(dev.y)).predict(test.X))
         assert df.iloc[0]["R2_Test"] == pytest.approx(r2_score(test.y, pred))
+
+    def test_outer_folds_ignore_the_target(self):
+        store = _reg_store(coords=True)
+        with (
+            _mock_selector(FEATURE_NAMES[:2]),
+            patch("h2ml.pipeline.nested.build_splitter", wraps=build_splitter) as spy,
+        ):
+            nested_cv(_ridge_pipeline(spatial_cv_method="block"), store, outer_splits=3)
+        assert spy.call_args.kwargs["spatial"].use_target is False
 
     def test_spatial_outer_folds(self):
         store = _reg_store(coords=True)
