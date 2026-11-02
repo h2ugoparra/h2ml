@@ -23,6 +23,7 @@ from sklearn.metrics import (
     log_loss,
     # Regression
     mean_absolute_error,
+    mean_poisson_deviance,
     mean_squared_error,
     r2_score,
     roc_auc_score,
@@ -49,12 +50,16 @@ METRIC_COL: dict[str, str] = {
     "R2": "R2_Test_Mean",
     "MAE": "MAE_Test_Mean",
     "RMSE": "RMSE_Test_Mean",
+    "PoissonDev": "PoissonDev_Test_Mean",
 }
+
+# Predictions are floored here for the Poisson deviance, which is undefined at 0.
+POISSON_PRED_FLOOR = 1e-6
 
 # Regression metrics scored once on all out-of-fold rows, so folds count by their size
 # and a near-constant fold cannot dominate. Derived in aggregate_metrics().
 POOLED_SUFFIX = "_Test_Pooled"
-POOLED_COL: dict[str, str] = {m: f"{m}{POOLED_SUFFIX}" for m in ("R2", "MAE", "RMSE")}
+POOLED_COL: dict[str, str] = {m: f"{m}{POOLED_SUFFIX}" for m in ("R2", "MAE", "RMSE", "PoissonDev")}
 
 # How selection scores candidates. "pooled" applies to the POOLED_COL metrics; the others
 # always use the fold mean.
@@ -74,6 +79,7 @@ METRIC_MINIMIZE: dict[str, bool] = {
     "R2": False,
     "MAE": True,
     "RMSE": True,
+    "PoissonDev": True,
 }
 
 # Deprecated short metric name → current name. Accepted with a warning for one release.
@@ -230,6 +236,19 @@ def _classification_metrics(fold: FoldResult) -> dict:
     }
 
 
+def poisson_deviance(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """
+    Mean Poisson deviance, for non-negative counts or rates such as CPUE.
+
+    Unlike RMSE, it scales errors by the predicted value, so a few huge catches don't
+    dominate. NaN when y_true has negative values. Predictions are floored just above
+    zero, where the deviance is undefined.
+    """
+    if np.any(y_true < 0):
+        return np.nan
+    return float(mean_poisson_deviance(y_true, np.clip(y_pred, POISSON_PRED_FLOOR, None)))
+
+
 def _regression_metrics(fold: FoldResult) -> dict:
     """Compute regression metrics for a single fold."""
     mse_test = mean_squared_error(fold.y_test, fold.y_pred_test)
@@ -243,6 +262,8 @@ def _regression_metrics(fold: FoldResult) -> dict:
         "MAE_Train": mean_absolute_error(fold.y_train, fold.y_pred_train),
         "RMSE_Test": np.sqrt(mse_test),
         "RMSE_Train": np.sqrt(mse_train),
+        "PoissonDev_Test": poisson_deviance(y_test, fold.y_pred_test),
+        "PoissonDev_Train": poisson_deviance(fold.y_train, fold.y_pred_train),
         "Fit_Time": fold.fit_time,
         "N_Test": y_test.size,
         "Y_Mean_Test": y_test.mean(),
@@ -284,6 +305,7 @@ _OVERFIT_PAIRS = {
         ("R2_Test", "R2_Train", False),
         ("MAE_Test", "MAE_Train", True),
         ("RMSE_Test", "RMSE_Train", True),
+        ("PoissonDev_Test", "PoissonDev_Train", True),
     ],
 }
 
@@ -369,7 +391,7 @@ def compute_metrics_all(
 
 
 def _pooled_regression_scores(folds: pd.DataFrame) -> pd.Series:
-    """R2, MAE and RMSE over all rows of folds, from each fold's size, mean and sum of squares."""
+    """Regression scores over all rows of folds, from each fold's size, mean and sum of squares."""
     n = folds["N_Test"]
     total = n.sum()
     sse = (n * folds["RMSE_Test"] ** 2).sum()
@@ -380,6 +402,7 @@ def _pooled_regression_scores(folds: pd.DataFrame) -> pd.Series:
             POOLED_COL["R2"]: 1 - sse / sst if sst > 0 else np.nan,
             POOLED_COL["MAE"]: (n * folds["MAE_Test"]).sum() / total,
             POOLED_COL["RMSE"]: np.sqrt(sse / total),
+            POOLED_COL["PoissonDev"]: (n * folds["PoissonDev_Test"]).sum(skipna=False) / total,
         }
     )
 
@@ -425,7 +448,7 @@ def aggregate_metrics(fold_df: pd.DataFrame, group_by_stage: bool = True) -> pd.
     grouped.columns = [f"{col}_{stat.capitalize()}" for col, stat in grouped.columns]
     extra_cols = []
     if "N_Test" in fold_df.columns:
-        pooled_inputs = ["N_Test", "Y_Mean_Test", "Y_SS_Test", "RMSE_Test", "MAE_Test"]
+        pooled_inputs = ["N_Test", "Y_Mean_Test", "Y_SS_Test", "RMSE_Test", "MAE_Test", "PoissonDev_Test"]
         grouped = grouped.join(groups[pooled_inputs].apply(_pooled_regression_scores))
         extra_cols += list(POOLED_COL.values())
     if "Is_Flat" in fold_df.columns:

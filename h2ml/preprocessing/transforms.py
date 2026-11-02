@@ -13,10 +13,10 @@ INVERSE_TRANSFORMS: dict[name → callable(y_pred) -> ndarray]
                     log/sqrt step is inverted.
 
 Available names: count, log, sqrt, wincount, winlog, winsqrt.
-Winsorize-based transforms replace upper outliers with the IQR upper limit.
+Winsorize-based transforms cap y at a high quantile of its non-zero values.
 
 PRE_CLIP_TRANSFORMS: dict[win* name → stateless part of the transform]
-                    The IQR limit is fitted on the data, so in CV it must come from
+                    The limit is fitted on the data, so in CV it must come from
                     the training rows only. Transform stores for win* names hold y
                     before clipping; get_train_target_fn() returns the clipping step
                     that each training fold (and the final refit) applies to itself.
@@ -27,6 +27,11 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 import numpy as np
+
+# Quantile of the non-zero values that winsorizing caps y at. Zeros are left out so the
+# cap stays in the tail on zero-heavy targets: over all rows, a target with 97% zeros
+# would be capped inside its ordinary catches.
+WINSOR_QUANTILE = 0.99
 
 
 def log_transform(y: np.ndarray) -> np.ndarray:
@@ -41,13 +46,15 @@ def sqrt_transform(y: np.ndarray) -> np.ndarray:
 
 def winsorize(y: np.ndarray) -> Optional[np.ndarray]:
     """
-    Replaces upper outliers with IQR upper limit.
-    Returns None if no outliers found — caller should skip this transform. Also None
-    when the limit sits at the minimum (e.g. >= 75 % zeros, so Q3 = Q1 = 0): clipping
+    Caps y at the WINSOR_QUANTILE of its non-zero values.
+    Returns None if nothing lies above the limit, or y has no non-zero values — caller
+    should skip this transform. Also None when the limit sits at the minimum: clipping
     would flatten y to a constant.
     """
-    Q1, Q3 = np.percentile(y, [25, 75])
-    upper_limit = Q3 + 1.5 * (Q3 - Q1)
+    nonzero = y[y != 0]
+    if nonzero.size == 0:
+        return None
+    upper_limit = np.quantile(nonzero, WINSOR_QUANTILE)
 
     if upper_limit <= np.min(y) or (y > upper_limit).sum() == 0:
         return None

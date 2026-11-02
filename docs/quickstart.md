@@ -55,11 +55,11 @@ pipeline = H2MLPipeline(config=PipelineConfig(
     metric="R2",
     verbose=True,
 ))
-result = pipeline.run(store, transforms=["log", "sqrt", "count", "winlog"])
+result = pipeline.run(store, transforms=["log", "sqrt", "count", "wincount"])
 print(result.y_transform)   # winning transform name
 ```
 
-Available transforms: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`, `"winlog"`, `"winsqrt"`. Winsorize-based variants are silently skipped when no upper outliers are present. The `log` and `sqrt` families need non-negative targets.
+Available transforms: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`, `"winlog"`, `"winsqrt"`. Winsorize-based variants cap `y` at the 99th percentile of its non-zero values, and are silently skipped when nothing lies above that cap. The `log` and `sqrt` families need non-negative targets.
 
 ## Cross-validation
 

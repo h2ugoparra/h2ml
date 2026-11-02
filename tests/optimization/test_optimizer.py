@@ -795,7 +795,7 @@ class TestMetricSelection:
         assert set(CLF_METRICS) == {"AUC", "AUCPR", "LogLoss", "F1", "Brier"}
 
     def test_reg_metrics_registry_contains_expected_keys(self):
-        assert set(REG_METRICS) == {"R2", "MAE", "RMSE"}
+        assert set(REG_METRICS) == {"R2", "MAE", "RMSE", "PoissonDev"}
 
     def test_invalid_clf_metric_raises_value_error(self, clf_data):
         X, y = clf_data

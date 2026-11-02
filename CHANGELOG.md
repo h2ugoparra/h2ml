@@ -45,9 +45,20 @@ All notable changes to this project will be documented in this file.
   would have won. If every candidate is flat, the best is kept with a warning and
   step 2 skips SHAP and keeps every feature (`FeatureSelector(keep_all=True)`), instead
   of reducing by column order. Applies to classification too.
+- `metric="PoissonDev"` selects regression models on Poisson deviance, for non-negative
+  counts or rates such as CPUE. It is pooled like the other regression metrics, works
+  in Optuna, and raises an error on negative targets. It is opt-in in `multi_metric`
+  (`metrics=[..., "PoissonDev"]`). Every regression fold table also gains
+  `PoissonDev_Test` and `PoissonDev_Train`.
 
 ### Changed
 
+- **`wincount`, `winlog` and `winsqrt` now cap at the 99th percentile of non-zero
+  values**, not Q3 + 1.5 × IQR, which removed 44–88% of the catch in tests. Runs using
+  them need rerunning, while saved models predict as before. Targets with 75% zeros or
+  more were skipped by the old rule and now use these transforms. They are also skipped
+  less often, because only ties at the top leave nothing above the cap. On log and sqrt
+  the cap changes little, so `winlog` left the documented example sweeps.
 - **Regression selection now uses pooled scores, so regression runs need rerunning.**
   `PipelineConfig.selection_scoring` defaults to `"pooled"`: R2, MAE or RMSE computed
   once on all out-of-fold rows, in steps 1, 3 and 4, including Optuna trials, and

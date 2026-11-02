@@ -353,7 +353,7 @@ class TestTransformScale:
         rng = np.random.default_rng(5)
         X = rng.standard_normal((60, 3))
         y = np.zeros(60)
-        y[:6] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        y[:6] = [1.0, 2.0, 3.0, 4.0, 6.0, 6.0]  # tied at the top: nothing above the cap
         result = PipelineResult(
             features=PipelineData(X=X, feature_names=["a", "b", "c"], y=y),
             step1_cv_result=[CVResult(model_name="KNeighborsRegressor", task_type=TaskType.REGRESSION)],

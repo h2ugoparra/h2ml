@@ -61,10 +61,10 @@ config = PipelineConfig(
     verbose=True,
 )
 pipeline = H2MLPipeline(config=config)
-result = pipeline.run(store, transforms=["log", "sqrt", "count", "winlog"])
+result = pipeline.run(store, transforms=["log", "sqrt", "count", "wincount"])
 ```
 
-Available transform names: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`, `"winlog"`, `"winsqrt"`. Winsorize-based transforms are skipped silently when no upper outliers are found.
+Available transform names: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`, `"winlog"`, `"winsqrt"`. Winsorize-based transforms cap `y` at the 99th percentile of its non-zero values, and are skipped silently when nothing lies above that cap.
 
 ### Partial runs
 
@@ -109,7 +109,7 @@ Step 4 is skipped when the winning model has `opt_enabled=False` in the registry
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `task_type` | `"classification"` | `"classification"` or `"regression"` (case-insensitive); a `TaskType` member is also accepted |
-| `metric` | `"AUC"` | Short metric name for model selection and HPO. Minimisation direction is derived automatically. Classification: `"AUC"`, `"AUCPR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. `"AUC_PR"` is a deprecated alias for `"AUCPR"`. |
+| `metric` | `"AUC"` | Short metric name for model selection and HPO. Minimisation direction is derived automatically. Classification: `"AUC"`, `"AUCPR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`, `"PoissonDev"` (non-negative counts or rates). `"AUC_PR"` is a deprecated alias for `"AUCPR"`. |
 | `n_splits` | `5` | Folds for steps 1 and 3 |
 | `n_jobs` | `-1` | Parallel workers for CV in steps 1 and 3; must be non-zero |
 | `opt_n_splits` | `3` | Folds used inside Optuna (fewer = faster) |
