@@ -9,7 +9,7 @@
 | 3 | K-fold CV all models on reduced features; compare vs step 1 | `best_stage`, `step3_agg_df` |
 | 4 | Optuna HPO on winning (model, stage, transform) | `best_params`, `step4_agg_df` |
 
-Regression candidates are ranked by a **pooled** score: R2, MAE or RMSE computed once over all out-of-fold rows, in steps 1 and 3, in Optuna trials and in step 4's acceptance check. Each row counts equally, so a small or near-constant fold can't dominate, as it can in a mean of fold scores. `selection_scoring="fold_mean"` uses the classification rule below instead. Candidates with no prediction spread in any fold are excluded from selection unless every candidate is flat; both cases add a `[selection]` warning. When every candidate is flat, step 2 keeps all features, because all-zero SHAP values can't rank them.
+Regression candidates are ranked by a **pooled** score: R2, MAE, RMSE or Poisson deviance computed once over all out-of-fold rows, in steps 1 and 3, in Optuna trials and in step 4's acceptance check. Each row counts equally, so a small or near-constant fold can't dominate, as it can in a mean of fold scores. `selection_scoring="fold_mean"` uses the classification rule below instead. Candidates with no prediction spread in any fold are excluded from selection unless every candidate is flat; both cases add a `[selection]` warning. When every candidate is flat, step 2 keeps all features, because all-zero SHAP values can't rank them.
 
 Classification candidates are ranked by a confidence-bound score (mean − std/√k for maximised metrics, mean + std/√k for minimised ones). The std is **fold-centred**: each fold's scores minus that fold's median across candidates. Fold difficulty that every model shares, such as Brier's floor moving with each spatial fold's prevalence, therefore does not count as instability. With the raw fold std, a model that hedges every prediction towards the middle scores uniformly across uneven folds and would beat a model that is better on average but has one bad fold. With `prefer_reduced_on_tie=True`, step 3 then applies a 1-SE rule: if the winner uses all features but a reduced-feature candidate is statistically tied with it on paired folds, the reduced candidate is selected instead — see [Preferring reduced features on ties](#preferring-reduced-features-on-ties).
 
@@ -30,7 +30,7 @@ Full parameter reference:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `task_type` | `"classification"` | `"classification"` or `"regression"` (case-insensitive); a `TaskType` member is also accepted |
-| `metric` | `"AUC"` | Optimisation target. Classification: `"AUC"`, `"AUCPR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. Minimisation direction is derived automatically. `"AUC_PR"` is a deprecated alias for `"AUCPR"`. |
+| `metric` | `"AUC"` | Optimisation target. Classification: `"AUC"`, `"AUCPR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`, `"PoissonDev"`. Minimisation direction is derived automatically. `"AUC_PR"` is a deprecated alias for `"AUCPR"`. |
 | `n_splits` | `5` | CV folds for steps 1 and 3 |
 | `n_jobs` | `-1` | Worker processes used to CV models in parallel (steps 1 and 3) and to explain row chunks in step 2's SHAP pass for model-agnostic explainers (SVC/SVR with non-linear kernels, KNN, …). `-1` uses all cores; must be non-zero. Lower it when memory rather than CPU is the constraint, or to leave headroom on a shared machine. |
 | `opt_n_splits` | `3` | CV folds inside each Optuna trial (fewer = faster). Trials then train on (k−1)/k = 67% of the rows while the step-4 acceptance CV trains on 80% (`n_splits=5`), so the tuned regularisation can be slightly stronger than the final fit needs. Set `opt_n_splits=n_splits` to tune on the same fold size, at about `n_splits/opt_n_splits`× the HPO cost. |
@@ -117,7 +117,7 @@ Each is also logged when it is raised.
 |---|---|---|---|
 | a model name, e.g. `RF: 2/5 fold(s) failed` | `[CV]` (end of `run()`) | steps 1, 3 | A model had failed CV folds |
 | the metric name, e.g. `AUC with minority…`, `R2: …` | `[metric]` | step 1 | The data makes the configured metric unreliable — AUC under class imbalance, single-class test folds for AUC/AUCPR, uneven fold prevalence for AUCPR, F1 with class weights, low-variance folds for R2, heavy tails for RMSE, zero inflation for MAE. The metric is never changed. |
-| `step 1:` / `step 3:` | `[ranking]` | steps 1, 3 | Candidates tied with the winner on paired folds, or the winner ranking below 1st on the counterpart-family metric (AUC/AUCPR ↔ Brier, LogLoss/Brier ↔ AUC, F1 → AUC, R2/RMSE ↔ MAE) |
+| `step 1:` / `step 3:` | `[ranking]` | steps 1, 3 | Candidates tied with the winner on paired folds, or the winner ranking below 1st on the counterpart-family metric (AUC/AUCPR ↔ Brier, LogLoss/Brier ↔ AUC, F1 → AUC, R2/RMSE/PoissonDev → MAE, MAE → RMSE) |
 | `step 3: prefer_reduced_on_tie →` | *(info log)* | step 3 | The tie-break switched the selection to a reduced-feature candidate |
 | `[selection]` | `[CV]` (end of `run()`) | steps 1, 3, 4 | Constant-prediction candidates were excluded (noting if one would have won), every candidate is constant, or tuning produced a constant model and was rejected |
 | `[holdout]` | `[CV]` (end of `run()`) | run start; after step 3 or 4 | At the start: too few rows, a size far from `holdout_frac`, and for regression too few non-zero rows or a distribution far from the dev rows. After scoring: the holdout score is worse than the CV score by more than 2 fold SDs — the CV estimate is likely optimistic, or the holdout rows differ from the dev rows. Classification: also when the holdout holds fewer than 20 rows of its rarest class, so its score and conformal calibration are unreliable |
@@ -332,7 +332,7 @@ sweep (`handle_imbalance` is classification-only and rejected here):
 ```python
 mm = multi_metric(
     H2MLPipeline(reg_config), store,
-    metrics=["RMSE", "R2", "MAE"],      # the default (all metrics, this order)
+    metrics=["RMSE", "R2", "MAE"],      # the default; add "PoissonDev" for non-negative targets
     transforms=["log"],                 # swept in step 1, as in run(store, transforms=...)
     reuse_step4="model",
 )

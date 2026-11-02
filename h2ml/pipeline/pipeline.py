@@ -84,7 +84,8 @@ class PipelineConfig:
                              HPO (step 4). Minimisation direction and sort order are
                              derived automatically — no need to set a separate flag.
                              Classification: "AUC" (default), "AUCPR", "F1", "LogLoss",
-                             "Brier". Regression: "R2" (default), "MAE", "RMSE".
+                             "Brier". Regression: "R2" (default), "MAE", "RMSE",
+                             "PoissonDev" (non-negative counts or rates such as CPUE).
         n_splits:            CV folds used in steps 1–3 for model screening and feature
                              selection. More folds = more reliable estimates, higher
                              cost. Default: 5.
@@ -1554,6 +1555,8 @@ class H2MLPipeline:
                 f"store has {store.n_samples} samples but config.n_splits={self.config.n_splits}. "
                 "Provide more data or reduce n_splits."
             )
+        if self.config.metric == "PoissonDev" and np.any(store.y < 0):
+            raise ValueError("metric='PoissonDev' requires a non-negative target.")
         if len(set(store.feature_names)) < len(store.feature_names):
             from collections import Counter
 

@@ -40,7 +40,7 @@ from sklearn.metrics import (
 from sklearn.preprocessing import LabelBinarizer, StandardScaler
 
 from h2ml.core.spatial_config import SpatialCVConfig
-from h2ml.evaluation.metrics import METRIC_MINIMIZE, resolve_metric
+from h2ml.evaluation.metrics import METRIC_MINIMIZE, poisson_deviance, resolve_metric
 from h2ml.optimization.opt_params import ModelEntry, get_entry
 
 # Silence Optuna's default verbose logging — pipeline controls verbosity
@@ -160,6 +160,10 @@ def _neg_rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(-np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
+def _neg_poisson_dev(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    return -poisson_deviance(y_true, y_pred)
+
+
 def _score_r2(
     model, X_train, X_test, y_train, y_test, *, y_true_test: np.ndarray | None = None, inverse_fn=None
 ) -> float:
@@ -180,6 +184,13 @@ def _score_rmse(
     return _neg_rmse(*_regression_predictions(model, X_train, X_test, y_train, y_test, y_true_test, inverse_fn))
 
 
+def _score_poisson_dev(
+    model, X_train, X_test, y_train, y_test, *, y_true_test: np.ndarray | None = None, inverse_fn=None
+) -> float:
+    """Negated Poisson deviance so higher is better."""
+    return _neg_poisson_dev(*_regression_predictions(model, X_train, X_test, y_train, y_test, y_true_test, inverse_fn))
+
+
 # Registry of available metrics per task.
 # All entries return higher-is-better values — study direction stays 'maximize'.
 CLF_METRICS: dict[str, Callable] = {
@@ -194,6 +205,7 @@ REG_METRICS: dict[str, Callable] = {
     "R2": _score_r2,
     "MAE": _score_mae,
     "RMSE": _score_rmse,
+    "PoissonDev": _score_poisson_dev,
 }
 
 # Scorers over pooled out-of-fold rows, for selection_scoring="pooled".
@@ -201,6 +213,7 @@ POOLED_REG_METRICS: dict[str, Callable] = {
     "R2": _r2,
     "MAE": _neg_mae,
     "RMSE": _neg_rmse,
+    "PoissonDev": _neg_poisson_dev,
 }
 
 _TASK_METRICS: dict[str, dict[str, Callable]] = {

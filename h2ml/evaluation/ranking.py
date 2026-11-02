@@ -42,6 +42,7 @@ COUNTERPART_METRIC: dict[str, tuple[str, str]] = {
     "F1": ("AUC", "thresholded decisions vs ranking"),
     "R2": ("MAE", "conditional mean vs median"),
     "RMSE": ("MAE", "conditional mean vs median"),
+    "PoissonDev": ("MAE", "conditional mean vs median"),
     "MAE": ("RMSE", "conditional median vs mean"),
 }
 

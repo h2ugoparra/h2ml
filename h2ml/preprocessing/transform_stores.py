@@ -18,8 +18,8 @@ def build_transform_stores(
 ) -> dict[str, PipelineData]:
     """
     Build one PipelineData per y transformation.
-    Transforms returning None (e.g. winsorize with no outliers) are skipped.
-    Winsorize-based stores hold y before clipping: the IQR limit is fitted per
+    Transforms returning None (e.g. winsorize with nothing above its limit) are skipped.
+    Winsorize-based stores hold y before clipping: the limit is fitted per
     training fold (see get_train_target_fn) so it never sees test rows.
 
     Args:

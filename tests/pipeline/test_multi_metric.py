@@ -273,10 +273,11 @@ class TestValidation:
     def test_default_order_covers_every_task_metric(self):
         from h2ml.core.base import TaskType
         from h2ml.optimization.optimizer import CLF_METRICS, REG_METRICS
-        from h2ml.pipeline.multi_metric import TASK_METRICS
+        from h2ml.pipeline.multi_metric import OPT_IN_METRICS, TASK_METRICS
 
         assert sorted(TASK_METRICS[TaskType.CLASSIFICATION]) == sorted(CLF_METRICS)
-        assert sorted(TASK_METRICS[TaskType.REGRESSION]) == sorted(REG_METRICS)
+        regression = TASK_METRICS[TaskType.REGRESSION] + OPT_IN_METRICS[TaskType.REGRESSION]
+        assert sorted(regression) == sorted(REG_METRICS)
 
     def test_defaults_to_all_task_metrics(self):
         with _mock_selector():

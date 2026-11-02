@@ -59,8 +59,8 @@ FEATURE_NAMES = [f"feat_{i}" for i in range(5)]
 
 @pytest.fixture
 def clean_y() -> np.ndarray:
-    """No outliers — winsorize-based transforms will be skipped."""
-    return np.random.default_rng(42).uniform(1, 10, size=100)
+    """Tied at its top value — winsorize-based transforms will be skipped."""
+    return np.minimum(np.random.default_rng(42).uniform(1, 10, size=100), 9.0)
 
 
 @pytest.fixture
@@ -178,7 +178,7 @@ class TestYTransformationsOutlier:
         assert "wincount" in result
 
     def test_wincount_y_is_not_clipped(self, X_outlier, outlier_y):
-        """The IQR limit is fitted per training fold, so the store keeps y before clipping —
+        """The limit is fitted per training fold, so the store keeps y before clipping —
         a limit fitted on the full y would leak test-fold targets into training."""
         result = build_transformed_stores(X_outlier, outlier_y, FEATURE_NAMES)
         np.testing.assert_array_equal(result["wincount"].y, outlier_y)

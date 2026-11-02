@@ -51,6 +51,7 @@ import pytest
 
 from h2ml.preprocessing.transforms import (
     PRE_CLIP_TRANSFORMS,
+    WINSOR_QUANTILE,
     Y_TRANSFORMS,
     clip_upper_outliers,
     get_train_target_fn,
@@ -66,9 +67,9 @@ from h2ml.preprocessing.transforms import (
 
 @pytest.fixture
 def clean_y() -> np.ndarray:
-    """Array with no outliers — IQR-based upper limit not exceeded."""
+    """Array tied at its top value, so nothing lies above the quantile cap."""
     rng = np.random.default_rng(42)
-    return rng.uniform(0, 10, size=100)
+    return np.minimum(rng.uniform(0, 10, size=100), 9.0)
 
 
 @pytest.fixture
@@ -185,23 +186,20 @@ class TestWinsorize:
         assert result.shape == outlier_y.shape
 
     def test_upper_outliers_clipped(self, outlier_y):
-        """All values in result should be <= IQR upper limit."""
-        Q1, Q3 = np.percentile(outlier_y, [25, 75])
-        upper_limit = Q3 + 1.5 * (Q3 - Q1)
+        """All values in result should be <= the quantile cap."""
+        upper_limit = np.quantile(outlier_y, WINSOR_QUANTILE)
         result = winsorize(outlier_y)
         assert (result <= upper_limit + 1e-9).all()
 
     def test_values_below_limit_unchanged(self, outlier_y):
-        """Non-outlier values should not be modified."""
-        Q1, Q3 = np.percentile(outlier_y, [25, 75])
-        upper_limit = Q3 + 1.5 * (Q3 - Q1)
+        """Values under the cap should not be modified."""
+        upper_limit = np.quantile(outlier_y, WINSOR_QUANTILE)
         result = winsorize(outlier_y)
         mask = outlier_y <= upper_limit
         np.testing.assert_array_equal(result[mask], outlier_y[mask])
 
     def test_upper_limit_computed_correctly(self, outlier_y):
-        Q1, Q3 = np.percentile(outlier_y, [25, 75])
-        expected_limit = Q3 + 1.5 * (Q3 - Q1)
+        expected_limit = np.quantile(outlier_y, WINSOR_QUANTILE)
         result = winsorize(outlier_y)
         assert result.max() == pytest.approx(expected_limit, rel=1e-6)
 
@@ -214,16 +212,15 @@ class TestWinsorize:
         result = winsorize(single_outlier_y)
         np.testing.assert_array_equal(result[:-1], single_outlier_y[:-1])
 
-    def test_multiple_outliers_all_clipped(self, outlier_y):
-        Q1, Q3 = np.percentile(outlier_y, [25, 75])
-        upper_limit = Q3 + 1.5 * (Q3 - Q1)
-        result = winsorize(outlier_y)
-        n_above = (outlier_y > upper_limit).sum()
-        assert n_above > 1  # confirm fixture has multiple outliers
+    def test_multiple_outliers_all_clipped(self):
+        y = np.arange(1.0, 1001.0)
+        upper_limit = np.quantile(y, WINSOR_QUANTILE)
+        result = winsorize(y)
+        assert (y > upper_limit).sum() > 1  # confirm several values sit above the cap
         assert (result > upper_limit).sum() == 0
 
     def test_all_same_value_returns_none(self):
-        """Uniform array has IQR=0 — no outliers possible."""
+        """A constant array has nothing above its cap."""
         y = np.ones(50) * 5.0
         assert winsorize(y) is None
 
@@ -264,9 +261,7 @@ class TestYTransformsRegistry:
     def test_wincount_clips_outliers(self, outlier_y):
         result = Y_TRANSFORMS["wincount"](outlier_y)
         assert result is not None
-        Q1, Q3 = np.percentile(outlier_y, [25, 75])
-        upper_limit = Q3 + 1.5 * (Q3 - Q1)
-        assert (result <= upper_limit + 1e-9).all()
+        assert (result <= np.quantile(outlier_y, WINSOR_QUANTILE) + 1e-9).all()
 
     def test_winlog_applies_log_then_winsorize(self, outlier_y):
         """winlog = winsorize(log1p(y)) — verify chain."""
@@ -328,8 +323,7 @@ class TestPerFoldWinsorize:
 
 
 class TestWinsorizeZeroInflated:
-    """With Q3 == Q1 == min (>= 75 % zeros) the IQR limit equals the minimum: clipping
-    would flatten every value to one constant, so there is nothing to winsorize."""
+    """The cap comes from the non-zero values, so zeros can't pull it into the catches."""
 
     @pytest.fixture
     def zero_inflated_y(self) -> np.ndarray:
@@ -346,6 +340,15 @@ class TestWinsorizeZeroInflated:
         """A training fold that is mostly zeros stays fittable."""
         np.testing.assert_array_equal(clip_upper_outliers(zero_inflated_y), zero_inflated_y)
 
-    def test_nonzero_q3_still_clips(self):
-        y = np.array([0.0] * 60 + [1.0] * 39 + [100.0])
-        assert winsorize(y).max() == 2.5
+    @pytest.mark.parametrize("n_zeros", [0, 100, 10_000])
+    def test_cap_ignores_how_many_zeros_there_are(self, n_zeros):
+        catches = np.arange(1.0, 301.0)
+        y = np.concatenate([np.zeros(n_zeros), catches])
+        assert winsorize(y).max() == pytest.approx(np.quantile(catches, WINSOR_QUANTILE))
+
+    def test_keeps_nearly_all_the_catch_on_a_zero_heavy_target(self):
+        y = np.concatenate([np.zeros(9700), np.arange(1.0, 301.0)])
+        assert winsorize(y).sum() / y.sum() > 0.99
+
+    def test_all_zero_target_returns_none(self):
+        assert winsorize(np.zeros(20)) is None

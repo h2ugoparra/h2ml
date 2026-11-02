@@ -39,6 +39,11 @@ TASK_METRICS: dict[TaskType, tuple[str, ...]] = {
     TaskType.CLASSIFICATION: ("Brier", "LogLoss", "AUC", "AUCPR", "F1"),
     TaskType.REGRESSION: ("RMSE", "R2", "MAE"),
 }
+# Comparable when asked for, but not by default: they don't apply to every target.
+OPT_IN_METRICS: dict[TaskType, tuple[str, ...]] = {
+    TaskType.CLASSIFICATION: (),
+    TaskType.REGRESSION: ("PoissonDev",),
+}
 REUSE_STEP4 = ("none", "model")
 
 # PipelineResult fields each shared stage writes (see H2MLPipeline._cv_step1 etc.)
@@ -200,8 +205,9 @@ def multi_metric(
         store:            Full dataset.
         metrics:          Metrics to compare, in run order. Defaults to every metric of the
                           task in TASK_METRICS order: Brier, LogLoss, AUC, AUCPR, F1
-                          (classification); RMSE, R2, MAE (regression).
-        transforms:       y-transform names swept in step 1 (regression only).
+                          (classification); RMSE, R2, MAE (regression). "PoissonDev" can
+                          be added for non-negative regression targets.
+        transforms:      y-transform names swept in step 1 (regression only).
         handle_imbalance: Per-metric override of config.handle_imbalance, e.g.
                           {"Brier": False, "LogLoss": False} to keep probability metrics
                           unweighted. Metrics not listed use the config value.
@@ -228,9 +234,10 @@ def multi_metric(
     metrics = list(dict.fromkeys(resolve_metric(m) for m in (task_metrics if metrics is None else metrics)))
     if not metrics:
         raise ValueError("metrics must hold at least one metric.")
-    invalid = [m for m in metrics if m not in task_metrics]
+    allowed = task_metrics + OPT_IN_METRICS[config.task_type]
+    invalid = [m for m in metrics if m not in allowed]
     if invalid:
-        raise ValueError(f"metrics {invalid} are not {config.task_type.value} metrics: {list(task_metrics)}")
+        raise ValueError(f"metrics {invalid} are not {config.task_type.value} metrics: {list(allowed)}")
     if handle_imbalance and config.task_type != TaskType.CLASSIFICATION:
         raise ValueError("handle_imbalance applies to classification only (class weighting).")
     overrides = {resolve_metric(m): v for m, v in (handle_imbalance or {}).items()}
