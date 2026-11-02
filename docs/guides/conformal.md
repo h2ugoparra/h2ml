@@ -246,7 +246,18 @@ from h2ml.utils.variogram import plot_variogram
 plot_variogram(store.coords, oof_residuals)
 ```
 
-A short practical range relative to your spatial block size confirms the spatial CV is well-separated. A long range suggests residual spatial autocorrelation that the model hasn't captured.
+Residuals are signed (predicted minus observed), and distances follow `spatial_cv_metric`: coordinate units for `"euclidean"`, km for `"haversine"`. For `plot_variogram` and `autocorrelation_range`, pass `metric="haversine"` yourself.
+
+Check `vr.status` before using the range:
+
+| Status | Meaning |
+|---|---|
+| `"ok"` | The variogram levels off within the lags, so the range is an estimate |
+| `"at_bound"` | It doesn't level off, so the true range is at least `practical_range`, which is capped at the longest lag |
+| `"no_structure"` | No spatial structure found: nearby residuals are no more alike than shuffled ones, or structure is under 20% of the variance or shorter than the first lag. Ignore the range |
+| `"unknown"` | Saved before `status` existed |
+
+With `"ok"`, a short range relative to your spatial block size confirms the spatial CV is well-separated, and a long one suggests residual autocorrelation the model hasn't captured. `"at_bound"` means the same as a long range. `"no_structure"` isn't proof of independence: on small samples or very zero-heavy targets, weak structure can go undetected.
 
 ---
 

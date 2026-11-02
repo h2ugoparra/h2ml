@@ -107,18 +107,17 @@ See [Conformal Prediction](guides/conformal.md#spatio-temporal-local-calibration
 
 ## Spatial autocorrelation diagnostics
 
-After a pipeline run, check for residual spatial autocorrelation using the variogram utility:
+After a pipeline run, check for residual spatial autocorrelation using the variogram fitted on the out-of-fold residuals:
 
 ```python
-from h2ml.utils.variogram import autocorrelation_range, plot_variogram
+from h2ml.utils.variogram import plot_variogram
 
 final = result.build_final_model()
-y_pred = final.predict(store.X)
-residuals = store.y - y_pred
+vr = final.variogram
+print(vr.practical_range, vr.status)
 
-vr = autocorrelation_range(store.coords, residuals)
-plot_variogram(vr)
-print(vr.range_km)  # estimated autocorrelation range
+residuals = result.oof_predictions - result.oof_labels
+plot_variogram(result.features.coords, residuals, metric=result.spatial_cv_metric)
 ```
 
-A short range relative to your block size means the spatial CV is well-sized. A long range suggests the blocks are too small to achieve true spatial independence.
+The range is in coordinate units, or km with `spatial_cv_metric="haversine"`. With status `"ok"`, a short range relative to your block size means the spatial CV is well-sized, and a long range suggests the blocks are too small to achieve true spatial independence. `"at_bound"` means the range is at least the value shown, and `"no_structure"` means none was found, so ignore the range. See the [variogram diagnostic](guides/conformal.md#variogram-diagnostic).

@@ -412,6 +412,38 @@ class TestTransformScale:
         np.testing.assert_allclose(delta.predict(X), clf.predict_proba(X) * y, rtol=1e-6)
 
 
+class TestVariogramInputs:
+    def test_fitted_on_signed_residuals_with_the_run_metric(self):
+        from sklearn.linear_model import LinearRegression
+
+        rng = np.random.default_rng(0)
+        X = rng.standard_normal((40, 2))
+        y = rng.uniform(1.0, 5.0, 40)
+        coords = rng.uniform(0, 5, (40, 2))
+        pred = y + rng.normal(0, 1, 40)
+        fold = FoldResult(
+            fold_id=0,
+            model_name="LinearRegression",
+            y_train=y,
+            y_test=y,
+            y_pred_train=y,
+            y_pred_test=pred,
+            test_idx=np.arange(40),
+        )
+        result = PipelineResult(
+            features=PipelineData(X=X, feature_names=["a", "b"], y=y, coords=coords),
+            step1_cv_result=[CVResult("LinearRegression", TaskType.REGRESSION, folds=[fold])],
+            best_model_name="LinearRegression",
+            best_stage="default",
+            best_base_estimator=LinearRegression(),
+            spatial_cv_metric="haversine",
+        )
+        with patch("h2ml.utils.variogram.autocorrelation_range") as fit:
+            result.build_final_model()
+        np.testing.assert_allclose(fit.call_args.args[1], pred - y)
+        assert fit.call_args.kwargs["metric"] == "haversine"
+
+
 # ---------------------------------------------------------------------------
 # ConformalCalibration
 # ---------------------------------------------------------------------------

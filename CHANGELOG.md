@@ -4,8 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Variogram diagnostic: `FinalModel.variogram` is now fitted on signed residuals and
+  honours `spatial_cv_metric`, so haversine runs report km. The practical range can't
+  exceed the longest lag. Semivariances use the robust Cressie–Hawkins estimator, so
+  existing values change on refit.
+
 ### Added
 
+- `VariogramResult.status` says how far to trust the range: `"ok"`, `"at_bound"` (the
+  true range is at least this), `"no_structure"` (a permutation check or the fit found
+  none) or `"unknown"` (saved before the field existed).
 - `[transform]` warning when a log or sqrt-family winner's out-of-fold total is more than
   20% from the observed total. Inverting these transforms doesn't recover the mean, so
   totals can come out far too low.
