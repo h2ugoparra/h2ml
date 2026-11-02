@@ -91,6 +91,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers with `supports_class_weight=True`; `"auto"` only when minority-class ratio < 0.1, resolved per run |
 | `prefer_reduced_on_tie` | `False` | Step 3 1-SE rule: if the winner is `"default"` stage and a reduced candidate is `Indistinguishable` from it (paired folds, Nadeau–Bengio SE), select the best-ranked such reduced candidate; switch recorded in `cv_warnings` |
 | `select_features_in_folds` | `False` | Step 3 re-runs the step-2 selector per CV fold on its training rows (`result.step3_fold_features`) and scores reduced candidates on those sets (`CrossValidator` `fold_columns`); step 4's acceptance CV reuses them when reduced won. Deployed set unchanged. ~`n_splits`× step-2 cost |
+| `selection_scoring` | `"pooled"` | Regression selection in steps 1, 3 and 4 (including Optuna): one score over all OOF rows (`<metric>_Test_Pooled`). `"fold_mean"` uses the mean with a fold-spread penalty. Classification always uses the fold mean. Kept on the result, so older saved results resume on `"fold_mean"` |
 | `holdout_frac` | `0.0` | Rows set aside before step 1, scored once on the final config (`result.holdout_df`); steps run on the rest. Conformal then uses holdout residuals and local conformal is skipped |
 | `holdout_strategy` | `"auto"` | `"auto"` (whole spatial blocks drawn at random up to `holdout_frac` if coords, else random/stratified), `"random"`, `"time"` (latest rows by `store.times`) |
 | `holdout_refit` | `"dev"` | `build_final_model` fits on `"dev"` rows only, or `"all"` (dev + holdout) |
@@ -114,7 +115,8 @@ result.build_final_model()                      # refit on full training set →
 result.save(path) / PipelineResult.load(path)  # serialise/reload
 result.ranking_robustness(step=None)            # paired-fold gaps/ties + per-metric ranks (step 3 if run, else 1)
 # cv_warnings also carries advisory [metric] (step 1) and [ranking] (steps 1 & 3) flags;
-# Is_Winner in ranking_robustness is the confidence-bound winner before prefer_reduced_on_tie
+# Is_Winner in ranking_robustness is the selection's winner before prefer_reduced_on_tie;
+# [selection] flags constant-prediction candidates, which selection excludes unless all are flat
 
 # FinalModel conformal prediction
 model.predict_interval(X, alpha)  # regression; alpha=0.10 → 90% coverage

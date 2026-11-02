@@ -29,7 +29,7 @@ from sklearn.metrics import (
 )
 
 from h2ml.core.base import TaskType
-from h2ml.core.cv_result import CVResult, FoldResult
+from h2ml.core.cv_result import FLAT_TOLERANCE, CVResult, FoldResult
 
 # ---------------------------------------------------------------------------
 # Metric metadata — shared by PipelineConfig (selection/HPO) and compare_results
@@ -50,6 +50,19 @@ METRIC_COL: dict[str, str] = {
     "MAE": "MAE_Test_Mean",
     "RMSE": "RMSE_Test_Mean",
 }
+
+# Regression metrics scored once on all out-of-fold rows, so folds count by their size
+# and a near-constant fold cannot dominate. Derived in aggregate_metrics().
+POOLED_SUFFIX = "_Test_Pooled"
+POOLED_COL: dict[str, str] = {m: f"{m}{POOLED_SUFFIX}" for m in ("R2", "MAE", "RMSE")}
+
+# How selection scores candidates. "pooled" applies to the POOLED_COL metrics; the others
+# always use the fold mean.
+SELECTION_SCORINGS = ("pooled", "fold_mean")
+
+# Per-fold bookkeeping behind the pooled scores and the flat-model flag — not aggregated
+# into _Mean/_Std columns.
+_FOLD_ONLY_COLS = ("N_Test", "Y_Mean_Test", "Y_SS_Test", "Is_Flat")
 
 # Whether each metric should be minimised (True) or maximised (False)
 METRIC_MINIMIZE: dict[str, bool] = {
@@ -76,6 +89,11 @@ def resolve_metric(metric: str) -> str:
         logger.warning(f"metric {metric!r} is deprecated and will be removed in a future release; use {new!r}.")
         return new
     return metric
+
+
+def selection_col(metric: str, scoring: str) -> str:
+    """Aggregated column selection ranks metric by under scoring."""
+    return POOLED_COL.get(metric, METRIC_COL[metric]) if scoring == "pooled" else METRIC_COL[metric]
 
 
 def rename_deprecated_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -216,15 +234,27 @@ def _regression_metrics(fold: FoldResult) -> dict:
     """Compute regression metrics for a single fold."""
     mse_test = mean_squared_error(fold.y_test, fold.y_pred_test)
     mse_train = mean_squared_error(fold.y_train, fold.y_pred_train)
+    y_test = fold.y_test
     return {
-        "R2_Test": r2_score(fold.y_test, fold.y_pred_test),
+        # R2 is undefined on a zero-variance fold; sklearn would report 1.0 or 0.0
+        "R2_Test": r2_score(y_test, fold.y_pred_test) if np.ptp(y_test) > 0 else np.nan,
         "R2_Train": r2_score(fold.y_train, fold.y_pred_train),
         "MAE_Test": mean_absolute_error(fold.y_test, fold.y_pred_test),
         "MAE_Train": mean_absolute_error(fold.y_train, fold.y_pred_train),
         "RMSE_Test": np.sqrt(mse_test),
         "RMSE_Train": np.sqrt(mse_train),
         "Fit_Time": fold.fit_time,
+        "N_Test": y_test.size,
+        "Y_Mean_Test": y_test.mean(),
+        "Y_SS_Test": np.sum((y_test - y_test.mean()) ** 2),
     }
+
+
+def _is_flat(fold: FoldResult) -> bool:
+    """True when the fold's test predictions have essentially no spread."""
+    if fold.y_prob_test is not None:
+        return bool(np.max(np.ptp(fold.y_prob_test, axis=0)) <= FLAT_TOLERANCE)
+    return bool(np.ptp(fold.y_pred_test) <= FLAT_TOLERANCE * np.std(fold.y_train))
 
 
 # Dispatcher — routes to the right metric function by task type
@@ -300,6 +330,7 @@ def compute_metrics(
     for fold in cv_result.folds:
         row = {"Model": fold.model_name, "Fold": fold.fold_id}
         row.update(metric_fn(fold))
+        row["Is_Flat"] = float(_is_flat(fold))  # numeric: rows from older saved results concatenate as NaN
         if metadata:
             row.update(metadata.to_dict())
         rows.append(row)
@@ -337,6 +368,22 @@ def compute_metrics_all(
     return pd.concat(frames, ignore_index=True)
 
 
+def _pooled_regression_scores(folds: pd.DataFrame) -> pd.Series:
+    """R2, MAE and RMSE over all rows of folds, from each fold's size, mean and sum of squares."""
+    n = folds["N_Test"]
+    total = n.sum()
+    sse = (n * folds["RMSE_Test"] ** 2).sum()
+    mean = (n * folds["Y_Mean_Test"]).sum() / total
+    sst = (folds["Y_SS_Test"] + n * (folds["Y_Mean_Test"] - mean) ** 2).sum()
+    return pd.Series(
+        {
+            POOLED_COL["R2"]: 1 - sse / sst if sst > 0 else np.nan,
+            POOLED_COL["MAE"]: (n * folds["MAE_Test"]).sum() / total,
+            POOLED_COL["RMSE"]: np.sqrt(sse / total),
+        }
+    )
+
+
 def aggregate_metrics(fold_df: pd.DataFrame, group_by_stage: bool = True) -> pd.DataFrame:
     """
     Aggregate per-fold results into mean ± std per model.
@@ -351,9 +398,10 @@ def aggregate_metrics(fold_df: pd.DataFrame, group_by_stage: bool = True) -> pd.
 
     Returns:
         DataFrame with one row per model, columns suffixed _Mean and _Std.
-        ``<metric>_Test_Mean`` is the mean of the per-fold held-out scores; it
-        generally differs from one score computed on pooled out-of-fold
-        predictions (see ``CVResult.oof_predictions``).
+        ``<metric>_Test_Mean`` is the mean of the per-fold held-out scores.
+        Regression also gets ``<metric>_Test_Pooled``, one score over all held-out
+        rows of the completed folds. Is_Flat marks models with no prediction spread
+        in any fold.
     """
     # Columns to group by — model name + any metadata fields present in the df
     group_cols = ["Model"]
@@ -367,13 +415,22 @@ def aggregate_metrics(fold_df: pd.DataFrame, group_by_stage: bool = True) -> pd.
 
     numeric_cols = fold_df.select_dtypes(include=np.number).columns.tolist()
     # Exclude fold id from aggregation
-    numeric_cols = [c for c in numeric_cols if c != "Fold"]
+    numeric_cols = [c for c in numeric_cols if c != "Fold" and c not in _FOLD_ONLY_COLS]
 
     # Single groupby pass computing both statistics, then flatten the MultiIndex
     # columns (col, "mean") → "col_Mean" / (col, "std") → "col_Std". std uses
     # pandas' default ddof=1, matching the previous .std() call.
-    grouped = fold_df.groupby(group_cols)[numeric_cols].agg(["mean", "std"])
+    groups = fold_df.groupby(group_cols)
+    grouped = groups[numeric_cols].agg(["mean", "std"])
     grouped.columns = [f"{col}_{stat.capitalize()}" for col, stat in grouped.columns]
+    extra_cols = []
+    if "N_Test" in fold_df.columns:
+        pooled_inputs = ["N_Test", "Y_Mean_Test", "Y_SS_Test", "RMSE_Test", "MAE_Test"]
+        grouped = grouped.join(groups[pooled_inputs].apply(_pooled_regression_scores))
+        extra_cols += list(POOLED_COL.values())
+    if "Is_Flat" in fold_df.columns:
+        grouped["Is_Flat"] = groups["Is_Flat"].min().eq(1)
+        extra_cols.append("Is_Flat")
     agg_df = grouped.reset_index()
 
     # Interleave Mean/Std columns for readability: AUC_Test_Mean, AUC_Test_Std, ...
@@ -381,7 +438,7 @@ def aggregate_metrics(fold_df: pd.DataFrame, group_by_stage: bool = True) -> pd.
     for col in numeric_cols:
         metric_cols += [f"{col}_Mean", f"{col}_Std"]
 
-    ordered_cols = group_cols + [c for c in metric_cols if c in agg_df.columns]
+    ordered_cols = group_cols + [c for c in metric_cols if c in agg_df.columns] + extra_cols
     return agg_df[ordered_cols]
 
 
@@ -425,9 +482,10 @@ def selection_score(
     """
     Per-row score select_best() ranks by: the confidence bound when n_folds is given, else
     the mean. The bound's spread is the fold-centred std when fold_df is given (see
-    _fold_centered_std), else agg_df's raw fold std.
+    _fold_centered_std), else agg_df's raw fold std. Pooled scores rank as they are:
+    they have no fold spread to bound.
     """
-    if n_folds is None:
+    if n_folds is None or metric.endswith(POOLED_SUFFIX):
         return agg_df[metric]
     if fold_df is not None and metric.removesuffix("_Mean") in fold_df.columns:
         spread = _fold_centered_std(agg_df, fold_df, metric)
@@ -465,9 +523,13 @@ def select_best(
     moving with fold prevalence) then neither penalises the model that tracks the data
     nor rewards one that hedges every prediction towards the middle.
 
+    Pooled columns rank by the score itself. Candidates flagged Is_Flat are excluded
+    unless every candidate is flat.
+
     Args:
         agg_df:   Output of aggregate_metrics().
-        metric:   Column name to rank by (must end in _Mean, e.g. AUC_Test_Mean).
+        metric:   Column name to rank by: a _Mean column (e.g. AUC_Test_Mean) or a
+                  _Pooled one (e.g. RMSE_Test_Pooled).
         minimize: If True, select the row with the lowest value (e.g. RMSE, MAE).
         n_folds:  Number of CV folds used to produce agg_df. When provided,
                   selection uses confidence-bound scoring instead of raw mean.
@@ -486,6 +548,10 @@ def select_best(
         raise ValueError(f"Metric '{metric}' not found. Available: {list(agg_df.columns)}")
 
     score = selection_score(agg_df, metric, minimize, n_folds, fold_df)
+    if "Is_Flat" in agg_df.columns:
+        flat = agg_df["Is_Flat"].eq(True)  # NaN on rows from results saved without the flag
+        if not flat.all():
+            score = score.where(~flat)
 
     if score.isna().all():
         raise RuntimeError(

@@ -19,7 +19,14 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from h2ml.evaluation.metrics import METRIC_COL, METRIC_MINIMIZE, aggregate_metrics, select_best, selection_score
+from h2ml.evaluation.metrics import (
+    METRIC_COL,
+    METRIC_MINIMIZE,
+    aggregate_metrics,
+    select_best,
+    selection_col,
+    selection_score,
+)
 
 # Columns identifying one selection candidate in a fold DataFrame.
 KEY_COLS = ("Model", "Y_transform", "Stage")
@@ -39,19 +46,26 @@ COUNTERPART_METRIC: dict[str, tuple[str, str]] = {
 }
 
 
-def ranking_robustness(fold_df: pd.DataFrame, metric: str, n_folds: Optional[int] = None) -> pd.DataFrame:
+def ranking_robustness(
+    fold_df: pd.DataFrame,
+    metric: str,
+    n_folds: Optional[int] = None,
+    selection_scoring: str = "fold_mean",
+) -> pd.DataFrame:
     """
     Paired-fold and cross-metric robustness of the selection made on fold_df.
 
     The winner is re-derived with select_best() exactly as the pipeline selects it
-    (confidence-bound score with the fold-centred std). Each other candidate is compared with it on the folds
-    both completed (a NaN score, e.g. AUC on a single-class fold, drops that fold
-    from that pair only).
+    (the pooled score, or the confidence-bound score with the fold-centred std). Each
+    other candidate is compared with it on the folds both completed (a NaN score, e.g.
+    AUC on a single-class fold, drops that fold from that pair only). A pooled winner
+    can lag on the unweighted paired folds, so Winner_Gap may be negative.
 
     Args:
         fold_df: Per-fold metrics (step1_fold_df, or step 1 + step 3 concatenated).
         metric:  Short selection metric name, e.g. "AUC" or "RMSE".
         n_folds: CV folds behind fold_df; inferred from the "Fold" column when None.
+        selection_scoring: The rule the selection used, as in PipelineConfig.
 
     Returns:
         One row per candidate (key columns Model/Y_transform/Stage as present), sorted
@@ -64,13 +78,20 @@ def ranking_robustness(fold_df: pd.DataFrame, metric: str, n_folds: Optional[int
             Indistinguishable  — Winner_Gap ≤ Gap_SE (a heuristic tie, not a formal test)
             Is_Winner          — the select_best winner, i.e. before any
                                  prefer_reduced_on_tie switch in the pipeline
+            Is_Flat            — no prediction spread in any fold; only selectable
+                                 when every candidate is flat
             Rank_<m>           — rank (1 = best) under each metric present, by the same
-                                 confidence-bound score select_best uses (fold-centred std)
+                                 score select_best uses
     """
     n_folds = n_folds or int(fold_df["Fold"].nunique())
     keys = [c for c in KEY_COLS if c in fold_df.columns]
     agg = aggregate_metrics(fold_df)
-    best = select_best(agg, METRIC_COL[metric], METRIC_MINIMIZE[metric], n_folds, fold_df)
+    if "Is_Flat" not in agg.columns:  # fold tables saved without the flag
+        agg["Is_Flat"] = False
+    col = selection_col(metric, selection_scoring)
+    if col not in agg.columns:  # fold tables saved without pooled inputs
+        col = METRIC_COL[metric]
+    best = select_best(agg, col, METRIC_MINIMIZE[metric], n_folds, fold_df)
     winner = tuple(best["row"][k] for k in keys)
 
     test_col = f"{metric}_Test"
@@ -99,15 +120,45 @@ def ranking_robustness(fold_df: pd.DataFrame, metric: str, n_folds: Optional[int
     paired = pd.DataFrame(rows)
 
     rank_cols = []
-    for m, col in METRIC_COL.items():
-        if col in agg.columns:
-            score = selection_score(agg, col, METRIC_MINIMIZE[m], n_folds, fold_df)
+    for m, mean_col in METRIC_COL.items():
+        if mean_col in agg.columns:
+            rank_col = selection_col(m, selection_scoring)
+            rank_col = rank_col if rank_col in agg.columns else mean_col
+            score = selection_score(agg, rank_col, METRIC_MINIMIZE[m], n_folds, fold_df)
             agg[f"Rank_{m}"] = score.rank(ascending=METRIC_MINIMIZE[m], method="min")
             rank_cols.append(f"Rank_{m}")
 
-    out = agg[keys + [METRIC_COL[metric]] + rank_cols].merge(paired, on=keys)
-    out = out[keys + [METRIC_COL[metric]] + list(paired.columns[len(keys) :]) + rank_cols]
+    out = agg[keys + [METRIC_COL[metric], "Is_Flat"] + rank_cols].merge(paired, on=keys)
+    out = out[keys + [METRIC_COL[metric]] + list(paired.columns[len(keys) :]) + ["Is_Flat"] + rank_cols]
     return out.sort_values(f"Rank_{metric}").reset_index(drop=True)
+
+
+def flat_warnings(
+    agg_df: pd.DataFrame,
+    metric: str,
+    selection_scoring: str,
+    n_folds: int,
+    fold_df: pd.DataFrame,
+) -> list[str]:
+    """[selection] warnings about candidates whose predictions don't vary."""
+    if "Is_Flat" not in agg_df.columns:
+        return []
+    is_flat = agg_df["Is_Flat"].eq(True)  # NaN on rows from results saved without the flag
+    if not is_flat.any():
+        return []
+    if is_flat.all():
+        return [
+            "[selection] Every candidate predicts a constant value, so the CV shows no usable signal "
+            "for this target. The best one was kept and step 2 keeps every feature."
+        ]
+    keys = [c for c in KEY_COLS if c in agg_df.columns and (c == "Model" or agg_df[c].nunique() > 1)]
+    names = [" | ".join(str(r[k]) for k in keys if pd.notna(r[k])) for _, r in agg_df[is_flat].iterrows()]
+    msg = f"[selection] Excluded {len(names)} constant-prediction candidate(s): {', '.join(names)}."
+    col = selection_col(metric, selection_scoring)
+    unguarded = select_best(agg_df.drop(columns="Is_Flat"), col, METRIC_MINIMIZE[metric], n_folds, fold_df)
+    if is_flat[unguarded["row"].name]:
+        msg += f" One of them would have won on {metric}, which suggests weak signal for this target."
+    return [msg]
 
 
 def ranking_warnings(robust_df: pd.DataFrame, metric: str) -> list[str]:
