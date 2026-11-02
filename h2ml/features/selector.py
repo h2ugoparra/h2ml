@@ -69,6 +69,10 @@ class FeatureSelector(BasePreprocessor):
                         feature with a variance inflation factor above this value until
                         none is — catches features that are linear combinations of
                         several retained ones. None (default) skips the check.
+        keep_all:       Skip SHAP and keep every feature, for a model whose predictions
+                        don't vary: it gives no ranking, so any reduction would follow
+                        column order. feature_importance_ is then all zeros and
+                        shap_values_ stays empty. Default False.
         _splitter:      Internal — a pre-built spatial splitter reused for the OOF
                         SHAP pass so it matches the pipeline's CV folds. Leave None
                         for non-spatial use; the pipeline injects it when relevant.
@@ -94,6 +98,7 @@ class FeatureSelector(BasePreprocessor):
         train_target_fn: Optional[Callable] = None,
         n_jobs: int = 1,
         max_vif: Optional[float] = None,
+        keep_all: bool = False,
         _splitter: Any = None,
     ):
         if min_features < 1:
@@ -113,6 +118,7 @@ class FeatureSelector(BasePreprocessor):
         self.train_target_fn = train_target_fn
         self.n_jobs = n_jobs
         self.max_vif = max_vif
+        self.keep_all = keep_all
         self._splitter = _splitter
 
         # Set after fit
@@ -139,6 +145,12 @@ class FeatureSelector(BasePreprocessor):
         Returns:
             self, with shap_values_, feature_importance_ and selected_features_ set.
         """
+        if self.keep_all:
+            self.feature_importance_ = pd.Series(0.0, index=store.feature_names)
+            self.selected_features_ = list(store.feature_names)
+            self._fitted = True
+            return self
+
         if self.use_oof:
             self.shap_values_, self.feature_importance_ = get_oof_shap_values(
                 step=self.step,

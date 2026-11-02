@@ -131,9 +131,10 @@ def _score_f1(model, X_train, X_test, y_train, y_test) -> float:
     return float(f1_score(y_test, y_pred, average="weighted", zero_division=0))
 
 
-def _score_r2(
-    model, X_train, X_test, y_train, y_test, *, y_true_test: np.ndarray | None = None, inverse_fn=None
-) -> float:
+def _regression_predictions(
+    model, X_train, X_test, y_train, y_test, y_true_test: np.ndarray | None = None, inverse_fn=None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fit model and return (y_test, y_pred), on the original scale when inverse_fn is given."""
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     if inverse_fn is not None:
@@ -144,41 +145,39 @@ def _score_r2(
             raise optuna.TrialPruned()
         assert y_true_test is not None
         y_test = y_true_test
-    return float(r2_score(y_test, y_pred))
+    return y_test, y_pred
+
+
+def _r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    return float(r2_score(y_true, y_pred))
+
+
+def _neg_mae(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    return float(-mean_absolute_error(y_true, y_pred))
+
+
+def _neg_rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    return float(-np.sqrt(mean_squared_error(y_true, y_pred)))
+
+
+def _score_r2(
+    model, X_train, X_test, y_train, y_test, *, y_true_test: np.ndarray | None = None, inverse_fn=None
+) -> float:
+    return _r2(*_regression_predictions(model, X_train, X_test, y_train, y_test, y_true_test, inverse_fn))
 
 
 def _score_mae(
     model, X_train, X_test, y_train, y_test, *, y_true_test: np.ndarray | None = None, inverse_fn=None
 ) -> float:
     """Negated MAE so higher is better."""
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    if inverse_fn is not None:
-        y_pred = inverse_fn(y_pred)
-        if not np.all(np.isfinite(y_pred)):
-            # Diverged model (e.g. sigmoid SVR whose expm1 inverse overflows):
-            # discard the trial instead of crashing the study.
-            raise optuna.TrialPruned()
-        assert y_true_test is not None
-        y_test = y_true_test
-    return float(-mean_absolute_error(y_test, y_pred))
+    return _neg_mae(*_regression_predictions(model, X_train, X_test, y_train, y_test, y_true_test, inverse_fn))
 
 
 def _score_rmse(
     model, X_train, X_test, y_train, y_test, *, y_true_test: np.ndarray | None = None, inverse_fn=None
 ) -> float:
     """Negated RMSE so higher is better."""
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    if inverse_fn is not None:
-        y_pred = inverse_fn(y_pred)
-        if not np.all(np.isfinite(y_pred)):
-            # Diverged model (e.g. sigmoid SVR whose expm1 inverse overflows):
-            # discard the trial instead of crashing the study.
-            raise optuna.TrialPruned()
-        assert y_true_test is not None
-        y_test = y_true_test
-    return float(-np.sqrt(mean_squared_error(y_test, y_pred)))
+    return _neg_rmse(*_regression_predictions(model, X_train, X_test, y_train, y_test, y_true_test, inverse_fn))
 
 
 # Registry of available metrics per task.
@@ -195,6 +194,13 @@ REG_METRICS: dict[str, Callable] = {
     "R2": _score_r2,
     "MAE": _score_mae,
     "RMSE": _score_rmse,
+}
+
+# Scorers over pooled out-of-fold rows, for selection_scoring="pooled".
+POOLED_REG_METRICS: dict[str, Callable] = {
+    "R2": _r2,
+    "MAE": _neg_mae,
+    "RMSE": _neg_rmse,
 }
 
 _TASK_METRICS: dict[str, dict[str, Callable]] = {
@@ -220,6 +226,7 @@ def _build_objective(
     n_splits: int,
     random_state: int,
     score_fn: Callable,
+    pooled_score_fn: Optional[Callable] = None,
     coords: Optional[np.ndarray] = None,
     spatial: Optional[SpatialCVConfig] = None,
     fixed_params: Optional[dict] = None,
@@ -237,7 +244,8 @@ def _build_objective(
         1. Samples hyperparameters via entry.param_fn(trial)
         2. Instantiates the model
         3. Applies scaling inside each fold if requires_scaling
-        4. Computes mean CV score across n_splits folds
+        4. Computes the CV score across n_splits folds: over pooled out-of-fold rows
+           when pooled_score_fn(y_true, y_pred) is given, else the mean of score_fn
         5. Reports intermediate (per-fold) scores for pruning
 
     Fold indices and scaled arrays are pre-computed once at construction time —
@@ -307,14 +315,15 @@ def _build_objective(
 
     def objective(trial: optuna.Trial) -> float:
         """
-        Score one Optuna trial: sample params, run CV, return the mean fold score.
+        Score one Optuna trial: sample params, run CV, return the CV score.
 
         Args:
             trial: Optuna trial supplying sampled hyperparameters.
 
         Returns:
-            Mean cross-validation score across folds (higher is better; score_fn
-            negates error metrics so Optuna always maximises).
+            Score over pooled out-of-fold rows when pooled_score_fn is set, else the
+            mean across folds (higher is better; error metrics are negated so Optuna
+            always maximises).
 
         Raises:
             ValueError: If the model entry has no param_fn (no search space defined).
@@ -332,7 +341,10 @@ def _build_objective(
         else:
             model = entry.model_cls(**params)
 
-        fold_scores = []
+        fold_scores: list[float] = []
+        pooled_true: list[np.ndarray] = []
+        pooled_pred: list[np.ndarray] = []
+        running = float("nan")
         for fold_idx, (train_idx, test_idx) in enumerate(fold_indices):
             if scaled_folds is not None:
                 X_train, X_test = scaled_folds[fold_idx]
@@ -342,27 +354,30 @@ def _build_objective(
             if train_target_fn is not None:
                 y_train = train_target_fn(y_train)
 
-            if task == "regression" and inverse_fn is not None:
-                assert y_true_folds is not None
-                score = score_fn(
-                    model,
-                    X_train,
-                    X_test,
-                    y_train,
-                    y_test,
-                    y_true_test=y_true_folds[fold_idx],
-                    inverse_fn=inverse_fn,
+            y_true_test = y_true_folds[fold_idx] if y_true_folds is not None else None
+            if pooled_score_fn is not None:
+                y_scored, y_pred = _regression_predictions(
+                    model, X_train, X_test, y_train, y_test, y_true_test, inverse_fn
                 )
+                pooled_true.append(y_scored)
+                pooled_pred.append(y_pred)
+                running = pooled_score_fn(np.concatenate(pooled_true), np.concatenate(pooled_pred))
             else:
-                score = score_fn(model, X_train, X_test, y_train, y_test)
-            fold_scores.append(score)
+                if task == "regression" and inverse_fn is not None:
+                    score = score_fn(
+                        model, X_train, X_test, y_train, y_test, y_true_test=y_true_test, inverse_fn=inverse_fn
+                    )
+                else:
+                    score = score_fn(model, X_train, X_test, y_train, y_test)
+                fold_scores.append(score)
+                running = float(np.mean(fold_scores))
 
-            # Report running mean so the pruner can kill unpromising trials early
-            trial.report(float(np.mean(fold_scores)), step=fold_idx)
+            # Report the running score so the pruner can kill unpromising trials early
+            trial.report(running, step=fold_idx)
             if trial.should_prune():
                 raise optuna.TrialPruned()
 
-        return float(np.mean(fold_scores))
+        return running
 
     return objective
 
@@ -393,6 +408,7 @@ def run_study(
     _splitter: Any = None,
     estimator: Any = None,
     requires_scaling: Optional[bool] = None,
+    selection_scoring: str = "pooled",
 ) -> optuna.Study:
     """
     Run an Optuna hyperparameter optimization study for a registered model.
@@ -426,6 +442,9 @@ def run_study(
                         from the registry class with only the sampled params.
         requires_scaling: Scale features inside folds; defaults to the registry
                         entry's requires_scaling when None.
+        selection_scoring: "pooled" scores regression trials once on all out-of-fold
+                        rows; "fold_mean" averages per-fold scores. Classification
+                        always uses the fold mean.
 
     Returns:
         optuna.Study with best_params, best_value, and full trial history.
@@ -484,6 +503,7 @@ def run_study(
             n_splits=n_splits,
             random_state=seed,
             score_fn=score_fn,
+            pooled_score_fn=POOLED_REG_METRICS.get(resolved_metric) if selection_scoring == "pooled" else None,
             coords=coords,
             spatial=spatial,
             fixed_params=fixed_params,

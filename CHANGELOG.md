@@ -39,9 +39,26 @@ All notable changes to this project will be documented in this file.
   and, for regression, fewer than 20 non-zero rows on a target with zeros, or a mean or
   non-zero rate more than 2× from the dev rows. The under-30-rows warning moved there
   from the log, so it survives `save`/`load`.
+- Constant-prediction guard. Models with no prediction spread in any fold are excluded
+  from selection in steps 1 and 3 and skipped by `prefer_reduced_on_tie`, and a tuned
+  flat model is rejected in step 4. `[selection]` warnings name them and say when one
+  would have won. If every candidate is flat, the best is kept with a warning and
+  step 2 skips SHAP and keeps every feature (`FeatureSelector(keep_all=True)`), instead
+  of reducing by column order. Applies to classification too.
 
 ### Changed
 
+- **Regression selection now uses pooled scores, so regression runs need rerunning.**
+  `PipelineConfig.selection_scoring` defaults to `"pooled"`: R2, MAE or RMSE computed
+  once on all out-of-fold rows, in steps 1, 3 and 4, including Optuna trials, and
+  reported as `<metric>_Test_Pooled`. This stops small or near-constant folds from
+  dominating selection. `best_model_value` holds the pooled score, while
+  `best_model_std` stays the fold std. `"fold_mean"` restores the previous rule, apart
+  from the fold R2 change below. Classification is unchanged. Results saved earlier keep
+  their fold-mean rule when resumed.
+- **Fold R2 is NaN on a fold with zero target variance**, where it was 1.0 or 0.0, so
+  `R2_Test_Mean` skips such folds. Optuna's `fold_mean` objective keeps sklearn's value,
+  because a NaN trial score would stop the study from ranking trials.
 - **Spatial holdouts change, so runs with `holdout_frac > 0` and coordinates need
   rerunning.** The holdout is now whole blocks drawn at random up to `holdout_frac`,
   not the single fold closest in size. Sizes follow `holdout_frac`, and holdouts

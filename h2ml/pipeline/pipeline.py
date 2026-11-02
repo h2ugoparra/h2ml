@@ -30,13 +30,15 @@ from h2ml.evaluation.metrics import (
     # PipelineConfig.metric_col / minimize_metric.
     METRIC_COL,
     METRIC_MINIMIZE,
+    SELECTION_SCORINGS,
     RunMetadata,
     aggregate_metrics,
     compute_metrics_all,
     resolve_metric,
     select_best,
+    selection_col,
 )
-from h2ml.evaluation.ranking import KEY_COLS, ranking_robustness, ranking_warnings
+from h2ml.evaluation.ranking import KEY_COLS, flat_warnings, ranking_robustness, ranking_warnings
 from h2ml.features.selector import FeatureSelector
 from h2ml.features.spatial_cv import BlockGroupSplitter
 from h2ml.optimization.optimizer import run_study
@@ -177,6 +179,12 @@ class PipelineConfig:
                              stage won. The deployed feature set is still step 2's.
                              Costs about n_splits extra step-2 runs. Default: False.
 
+        selection_scoring:   How regression candidates are scored in steps 1, 3 and 4,
+                             including Optuna trials. "pooled" — one score over all
+                             out-of-fold rows, so folds count by their size. "fold_mean"
+                             — mean of the per-fold scores with a fold-spread penalty.
+                             Classification always uses the fold mean. Default: "pooled".
+
         holdout_frac:        Fraction of rows set aside before step 1 and scored once on
                              the final selected configuration — an estimate no selection
                              step has seen. Steps 1–4 run on the remaining (dev) rows. With
@@ -219,6 +227,7 @@ class PipelineConfig:
     handle_imbalance: bool | Literal["auto"] = False
     prefer_reduced_on_tie: bool = False
     select_features_in_folds: bool = False
+    selection_scoring: Literal["pooled", "fold_mean"] = "pooled"
     holdout_frac: float = 0.0
     holdout_strategy: Literal["auto", "random", "time"] = "auto"
     holdout_refit: Literal["dev", "all"] = "dev"
@@ -266,6 +275,8 @@ class PipelineConfig:
             raise ValueError(f"spatial_cv_method must be 'block' or 'spcv', got {self.spatial_cv_method!r}")
         if not (isinstance(self.handle_imbalance, bool) or self.handle_imbalance == "auto"):
             raise ValueError(f"handle_imbalance must be True, False or 'auto', got {self.handle_imbalance!r}")
+        if self.selection_scoring not in SELECTION_SCORINGS:
+            raise ValueError(f"selection_scoring must be one of {SELECTION_SCORINGS}, got {self.selection_scoring!r}")
         if not 0 <= self.holdout_frac <= 0.5:
             raise ValueError(f"holdout_frac must be in [0, 0.5], got {self.holdout_frac}")
         if self.holdout_strategy not in HOLDOUT_STRATEGIES:
@@ -314,8 +325,12 @@ class PipelineResult:
         step1_fold_df:        Per-fold metrics from step 1 (all models × transforms).
         step1_agg_df:         Aggregated (mean ± std) step-1 metrics per model.
         best_model_name:      Winning model name after step 1.
-        best_model_value:     Best model's score on the selection metric.
+        best_model_value:     Best model's score on the selection metric, under
+                              selection_scoring.
         best_model_std:       Fold std of the best model's selection metric.
+        selection_scoring:    Scoring rule this result selected with ("pooled" or
+                              "fold_mean"), kept when resuming. Results saved before the
+                              option load as "fold_mean".
         features_reduced:     PipelineData after step-2 feature reduction.
         selector:             Fitted FeatureSelector (SHAP + correlation filter).
         step3_fold_df:        Per-fold metrics from step 3 (reduced features).
@@ -424,6 +439,7 @@ class PipelineResult:
     holdout_idx: Optional[np.ndarray] = field(default=None, repr=False)
     holdout_strategy: Optional[str] = None
     holdout_refit: str = "dev"
+    selection_scoring: str = "fold_mean"
     holdout_cv_result: Optional[CVResult] = field(default=None, repr=False)
     holdout_df: Optional[pd.DataFrame] = None
     # Transient cache — populated on first call to shap_summary_plot / shap_dependence
@@ -522,7 +538,7 @@ class PipelineResult:
 
         See h2ml.evaluation.ranking.ranking_robustness for the columns. Works on
         loaded results — fold DataFrames and metric are persisted. Is_Winner marks
-        the confidence-bound winner; after a prefer_reduced_on_tie switch it differs
+        the winner before any prefer_reduced_on_tie switch, which would make it differ
         from best_stage (the switch is recorded in cv_warnings).
 
         Args:
@@ -545,7 +561,7 @@ class PipelineResult:
         fold_df = self.step1_fold_df
         if step == 3:
             fold_df = pd.concat([self.step1_fold_df, self.step3_fold_df], ignore_index=True)
-        return ranking_robustness(fold_df, self.metric)
+        return ranking_robustness(fold_df, self.metric, selection_scoring=self.selection_scoring)
 
     def build_final_model(self) -> "FinalModel":
         """
@@ -950,11 +966,12 @@ class H2MLPipeline:
         result.cv_warnings.extend(self._check_metric_suitability(result.features.y, fold_indices))
         best = select_best(
             result.step1_agg_df,
-            metric=self.config.metric_col,
+            metric=selection_col(self.config.metric, result.selection_scoring),
             minimize=self.config.minimize_metric,
             n_folds=self.config.n_splits,
             fold_df=result.step1_fold_df,
         )
+        result.cv_warnings.extend(self._flat_warnings(result, result.step1_agg_df, result.step1_fold_df))
         result.best_model_name = best["model_name"]
         result.best_model_value = float(best["value"])
         std_col = self.config.metric_col.replace("_Mean", "_Std")
@@ -963,7 +980,9 @@ class H2MLPipeline:
         result.y_transform = best["row"].get("Y_transform")
         self._record_best_estimator(result)
         result.metric = self.config.metric
-        robust_df = ranking_robustness(result.step1_fold_df, self.config.metric, n_folds=self.config.n_splits)
+        robust_df = ranking_robustness(
+            result.step1_fold_df, self.config.metric, self.config.n_splits, result.selection_scoring
+        )
         result.cv_warnings.extend(self._check_ranking_robustness(robust_df, step=1))
 
         self._log(
@@ -988,7 +1007,9 @@ class H2MLPipeline:
         else:
             fit_store = result.features
 
-        selector = self._make_selector(result.best_model_name, fit_store, result.splitter)
+        selector = self._make_selector(
+            result.best_model_name, fit_store, result.splitter, keep_all=self._all_flat(result)
+        )
         result.selector = selector
         result.features_reduced = selector.fit_transform(fit_store)
         return result
@@ -1072,21 +1093,25 @@ class H2MLPipeline:
         all_stages_agg = pd.concat([result.step1_agg_df, result.step3_agg_df], ignore_index=True)
         assert result.step1_fold_df is not None and result.step3_fold_df is not None
         both_stages_fold_df = pd.concat([result.step1_fold_df, result.step3_fold_df], ignore_index=True)
+        score_col = selection_col(self.config.metric, result.selection_scoring)
         best = select_best(
             all_stages_agg,
-            metric=self.config.metric_col,
+            metric=score_col,
             minimize=self.config.minimize_metric,
             n_folds=self.config.n_splits,
             fold_df=both_stages_fold_df,
         )
-        robust_df = ranking_robustness(both_stages_fold_df, self.config.metric, n_folds=self.config.n_splits)
+        result.cv_warnings.extend(self._flat_warnings(result, all_stages_agg, both_stages_fold_df))
+        robust_df = ranking_robustness(
+            both_stages_fold_df, self.config.metric, self.config.n_splits, result.selection_scoring
+        )
         result.cv_warnings.extend(self._check_ranking_robustness(robust_df, step=3))
         best_row = best["row"]
         if self.config.prefer_reduced_on_tie:
             best_row = self._prefer_reduced_on_tie(result, robust_df, all_stages_agg, best_row)
 
         result.best_model_name = best_row["Model"]
-        result.best_model_value = float(best_row[self.config.metric_col])
+        result.best_model_value = float(best_row[score_col])
         std_col = self.config.metric_col.replace("_Mean", "_Std")
         result.best_model_std = float(best_row.get(std_col, float("nan")))
         result.best_stage = str(best_row["Stage"])
@@ -1178,6 +1203,7 @@ class H2MLPipeline:
             _splitter=result.splitter if store_for_opt.coords is not None else None,
             estimator=best_model.estimator,
             requires_scaling=best_model.requires_scaling,
+            selection_scoring=result.selection_scoring,
         )
 
         # best_params are overrides on top of the winner's own estimator — trials,
@@ -1231,14 +1257,21 @@ class H2MLPipeline:
             result.best_params = dict(fixed_params)
             return result
         assert result.step4_agg_df is not None and result.best_model_value is not None
-        optimized_value = float(result.step4_agg_df.iloc[0][self.config.metric_col])
+        tuned = result.step4_agg_df.iloc[0]
+        optimized_value = float(tuned[selection_col(self.config.metric, result.selection_scoring)])
         std_col = self.config.metric_col.replace("_Mean", "_Std")
-        optimized_std = float(result.step4_agg_df.iloc[0].get(std_col, float("nan")))
+        optimized_std = float(tuned.get(std_col, float("nan")))
         improved = (
             optimized_value < result.best_model_value
             if self.config.minimize_metric
             else optimized_value > result.best_model_value
         )
+        if improved and tuned.get("Is_Flat", False):
+            improved = False
+            result.cv_warnings.append(
+                f"[selection] Tuning {result.best_model_name} gave a constant-prediction model, "
+                "so the untuned parameters were kept."
+            )
         # A tuned mean over fewer folds isn't comparable with the untuned score
         if improved and not result.step4_cv_result.failed_folds:
             result.best_model_value = optimized_value
@@ -1340,7 +1373,15 @@ class H2MLPipeline:
         assert result.features is not None
         return result.features
 
-    def _make_selector(self, model_name: Optional[str], store: PipelineData, splitter: Any) -> FeatureSelector:
+    @staticmethod
+    def _all_flat(result: PipelineResult) -> bool:
+        """True when every step-1 candidate is flat: SHAP then has nothing to rank."""
+        agg = result.step1_agg_df
+        return agg is not None and "Is_Flat" in agg.columns and bool(agg["Is_Flat"].eq(True).all())
+
+    def _make_selector(
+        self, model_name: Optional[str], store: PipelineData, splitter: Any, keep_all: bool = False
+    ) -> FeatureSelector:
         """Step-2 FeatureSelector for model_name; splitter drives its OOF SHAP folds."""
         return FeatureSelector(
             step=self._get_model(model_name),
@@ -1354,6 +1395,7 @@ class H2MLPipeline:
             train_target_fn=get_train_target_fn(store.y_transform),
             n_jobs=self.config.n_jobs,
             max_vif=self.config.max_vif,
+            keep_all=keep_all,
             _splitter=splitter,
         )
 
@@ -1377,7 +1419,7 @@ class H2MLPipeline:
                         n_splits=min(self.config.n_splits, n_blocks),
                         random_state=self.config.random_state,
                     )
-            selector = self._make_selector(result.best_model_name, store, inner)
+            selector = self._make_selector(result.best_model_name, store, inner, keep_all=self._all_flat(result))
             selector.fit(store.take(train_idx))
             fold_sets.append(list(selector.selected_features_))
             self._log(f"  Fold {k}: {selector.n_selected}/{store.n_features} features selected on its training rows")
@@ -1427,6 +1469,7 @@ class H2MLPipeline:
             time_bin_resolution=self.config.time_bin_resolution,
             class_weight_balanced=self._class_weight_active,
             holdout_refit=self.config.holdout_refit,
+            selection_scoring=self.config.selection_scoring,
         )
 
     def _score_holdout(self, result: PipelineResult) -> PipelineResult:
@@ -1663,6 +1706,10 @@ class H2MLPipeline:
             logger.warning(f"[ranking] {m}")
         return msgs
 
+    def _flat_warnings(self, result: PipelineResult, agg_df: pd.DataFrame, fold_df: pd.DataFrame) -> list[str]:
+        """[selection] warnings for the candidates behind one selection."""
+        return flat_warnings(agg_df, self.config.metric, result.selection_scoring, self.config.n_splits, fold_df)
+
     def _prefer_reduced_on_tie(
         self,
         result: PipelineResult,
@@ -1682,7 +1729,7 @@ class H2MLPipeline:
         assert result.features is not None and result.features_reduced is not None
         if result.features_reduced.n_features == result.features.n_features:
             return best_row
-        tied = robust_df.loc[(robust_df["Stage"] == "reduced") & robust_df["Indistinguishable"]]
+        tied = robust_df.loc[(robust_df["Stage"] == "reduced") & robust_df["Indistinguishable"] & ~robust_df["Is_Flat"]]
         if tied.empty:
             return best_row
         pick = tied.iloc[0]  # robust_df is sorted by rank under the selection metric

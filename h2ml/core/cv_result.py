@@ -20,6 +20,11 @@ from h2ml.core.base import TaskType
 # ---------------------------------------------------------------------------
 
 
+# Predictions spreading less than this share of the target's std (or this much probability)
+# count as constant.
+FLAT_TOLERANCE = 1e-6
+
+
 @dataclass
 class FoldResult:
     """

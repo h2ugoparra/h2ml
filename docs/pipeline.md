@@ -9,7 +9,9 @@
 | 3 | K-fold CV all models on reduced features; compare vs step 1 | `best_stage`, `step3_agg_df` |
 | 4 | Optuna HPO on winning (model, stage, transform) | `best_params`, `step4_agg_df` |
 
-Steps 1 and 3 pick the candidate with the best confidence-bound score (mean − std/√k for maximised metrics, mean + std/√k for minimised ones). The std is **fold-centred**: each fold's scores minus that fold's median across candidates. Fold difficulty that every model shares, such as Brier's floor moving with each spatial fold's prevalence, therefore does not count as instability. With the raw fold std, a model that hedges every prediction towards the middle scores uniformly across uneven folds and would beat a model that is better on average but has one bad fold. With `prefer_reduced_on_tie=True`, step 3 then applies a 1-SE rule: if the winner uses all features but a reduced-feature candidate is statistically tied with it on paired folds, the reduced candidate is selected instead — see [Preferring reduced features on ties](#preferring-reduced-features-on-ties).
+Regression candidates are ranked by a **pooled** score: R2, MAE or RMSE computed once over all out-of-fold rows, in steps 1 and 3, in Optuna trials and in step 4's acceptance check. Each row counts equally, so a small or near-constant fold can't dominate, as it can in a mean of fold scores. `selection_scoring="fold_mean"` uses the classification rule below instead. Candidates with no prediction spread in any fold are excluded from selection unless every candidate is flat; both cases add a `[selection]` warning. When every candidate is flat, step 2 keeps all features, because all-zero SHAP values can't rank them.
+
+Classification candidates are ranked by a confidence-bound score (mean − std/√k for maximised metrics, mean + std/√k for minimised ones). The std is **fold-centred**: each fold's scores minus that fold's median across candidates. Fold difficulty that every model shares, such as Brier's floor moving with each spatial fold's prevalence, therefore does not count as instability. With the raw fold std, a model that hedges every prediction towards the middle scores uniformly across uneven folds and would beat a model that is better on average but has one bad fold. With `prefer_reduced_on_tie=True`, step 3 then applies a 1-SE rule: if the winner uses all features but a reduced-feature candidate is statistically tied with it on paired folds, the reduced candidate is selected instead — see [Preferring reduced features on ties](#preferring-reduced-features-on-ties).
 
 Step 4 is skipped when the winning model has no enabled search space: `opt_enabled=False` (LogisticRegression, GaussianNB, KNeighborsClassifier, AdaBoost, Bagging — and their regressor equivalents), or an estimator that is not in the registry at all. `best_params` then holds only fixed overrides (e.g. `class_weight`), usually `{}`.
 
@@ -39,6 +41,7 @@ Full parameter reference:
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers that support it. `"auto"` injects only when the minority-class ratio is below 0.1 |
 | `max_vif` | `None` | Step 2: after the correlation filter, drop the lowest-ranked feature whose variance inflation factor exceeds this value until none does. It catches features that are linear combinations of several retained ones, which pairwise correlation misses. `5` or `10` are common choices. |
 | `prefer_reduced_on_tie` | `False` | Step 3: when an all-features winner is statistically tied (paired folds, within one corrected SE) with a reduced-feature candidate, select the best-ranked tied reduced candidate instead. See [Preferring reduced features on ties](#preferring-reduced-features-on-ties). |
+| `selection_scoring` | `"pooled"` | Regression selection in steps 1, 3 and 4: one score over all out-of-fold rows. `"fold_mean"` uses the mean of fold scores with a fold-spread penalty. Classification always uses the fold mean. |
 | `select_features_in_folds` | `False` | Step 3: re-run the step-2 selector on each fold's training rows and score reduced candidates on those per-fold sets, so the default-vs-reduced comparison is unbiased. Costs about `n_splits` extra step-2 runs. See [Selecting features inside CV folds](#selecting-features-inside-cv-folds). |
 | `holdout_frac` | `0.0` | Fraction of rows set aside before step 1 and scored once at the end. `0` disables it; range `[0, 0.5]`. See [Outer holdout](#outer-holdout). |
 | `holdout_strategy` | `"auto"` | `"auto"` — whole spatial blocks when `store.coords` is set, else random (stratified for classification). `"random"` — random even with coords. `"time"` — the latest rows by `store.times`. |
@@ -62,11 +65,13 @@ result.completed_steps        # e.g. [1, 2, 3, 4]
 result.summary()              # combined agg DataFrame across all stages
 result.summary("AUC_Test_Mean", ascending=False)
 # Column names are <Metric>_<Test|Train|Gap>_<Mean|Std>. "Test" is the held-out
-# fold of each CV split, so AUC_Test_Mean is the mean of per-fold held-out scores,
-# not one score on the pooled OOF predictions (result.oof_predictions).
+# fold of each CV split, so AUC_Test_Mean is the mean of per-fold held-out scores.
+# Regression also has <Metric>_Test_Pooled: one score over all out-of-fold rows.
+# R2 is NaN on a fold with zero target variance, so R2_Test_Mean skips that fold.
 
 result.best_model_name        # winning model class name
-result.best_model_value       # best CV score (maximised internally)
+result.best_model_value       # best CV score, pooled for regression by default
+result.selection_scoring      # "pooled" | "fold_mean" — the rule this result selected with
 result.best_model_std         # std of that score across folds
 result.best_stage             # "default" | "reduced" | "optimized"
 result.best_feature_stage     # "default" | "reduced" (never "optimized")
@@ -91,19 +96,22 @@ One row per candidate. `Winner_Gap` is the mean per-fold difference to the winne
 (positive = winner better), paired on shared folds so fold difficulty cancels;
 `Gap_SE` is its Nadeau–Bengio corrected standard error. `Indistinguishable` marks
 candidates within one SE of the winner — a heuristic tie, not a significance test.
-A negative `Winner_Gap` (better mean, but penalised for fold-to-fold spread by the
-confidence bound) is always flagged. `Folds_Won` counts the folds where the *winner*
+A negative `Winner_Gap` is always flagged: the candidate has the better fold mean, but
+the winner has the better pooled score (regression) or the fold-spread penalty counted
+against the candidate (classification). `Folds_Won` counts the folds where the *winner*
 beat that row's candidate, out of `Paired_Folds` (folds both completed; a NaN score
 drops a fold from that pair only) — a low count means the candidate often beat the
 winner. The winner's own row reads gap 0, `Gap_SE` NaN, `Folds_Won` 0.
 `Rank_<metric>` columns show where each candidate ranks under every metric.
-`Is_Winner` marks the confidence-bound winner — the candidate *before* any
+`Is_Flat` marks candidates with no prediction spread, which `Is_Winner` skips unless all
+are flat. `Is_Winner` marks the selection's winner — the candidate *before* any
 `prefer_reduced_on_tie` switch, so it can differ from `result.best_stage`.
 
 ### Warnings in `cv_warnings`
 
 All are advisory except the `prefer_reduced_on_tie` line, which records a selection
-change you opted into. Each is also logged when it is raised.
+change you opted into, and `[selection]`, which reports candidates the guard removed.
+Each is also logged when it is raised.
 
 | `cv_warnings` entry starts with | Log prefix | Raised in | Meaning |
 |---|---|---|---|
@@ -111,7 +119,8 @@ change you opted into. Each is also logged when it is raised.
 | the metric name, e.g. `AUC with minority…`, `R2: …` | `[metric]` | step 1 | The data makes the configured metric unreliable — AUC under class imbalance, single-class test folds for AUC/AUCPR, uneven fold prevalence for AUCPR, F1 with class weights, low-variance folds for R2, heavy tails for RMSE, zero inflation for MAE. The metric is never changed. |
 | `step 1:` / `step 3:` | `[ranking]` | steps 1, 3 | Candidates tied with the winner on paired folds, or the winner ranking below 1st on the counterpart-family metric (AUC/AUCPR ↔ Brier, LogLoss/Brier ↔ AUC, F1 → AUC, R2/RMSE ↔ MAE) |
 | `step 3: prefer_reduced_on_tie →` | *(info log)* | step 3 | The tie-break switched the selection to a reduced-feature candidate |
-| `[holdout]` | `[CV]` (end of `run()`) | after step 3 or 4 | The holdout score is worse than the CV score by more than 2 fold SDs — the CV estimate is likely optimistic, or the holdout rows differ from the dev rows. Classification: also when the holdout holds fewer than 20 rows of its rarest class, so its score and conformal calibration are unreliable |
+| `[selection]` | `[CV]` (end of `run()`) | steps 1, 3, 4 | Constant-prediction candidates were excluded (noting if one would have won), every candidate is constant, or tuning produced a constant model and was rejected |
+| `[holdout]` | `[CV]` (end of `run()`) | run start; after step 3 or 4 | At the start: too few rows, a size far from `holdout_frac`, and for regression too few non-zero rows or a distribution far from the dev rows. After scoring: the holdout score is worse than the CV score by more than 2 fold SDs — the CV estimate is likely optimistic, or the holdout rows differ from the dev rows. Classification: also when the holdout holds fewer than 20 rows of its rarest class, so its score and conformal calibration are unreliable |
 
 ### Preferring reduced features on ties
 
