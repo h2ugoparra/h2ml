@@ -32,6 +32,25 @@ All notable changes to this project will be documented in this file.
   when the input target's minority-class ratio is below 0.1 (the same threshold as
   the imbalance warning). It is decided when each run starts, including on resume
   via `run_from_step3` / `run_step4_only`. `True` and `False` behave as before.
+- `PipelineConfig(spcv_use_target=False)` assigns SPCV folds from location and
+  covariates alone, so targets on the same rows and `X` share folds. Default `True` —
+  CV folds are unchanged.
+- More `[holdout]` warnings in `cv_warnings`: a size more than 25% from `holdout_frac`
+  and, for regression, fewer than 20 non-zero rows on a target with zeros, or a mean or
+  non-zero rate more than 2× from the dev rows. The under-30-rows warning moved there
+  from the log, so it survives `save`/`load`.
+
+### Changed
+
+- **Spatial holdouts change, so runs with `holdout_frac > 0` and coordinates need
+  rerunning.** The holdout is now whole blocks drawn at random up to `holdout_frac`,
+  not the single fold closest in size. Sizes follow `holdout_frac`, and holdouts
+  represent the dev rows better, but they are less separated from training rows,
+  especially with `spcv`. Blocks depend only on coordinates, so the same rows and seed
+  give the same holdout for any target or feature set. Dev rows change too, so CV
+  scores and selections on those runs can shift.
+- **`nested_cv` outer folds no longer use the target** under `spcv`, so their folds
+  and scores differ from earlier runs.
 
 ### Fixed
 

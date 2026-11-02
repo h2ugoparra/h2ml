@@ -267,6 +267,7 @@ def multi_metric(
             result = p._new_result(dev)
             for name in ("holdout_store", "holdout_idx", "holdout_strategy"):
                 setattr(result, name, getattr(start, name))
+            result.cv_warnings.extend(start.cv_warnings)
 
             weighted = p._class_weight_active
             if weighted not in step1:

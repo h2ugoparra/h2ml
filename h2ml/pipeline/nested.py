@@ -161,7 +161,7 @@ def nested_cv(
         coords=store.coords,
         X=store.X,
         y=store.y,
-        spatial=config.spatial_cv,
+        spatial=replace(config.spatial_cv, use_target=False),  # outer folds estimate performance: not chosen by y
     )
     cv_type = "spatial" if store.coords is not None else "random"
     transforms = list(transforms) if transforms is not None else None

@@ -135,6 +135,7 @@ Set `store.coords` to an `(n_samples, 2)` array of spatial coordinates to activa
 | `exact_max_samples` | `5000` | n ≤ this → exact scipy AHC; n > → approximate sklearn AHC with k-NN graph |
 | `knn_neighbors` | `15` | k for the k-NN connectivity graph in approximate AHC |
 | `pca_components` | `0.95` | Variance retained by PCA on block covariates in `spcv` stage 2 |
+| `spcv_use_target` | `True` | Include the target view in `spcv` fold assignment; holdouts and `nested_cv` outer folds never use it |
 
 ## Supported models
 

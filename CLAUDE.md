@@ -92,7 +92,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 | `prefer_reduced_on_tie` | `False` | Step 3 1-SE rule: if the winner is `"default"` stage and a reduced candidate is `Indistinguishable` from it (paired folds, Nadeau–Bengio SE), select the best-ranked such reduced candidate; switch recorded in `cv_warnings` |
 | `select_features_in_folds` | `False` | Step 3 re-runs the step-2 selector per CV fold on its training rows (`result.step3_fold_features`) and scores reduced candidates on those sets (`CrossValidator` `fold_columns`); step 4's acceptance CV reuses them when reduced won. Deployed set unchanged. ~`n_splits`× step-2 cost |
 | `holdout_frac` | `0.0` | Rows set aside before step 1, scored once on the final config (`result.holdout_df`); steps run on the rest. Conformal then uses holdout residuals and local conformal is skipped |
-| `holdout_strategy` | `"auto"` | `"auto"` (spatial blocks if coords, else random/stratified), `"random"`, `"time"` (latest rows by `store.times`) |
+| `holdout_strategy` | `"auto"` | `"auto"` (whole spatial blocks drawn at random up to `holdout_frac` if coords, else random/stratified), `"random"`, `"time"` (latest rows by `store.times`) |
 | `holdout_refit` | `"dev"` | `build_final_model` fits on `"dev"` rows only, or `"all"` (dev + holdout) |
 | `spatial_cv_method` | `"spcv"` | Spatial CV strategy: `"block"` or `"spcv"` (ignored when `store.coords` is `None`) |
 | `spatial_cv_metric` | `"euclidean"` | Distance metric: `"euclidean"` or `"haversine"` |
@@ -102,6 +102,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 | `pca_components` | `0.95` | Variance retained by PCA on block covariates |
 | `exact_max_samples` | `5_000` | Sample threshold for exact vs. approximate AHC |
 | `knn_neighbors` | `15` | k for k-NN connectivity graph in approximate AHC |
+| `spcv_use_target` | `True` | Include the target view in SPCV CV fold assignment; holdouts and `nested_cv` outer folds never use it |
 
 ## PipelineResult
 

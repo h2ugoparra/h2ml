@@ -28,6 +28,28 @@ MIN_HOLDOUT_SAMPLES = 30
 # Classification: fewer rows of the rarest class than this in the holdout make its score
 # (and the conformal calibration built on it) unreliable, however many rows it has.
 MIN_HOLDOUT_MINORITY = 20
+# Regression: fewer non-zero rows than this leave a zero-heavy target's score with little to measure.
+MIN_HOLDOUT_NONZERO = 20
+# Warn when the holdout's mean or non-zero rate differs from dev by more than this factor.
+MAX_HOLDOUT_DRIFT = 2.0
+# Warn when whole blocks land further than this share from the requested holdout size.
+MAX_HOLDOUT_SIZE_MISS = 0.25
+
+
+def _draw_blocks(block_ids: np.ndarray, target: float, random_state: int) -> np.ndarray:
+    """
+    Row indices of whole blocks drawn at random until the total is closest to target rows.
+
+    A block is kept only if it moves the total closer to target. The smallest block is
+    used when every block alone overshoots too far for that to happen.
+    """
+    ids, counts = np.unique(block_ids, return_counts=True)
+    chosen, size = [], 0
+    for i in np.random.default_rng(random_state).permutation(ids.size):
+        if abs(size + counts[i] - target) < abs(size - target):
+            chosen.append(i)
+            size += counts[i]
+    return np.flatnonzero(np.isin(block_ids, ids[chosen or [counts.argmin()]]))
 
 
 def split_holdout(
@@ -45,9 +67,9 @@ def split_holdout(
         "auto"   — "spatial" when store.coords is set, else "random".
         "random" — stratified by y for classification, plain random for regression.
         "time"   — the latest ceil(frac * n) rows by store.times.
-        A "spatial" holdout is one fold of the pipeline's spatial splitter built with
-        round(1 / frac) folds — the fold whose size is closest to frac * n — so held-out
-        rows are whole spatial blocks rather than neighbours of training rows.
+        A "spatial" holdout is whole blocks of the pipeline's spatial splitter, drawn at
+        random until the total is closest to frac * n. Blocks come from coords alone, so
+        for the same rows and seed the holdout does not depend on y or X.
 
     Returns:
         (dev_idx, test_idx, resolved_strategy) — sorted, disjoint, covering every row.
@@ -73,9 +95,7 @@ def split_holdout(
 
         n_splits = max(2, round(1 / frac))
         # Labels the splitter's own debug lines, which step 1 repeats for its CV splitter on the dev rows.
-        logger.debug(
-            f"Holdout splitter: {n_splits} spatial folds on all {n} rows; the one closest to {frac:.0%} is set aside."
-        )
+        logger.debug(f"Holdout splitter: spatial blocks on all {n} rows; {frac:.0%} drawn at random.")
         splitter = build_splitter(
             task_type,
             n_splits=n_splits,
@@ -83,12 +103,9 @@ def split_holdout(
             coords=store.coords,
             X=store.X,
             y=store.y,
-            spatial=spatial,
+            spatial=replace(spatial or SpatialCVConfig(), use_target=False),
         )
-        folds = [te for _, te in splitter.split(store.X, store.y) if te.size > 0]
-        if not folds:
-            raise ValueError("Spatial holdout split produced no non-empty fold.")
-        test_idx = min(folds, key=lambda te: abs(te.size - frac * n))
+        test_idx = _draw_blocks(splitter.block_id_, frac * n, random_state)
     else:
         stratify = store.y if task_type == TaskType.CLASSIFICATION else None
         _, test_idx = train_test_split(all_idx, test_size=frac, random_state=random_state, stratify=stratify)
@@ -104,11 +121,50 @@ def split_holdout(
                     f"The {name} set from holdout_strategy={resolved!r} holds a single class. "
                     "Use a larger holdout_frac or a different holdout_strategy."
                 )
-    if test_idx.size < MIN_HOLDOUT_SAMPLES:
-        logger.warning(
-            f"Holdout has only {test_idx.size} rows — its score will be noisy. Consider a larger holdout_frac."
-        )
     return dev_idx, test_idx, resolved
+
+
+def holdout_warnings(dev: PipelineData, holdout: PipelineData, task_type: TaskType, frac: float) -> list[str]:
+    """
+    [holdout] warnings about the rows set aside, for result.cv_warnings.
+
+    Covers every task: too few rows, and a size far from the requested fraction. For
+    regression also: too few non-zero rows on a target with zeros, and a mean or
+    non-zero rate far from dev. Classification's rare-class check runs on the score.
+    """
+    warnings = []
+    n_holdout = holdout.n_samples
+    if n_holdout < MIN_HOLDOUT_SAMPLES:
+        warnings.append(
+            f"[holdout] The holdout has only {n_holdout} rows, so its score will be noisy. "
+            "Consider a larger holdout_frac."
+        )
+    target = frac * (n_holdout + dev.n_samples)
+    if abs(n_holdout - target) > MAX_HOLDOUT_SIZE_MISS * target:
+        warnings.append(
+            f"[holdout] The holdout has {n_holdout} rows against {target:.0f} requested: spatial blocks "
+            "are too large to reach holdout_frac."
+        )
+    if task_type != TaskType.REGRESSION:
+        return warnings
+
+    def drifted(name: str, in_holdout: float, in_dev: float) -> None:
+        if in_dev > 0 and not 1 / MAX_HOLDOUT_DRIFT <= in_holdout / in_dev <= MAX_HOLDOUT_DRIFT:
+            warnings.append(
+                f"[holdout] The holdout's {name} ({in_holdout:.3g}) differs from the dev rows' ({in_dev:.3g}) "
+                f"by more than {MAX_HOLDOUT_DRIFT:g}×, so its score may not represent the dev distribution."
+            )
+
+    drifted("mean", float(holdout.y.mean()), float(dev.y.mean()))
+    if (dev.y == 0).any() or (holdout.y == 0).any():
+        n_nonzero = int(np.count_nonzero(holdout.y))
+        if n_nonzero < MIN_HOLDOUT_NONZERO:
+            warnings.append(
+                f"[holdout] The holdout holds only {n_nonzero} non-zero row(s), so its score mostly reflects "
+                "the zeros. Consider holdout_frac=0 for this target or a larger holdout_frac."
+            )
+        drifted("non-zero rate", n_nonzero / n_holdout, float(np.mean(dev.y != 0)))
+    return warnings
 
 
 def concat_stores(a: PipelineData, b: PipelineData) -> PipelineData:

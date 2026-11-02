@@ -52,8 +52,11 @@ config = PipelineConfig(
     pca_components=0.95,        # variance retained by PCA on block covariates
     exact_max_samples=5_000,    # above this, approximate AHC is used
     knn_neighbors=15,           # k for the k-NN connectivity graph
+    spcv_use_target=True,       # False: assign folds without the target view
 )
 ```
+
+`spcv_use_target=False` assigns folds from location and covariates alone, so targets measured on the same rows with the same `X` share folds. Folds still differ when features or rows differ. Holdouts and `nested_cv` outer folds never use the target, because they estimate performance.
 
 > **Note:** AHC uses `linkage="ward"` by default. Ward requires Euclidean distances, so when `spatial_cv_metric="haversine"` it is automatically downgraded to `"average"`. For projected coordinates (metres, km) `spatial_cv_metric="euclidean"` keeps ward valid.
 
@@ -70,6 +73,7 @@ config = PipelineConfig(
 | `exact_max_samples` | `5000` | Below this, exact scipy AHC; above, approximate sklearn AHC |
 | `knn_neighbors` | `15` | k for the k-NN graph in approximate AHC |
 | `pca_components` | `0.95` | Variance retained by PCA on block covariates in SPCV stage 2 |
+| `spcv_use_target` | `True` | Include the target view in SPCV fold assignment. Holdouts and `nested_cv` outer folds never use it. |
 | `time_bin_resolution` | `"month"` | Temporal granularity for compound conformal cells: `"month"` (1–12) or `"season"` (DJF/MAM/JJA/SON). Only active when `store.times` is provided. |
 
 ---
