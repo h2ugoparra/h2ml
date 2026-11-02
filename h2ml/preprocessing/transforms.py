@@ -33,6 +33,10 @@ import numpy as np
 # would be capped inside its ordinary catches.
 WINSOR_QUANTILE = 0.99
 
+# Transforms whose inverse doesn't recover the mean: a model fitted on log1p(y) or sqrt(y)
+# estimates the mean of that scale, and inverting it underestimates the mean of y.
+MEAN_CORRECTABLE_TRANSFORMS = ("log", "sqrt", "winlog", "winsqrt")
+
 
 def log_transform(y: np.ndarray) -> np.ndarray:
     """Apply log1p to y. Inverted by expm1 in INVERSE_TRANSFORMS."""
@@ -96,6 +100,13 @@ PRE_CLIP_TRANSFORMS: dict[str, Callable] = {
     "winlog": log_transform,
     "winsqrt": sqrt_transform,
 }
+
+
+def total_ratio(y_true: np.ndarray, y_pred: np.ndarray) -> Optional[float]:
+    """Observed total over predicted total on the finite rows, or None unless both are positive."""
+    valid = np.isfinite(y_true) & np.isfinite(y_pred)
+    observed, predicted = float(y_true[valid].sum()), float(y_pred[valid].sum())
+    return observed / predicted if observed > 0 and predicted > 0 else None
 
 
 def get_train_target_fn(y_transform: Optional[str]) -> Optional[Callable[[np.ndarray], np.ndarray]]:

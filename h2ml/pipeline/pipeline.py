@@ -54,7 +54,7 @@ from h2ml.pipeline.holdout import (
     stage_store,
 )
 from h2ml.preprocessing.transform_stores import build_transform_stores
-from h2ml.preprocessing.transforms import get_train_target_fn
+from h2ml.preprocessing.transforms import MEAN_CORRECTABLE_TRANSFORMS, get_train_target_fn, total_ratio
 from h2ml.utils.registry import build_models
 
 # Minority-class share below which a target counts as imbalanced — drives both the
@@ -69,6 +69,9 @@ LOW_FOLD_VARIANCE_RATIO = 0.1
 # Share of the total squared deviation carried by the top 1% of points above which RMSE is
 # dominated by a few observations.
 TAIL_SSD_SHARE = 0.5
+# Relative gap between the predicted and observed OOF totals above which a log/sqrt winner
+# gets a [transform] warning.
+MAX_TOTAL_MISS = 0.20
 
 
 @dataclass
@@ -185,6 +188,11 @@ class PipelineConfig:
                              out-of-fold rows, so folds count by their size. "fold_mean"
                              — mean of the per-fold scores with a fold-spread penalty.
                              Classification always uses the fold mean. Default: "pooled".
+        mean_correction:     (Regression, log/sqrt transforms) "ratio" — build_final_model
+                             rescales predictions so their total matches the observed total
+                             on the out-of-fold rows. Totals improve, but rowwise error
+                             usually grows. CV scores, selection and holdout_df stay
+                             uncorrected. None — no correction. Default: None.
 
         holdout_frac:        Fraction of rows set aside before step 1 and scored once on
                              the final selected configuration — an estimate no selection
@@ -229,6 +237,7 @@ class PipelineConfig:
     prefer_reduced_on_tie: bool = False
     select_features_in_folds: bool = False
     selection_scoring: Literal["pooled", "fold_mean"] = "pooled"
+    mean_correction: Optional[Literal["ratio"]] = None
     holdout_frac: float = 0.0
     holdout_strategy: Literal["auto", "random", "time"] = "auto"
     holdout_refit: Literal["dev", "all"] = "dev"
@@ -278,6 +287,8 @@ class PipelineConfig:
             raise ValueError(f"handle_imbalance must be True, False or 'auto', got {self.handle_imbalance!r}")
         if self.selection_scoring not in SELECTION_SCORINGS:
             raise ValueError(f"selection_scoring must be one of {SELECTION_SCORINGS}, got {self.selection_scoring!r}")
+        if self.mean_correction not in (None, "ratio"):
+            raise ValueError(f"mean_correction must be None or 'ratio', got {self.mean_correction!r}")
         if not 0 <= self.holdout_frac <= 0.5:
             raise ValueError(f"holdout_frac must be in [0, 0.5], got {self.holdout_frac}")
         if self.holdout_strategy not in HOLDOUT_STRATEGIES:
@@ -441,6 +452,7 @@ class PipelineResult:
     holdout_strategy: Optional[str] = None
     holdout_refit: str = "dev"
     selection_scoring: str = "fold_mean"
+    mean_correction: Optional[str] = None
     holdout_cv_result: Optional[CVResult] = field(default=None, repr=False)
     holdout_df: Optional[pd.DataFrame] = None
     # Transient cache — populated on first call to shap_summary_plot / shap_dependence
@@ -695,7 +707,7 @@ class H2MLPipeline:
         result = self._run_step2(result, transform_stores)
         result = self._run_step3(result, transform_stores)
         result = self._run_step4(result, transform_stores)
-        result = self._score_holdout(result)
+        result = self._finish(result)
         self._log_summary(result)
         return result
 
@@ -756,7 +768,7 @@ class H2MLPipeline:
         result = self._run_step1(result, transform_stores)
         result = self._run_step2(result, transform_stores)
         result = self._run_step3(result, transform_stores)
-        return self._score_holdout(result)
+        return self._finish(result)
 
     def run_from_step3(
         self,
@@ -792,7 +804,7 @@ class H2MLPipeline:
         transform_stores = self._rebuild_transform_stores(result, transform_stores)
         result = self._run_step3(result, transform_stores)
         result = self._run_step4(result, transform_stores)
-        return self._score_holdout(result)
+        return self._finish(result)
 
     def run_step4_only(
         self,
@@ -842,7 +854,7 @@ class H2MLPipeline:
         result.class_weight_balanced = self._class_weight_active
         transform_stores = self._rebuild_transform_stores(result, transform_stores)
         result = self._run_step4(result, transform_stores)
-        return self._score_holdout(result)
+        return self._finish(result)
 
     # ------------------------------------------------------------------
     # Step implementations
@@ -1471,6 +1483,36 @@ class H2MLPipeline:
             class_weight_balanced=self._class_weight_active,
             holdout_refit=self.config.holdout_refit,
             selection_scoring=self.config.selection_scoring,
+            mean_correction=self.config.mean_correction,
+        )
+
+    def _finish(self, result: PipelineResult) -> PipelineResult:
+        """Checks that need the final configuration: its back-transformed totals, then the holdout."""
+        self._check_back_transform(result)
+        return self._score_holdout(result)
+
+    def _check_back_transform(self, result: PipelineResult) -> None:
+        """
+        Add a [transform] warning when the selected log/sqrt model's out-of-fold total is
+        more than MAX_TOTAL_MISS from the observed total. Replaces any earlier one, since
+        resuming a run can change the winner.
+        """
+        result.cv_warnings = [w for w in result.cv_warnings if not w.startswith("[transform]")]
+        if self.config.task_type != TaskType.REGRESSION or result.y_transform not in MEAN_CORRECTABLE_TRANSFORMS:
+            return
+        oof_preds, oof_labels = result.oof_predictions, result.oof_labels
+        ratio = None if oof_preds is None or oof_labels is None else total_ratio(oof_labels, oof_preds)
+        if ratio is None or abs(1 / ratio - 1) <= MAX_TOTAL_MISS:
+            return
+        advice = (
+            "build_final_model applies the correction, but CV scores don't include it."
+            if result.mean_correction == "ratio"
+            else "Totals from this model will be off; mean_correction='ratio' rescales its final predictions."
+        )
+        result.cv_warnings.append(
+            f"[transform] {result.best_model_name} with y_transform='{result.y_transform}' predicts "
+            f"{1 / ratio:.2f} of the observed out-of-fold total, because inverting the transform "
+            f"doesn't recover the mean. {advice}"
         )
 
     def _score_holdout(self, result: PipelineResult) -> PipelineResult:

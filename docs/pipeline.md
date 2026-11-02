@@ -120,6 +120,7 @@ Each is also logged when it is raised.
 | `step 1:` / `step 3:` | `[ranking]` | steps 1, 3 | Candidates tied with the winner on paired folds, or the winner ranking below 1st on the counterpart-family metric (AUC/AUCPR ↔ Brier, LogLoss/Brier ↔ AUC, F1 → AUC, R2/RMSE/PoissonDev → MAE, MAE → RMSE) |
 | `step 3: prefer_reduced_on_tie →` | *(info log)* | step 3 | The tie-break switched the selection to a reduced-feature candidate |
 | `[selection]` | `[CV]` (end of `run()`) | steps 1, 3, 4 | Constant-prediction candidates were excluded (noting if one would have won), every candidate is constant, or tuning produced a constant model and was rejected |
+| `[transform]` | `[CV]` (end of `run()`) | after step 3 or 4 | A log or sqrt-family winner's out-of-fold total is more than 20% from the observed total. See [`mean_correction`](guides/transforms.md#predicted-totals-and-mean_correction) |
 | `[holdout]` | `[CV]` (end of `run()`) | run start; after step 3 or 4 | At the start: too few rows, a size far from `holdout_frac`, and for regression too few non-zero rows or a distribution far from the dev rows. After scoring: the holdout score is worse than the CV score by more than 2 fold SDs — the CV estimate is likely optimistic, or the holdout rows differ from the dev rows. Classification: also when the holdout holds fewer than 20 rows of its rarest class, so its score and conformal calibration are unreliable |
 
 ### Preferring reduced features on ties
