@@ -314,7 +314,7 @@ def multi_metric(
                 tuned = _Shared.capture(result, _STEP4_FIELDS, n, params)
                 step4.setdefault(key4, (metric, tuned))
             p._select_step4(result, *tuned.extra)
-            p._score_holdout(result)
+            p._finish(result)
             p._log_summary(result)
         except Exception as e:
             logger.warning(f"multi_metric: {metric} failed — {e}")

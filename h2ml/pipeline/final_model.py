@@ -47,10 +47,16 @@ from h2ml.evaluation.conformal import (
 from h2ml.pipeline.holdout import concat_stores, stage_store
 from h2ml.preprocessing.transforms import (
     INVERSE_TRANSFORMS,
+    MEAN_CORRECTABLE_TRANSFORMS,
     PRE_CLIP_TRANSFORMS,
     Y_TRANSFORMS,
     get_train_target_fn,
+    total_ratio,
 )
+
+# Limits on the mean_correction="ratio" factor: beyond them the OOF totals say more about
+# a broken model than about back-transform bias.
+MEAN_RATIO_BOUNDS = (0.1, 10.0)
 
 
 @dataclass
@@ -85,6 +91,10 @@ class FinalModel:
         applicability:    Area of applicability (Meyer & Pebesma 2021) fitted on the CV rows;
                           powers area_of_applicability(). None when no CV folds were
                           available or fitting failed.
+        mean_ratio:       Factor predict() multiplies back-transformed predictions by, from
+                          PipelineConfig.mean_correction="ratio". 1.0 applies no correction.
+                          Conformal scores are built on the corrected predictions, so
+                          predict_interval() matches predict().
 
     Example:
         >>> final = result.build_final_model()
@@ -105,6 +115,7 @@ class FinalModel:
     local_conformal: Optional[LocalConformalCalibration] = field(default=None)
     variogram: Optional[Any] = field(default=None)  # VariogramResult — imported lazily
     applicability: Optional[ApplicabilityDomain] = field(default=None)
+    mean_ratio: float = 1.0
 
     # ------------------------------------------------------------------
     # Inference
@@ -120,11 +131,11 @@ class FinalModel:
 
         Returns:
             1-D array of predictions, in the original y scale when the pipeline
-            used a y-transform.
+            used a y-transform, multiplied by mean_ratio.
         """
         y_hat = self.estimator.predict(self._prepare(X))
         inverse_fn = INVERSE_TRANSFORMS.get(self.y_transform) if self.y_transform else None
-        return inverse_fn(y_hat) if inverse_fn is not None else y_hat
+        return inverse_fn(y_hat) * self.mean_ratio if inverse_fn is not None else y_hat
 
     def predict_proba(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
         """
@@ -193,8 +204,8 @@ class FinalModel:
                 "No conformal calibration available. "
                 "Rebuild FinalModel via result.build_final_model() after a full pipeline run."
             )
-        # q is calibrated on original-scale OOF residuals (CV inverse-transforms
-        # predictions before storing them), so it applies to predict()'s output.
+        # q is calibrated on original-scale residuals of the corrected predictions
+        # (CV inverse-transforms before storing them), so it applies to predict()'s output.
         y_hat = self.predict(X)
         if (coords is not None or times is not None) and self.local_conformal is not None:
             q = self.local_conformal.threshold(alpha, coords=coords, times=times)
@@ -344,13 +355,13 @@ class FinalModel:
 # ---------------------------------------------------------------------------
 
 
-def _build_conformal_calibration(result, classes=None) -> Optional[ConformalCalibration]:
+def _build_conformal_calibration(result, classes=None, mean_ratio: float = 1.0) -> Optional[ConformalCalibration]:
     """
     Build a ConformalCalibration from the holdout residuals when a holdout was scored
     (split conformal — no selection step saw those rows), otherwise from the
     out-of-fold predictions in best_cv_result.
 
-    Regression:          nonconformity score = |y_test - y_pred_test|
+    Regression:          nonconformity score = |y_test - mean_ratio * y_pred_test|
     Binary classification:   nonconformity score = 1 - p(true_class)
     Multiclass classification: nonconformity score = 1 - p(true_class),
         looked up via the classes array from estimator.classes_.
@@ -365,7 +376,7 @@ def _build_conformal_calibration(result, classes=None) -> Optional[ConformalCali
     task_type = cv.task_type
 
     if task_type == TaskType.REGRESSION:
-        scores = np.concatenate([np.abs(f.y_test - f.y_pred_test) for f in cv.folds])
+        scores = np.concatenate([np.abs(f.y_test - mean_ratio * f.y_pred_test) for f in cv.folds])
     else:
         sample_scores = []
         for f in cv.folds:
@@ -425,6 +436,7 @@ def _build_local_conformal(
     classes: Optional[Any] = None,
     time_bin_resolution: str = "month",
     oof_scores: Optional[np.ndarray] = None,
+    mean_ratio: float = 1.0,
 ) -> Optional[LocalConformalCalibration]:
     """
     Build a LocalConformalCalibration from OOF residuals.
@@ -457,6 +469,8 @@ def _build_local_conformal(
         classes:             estimator.classes_ for multiclass classification scoring.
         time_bin_resolution: "month" (1–12) or "season" (0–3). Only used when
                              times is not None.
+        mean_ratio:          FinalModel.mean_ratio; regression residuals are taken from
+                             the corrected predictions. Ignored with oof_scores.
 
     Block assignment at inference uses nearest-OOF-sample lookup in a jointly
     normalised context space [lat, lon, sin_doy, cos_doy, year], so the
@@ -491,7 +505,7 @@ def _build_local_conformal(
         score_parts: list[np.ndarray] = []
         for f in cv.folds:
             if task_type == TaskType.REGRESSION:
-                fold_scores: Optional[np.ndarray] = np.abs(f.y_test - f.y_pred_test)
+                fold_scores: Optional[np.ndarray] = np.abs(f.y_test - mean_ratio * f.y_pred_test)
             else:
                 fold_scores = _classification_scores(f, classes)
                 if fold_scores is None:
@@ -560,6 +574,31 @@ def _build_local_conformal(
         compound_scores=compound,
         time_bin_resolution=_resolution,
     )
+
+
+def _mean_ratio(result: "PipelineResult", task_type: TaskType) -> float:
+    """
+    Factor for result.mean_correction: observed over predicted total on the selected
+    configuration's out-of-fold rows, clamped to MEAN_RATIO_BOUNDS. 1.0 when the option is
+    off, or for a task or transform it doesn't apply to.
+    """
+    from loguru import logger
+
+    if (
+        getattr(result, "mean_correction", None) != "ratio"
+        or task_type != TaskType.REGRESSION
+        or result.y_transform not in MEAN_CORRECTABLE_TRANSFORMS
+    ):
+        return 1.0
+    oof_preds, oof_labels = result.oof_predictions, result.oof_labels
+    ratio = None if oof_preds is None or oof_labels is None else total_ratio(oof_labels, oof_preds)
+    if ratio is None:
+        logger.warning("mean_correction skipped: the out-of-fold totals aren't available or aren't positive.")
+        return 1.0
+    clamped = float(np.clip(ratio, *MEAN_RATIO_BOUNDS))
+    if clamped != ratio:
+        logger.warning(f"mean_correction: ratio {ratio:.3g} clamped to {clamped:.3g}; check the model's predictions.")
+    return clamped
 
 
 def build_final_model(result: "PipelineResult") -> FinalModel:
@@ -659,6 +698,7 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     estimator.fit(X, y_fit)
 
     classes = getattr(estimator, "classes_", None)
+    mean_ratio = _mean_ratio(result, task_type)
 
     local_conformal: Optional[LocalConformalCalibration] = None
     variogram = None
@@ -676,6 +716,7 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
             metric=result.spatial_cv_metric,
             time_bin_resolution=result.time_bin_resolution,
             classes=classes,
+            mean_ratio=mean_ratio,
         )
     if cv_store.coords is not None:
         oof_preds = result.oof_predictions
@@ -688,7 +729,7 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
                 try:
                     variogram = autocorrelation_range(
                         cv_store.coords[valid],
-                        np.abs(oof_preds[valid] - oof_labels[valid]),
+                        np.abs(mean_ratio * oof_preds[valid] - oof_labels[valid]),
                     )
                 except Exception as e:
                     from loguru import logger
@@ -703,11 +744,12 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
         scaler=scaler,
         best_model_name=result.best_model_name,
         best_params=result.best_params,
-        conformal=_build_conformal_calibration(result, classes=classes),
+        conformal=_build_conformal_calibration(result, classes=classes, mean_ratio=mean_ratio),
         y_transform=result.y_transform,
         local_conformal=local_conformal,
         variogram=variogram,
         applicability=_build_applicability(result, cv_store),
+        mean_ratio=mean_ratio,
     )
 
 
@@ -829,8 +871,9 @@ def _delta_oof_residuals(
     if len(count_oof_pos) < n_pos:
         count_oof_pos = np.concatenate([count_oof_pos, np.full(n_pos - len(count_oof_pos), np.nan)])
 
+    # reg_final.predict below carries the mean correction; the stored OOF predictions don't.
     count_hat_full = np.full(n_full, np.nan)
-    count_hat_full[positive_indices] = count_oof_pos
+    count_hat_full[positive_indices] = count_oof_pos * reg_final.mean_ratio
 
     # For zero-count samples, call the final regressor (not OOF)
     zero_mask = np.ones(n_full, dtype=bool)

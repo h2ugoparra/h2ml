@@ -46,3 +46,24 @@ lower, upper = final.predict_interval(X_new, alpha=0.10)
 ```
 
 To get the transformed space, call `final.estimator.predict()` directly.
+
+## Predicted totals and `mean_correction`
+
+A model fitted on `log1p(y)` or `sqrt(y)` estimates the mean of that scale, and inverting it doesn't give the mean of `y`. Predictions come out too low, sometimes badly on skewed, zero-heavy targets. When a log or sqrt-family model wins and its out-of-fold total is more than 20% from the observed total, `cv_warnings` gets a `[transform]` entry with the ratio.
+
+If totals matter, for example when summing predictions over an area, set `mean_correction="ratio"`:
+
+```python
+config = PipelineConfig(task_type="regression", metric="RMSE", mean_correction="ratio")
+result = H2MLPipeline(config).run(store, transforms=["count", "log"])
+final = result.build_final_model()
+final.mean_ratio        # observed OOF total / predicted OOF total, clamped to 0.1–10
+```
+
+`predict()` multiplies back-transformed predictions by `mean_ratio`, and conformal scores are built from the corrected predictions, so `predict_interval()` stays centred on `predict()` with matching widths. `DeltaFinalModel` corrects the count part only, using the regressor's own out-of-fold rows.
+
+It applies to `log`, `sqrt`, `winlog` and `winsqrt`; other transforms keep a ratio of 1.
+
+- **Rowwise error:** it usually gets worse, because one factor scales every prediction. Use it for totals, not for accuracy at single sites.
+- **High values:** the largest values often stay under-predicted, while low predictions are pushed up.
+- **Scores:** CV scores, selection and `holdout_df` don't include the correction, so compare totals yourself on `holdout_store` before relying on it.

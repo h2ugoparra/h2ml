@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `[transform]` warning when a log or sqrt-family winner's out-of-fold total is more than
+  20% from the observed total. Inverting these transforms doesn't recover the mean, so
+  totals can come out far too low.
+- `PipelineConfig(mean_correction="ratio")` makes `build_final_model` rescale predictions
+  of log and sqrt-family models so their total matches the observed out-of-fold total
+  (clamped to 0.1–10, stored as `FinalModel.mean_ratio`). Conformal scores use the
+  corrected predictions, and `DeltaFinalModel` corrects the count part only. Default
+  `None`. Rowwise errors usually grow, and CV scores, selection and `holdout_df` stay
+  uncorrected.
 - `multi_metric` supports regression pipelines: R2, MAE and RMSE (default order) with
   an optional `transforms=` y-transform sweep, shared exactly as for classification
   (step 1 once, steps 2–3 per step-1 winner and transform). Each metric's result still
