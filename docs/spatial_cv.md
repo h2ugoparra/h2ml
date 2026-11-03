@@ -94,6 +94,36 @@ Use **spcv** when:
 
 ---
 
+## Checking the spatial clustering
+
+After a run, plot the splitter to see how the rows were grouped and which region each fold holds out:
+
+```python
+result = pipeline.run(store)
+result.splitter.plot()                               # or save_path="figures/spatial_folds.png"
+
+from h2ml.plots import plot_spatial_blocks           # the same plot as a function
+plot_spatial_blocks(result.splitter, save_path="figures/spatial_folds.png")
+```
+
+The figure has two panels:
+
+- **Spatial blocks** (left) — each point coloured by its block: quantile-grid cells for `"block"`, AHC clusters for `"spcv"`.
+- **Fold assignments** (right) — each point coloured by the fold whose test set holds it.
+
+What to look for:
+
+- **Compact blocks.** Each block should be one contiguous patch. Blocks that interleave mean nearby rows can still fall on both sides of a split.
+- **Block size against the autocorrelation range.** Blocks much smaller than the residuals' [variogram](guides/conformal.md#variogram-diagnostic) range leave neighbours correlated across folds, so scores stay optimistic. With `"spcv"`, raise `ahc_threshold` for fewer, larger clusters; with `"block"`, lower `n_blocks_per_fold`.
+- **Fold layout.** Block folds are scattered tiles across the whole area. SPCV folds group blocks that are alike in location, covariates and (with `spcv_use_target`) the target, so each fold is a distinct region of that combined space. A fold confined to one corner tests extrapolation into it.
+- **Empty areas.** With a holdout, the splitter covers the dev rows only, so held-out blocks show as gaps.
+
+`lon_col` / `lat_col` (default `1` / `0`) pick the coordinate columns for the x and y axes and assume `[lat, lon]` coords; pass `lon_col=0, lat_col=1` for `[lon, lat]` or projected `[x, y]`. With many AHC clusters, colours of neighbouring block IDs are similar and the colour bar is crowded, so judge compactness by eye rather than by label.
+
+`result.splitter` is not saved, so it is `None` after `PipelineResult.load()`. See [Visualization](guides/visualization.md#spatial-blocks-and-folds) to rebuild it.
+
+---
+
 ## Spatial blocks and local conformal calibration
 
 The same `block_id_` assignments built for CV are reused by `build_final_model()` to partition OOF residuals into a `LocalConformalCalibration`. Each block (and optionally each block × time bin) gets its own nonconformity score distribution, so prediction intervals widen in regions where the model is historically less accurate.
