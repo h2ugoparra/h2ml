@@ -130,7 +130,7 @@ Step 4 is skipped when the winning model has `opt_enabled=False` in the registry
 | `random_state` | `42` | Global seed |
 | `verbose` | `False` | Log step-by-step progress to stdout |
 
-See the [full reference](https://h2ugoparra.github.io/h2ml/pipeline/#pipelineconfig) for details.
+See the [full reference](https://h2ugoparra.github.io/h2ml/configuration/) for details.
 
 ### Spatial CV parameters
 

@@ -8,7 +8,7 @@
     With `PipelineConfig(holdout_frac=...)` the calibrator uses the residuals on rows no
     selection step saw instead (split conformal), which restores the guarantee for the
     model fitted on the dev rows (`holdout_refit="dev"`). Local calibration is then
-    skipped — see [Outer holdout](../pipeline.md#outer-holdout).
+    skipped — see [Outer holdout](../validation.md#outer-holdout).
 
 A conformal calibrator is essentially a recorded history of how wrong the model has been, used to answer one question at prediction time:
 *"how much buffer do I need around my estimate to be right X% of the time?"*

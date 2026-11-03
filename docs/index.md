@@ -41,12 +41,12 @@ The pipeline can also be run partially: `run_step1_only()` screens models, and `
 
 ### Trustworthy selection
 
-- **[Ranking robustness](pipeline.md#selection-robustness)** — paired-fold ties and per-metric ranks, with an optional [1-SE rule](pipeline.md#preferring-reduced-features-on-ties) favouring reduced features
-- **[Per-fold feature selection](pipeline.md#selecting-features-inside-cv-folds)** — an unbiased default-vs-reduced comparison
-- **[Outer holdout](pipeline.md#outer-holdout)** — one score no selection step has seen
-- **[Nested CV](pipeline.md#nested-cv)** — how well the whole pipeline generalises
-- **[Seed stability](pipeline.md#seed-stability)** — how much a run depends on its seed
-- **[Metric comparison](pipeline.md#comparing-selection-metrics)** — compare selection metrics while sharing CV work
+- **[Ranking robustness](results.md#selection-robustness)** — paired-fold ties and per-metric ranks, with an optional [1-SE rule](configuration.md#preferring-reduced-features-on-ties) favouring reduced features
+- **[Per-fold feature selection](configuration.md#selecting-features-inside-cv-folds)** — an unbiased default-vs-reduced comparison
+- **[Outer holdout](validation.md#outer-holdout)** — one score no selection step has seen
+- **[Nested CV](validation.md#nested-cv)** — how well the whole pipeline generalises
+- **[Seed stability](validation.md#seed-stability)** — how much a run depends on its seed
+- **[Metric comparison](validation.md#comparing-selection-metrics)** — compare selection metrics while sharing CV work
 
 ### Before and after the pipeline
 

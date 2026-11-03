@@ -107,7 +107,9 @@ All notable changes to this project will be documented in this file.
   `model_scores` and `cv_diagnostics` arguments; `conformal.md` no longer contradicts
   itself on the `local=` default; `compare_results` documents that `metric=` switches
   regression scores from pooled to fold mean. The variogram functions are in the API
-  reference.
+  reference. The Pipeline docs section is split into Overview, Configuration, Results
+  and Validation & robustness pages; old `pipeline.md#...` anchors for moved sections
+  no longer resolve.
 - `DeltaFinalModel.variogram` reused the classifier's variogram, fitted on
   probability-scale residuals. It's now fitted on the signed delta residuals
   (P × count minus observed) that the intervals are calibrated on, using the

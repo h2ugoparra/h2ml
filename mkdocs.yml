@@ -47,6 +47,9 @@ nav:
   - Quick Start: quickstart.md
   - Pipeline:
     - Overview: pipeline.md
+    - Configuration: configuration.md
+    - Results: results.md
+    - Validation & robustness: validation.md
     - Spatial CV: spatial_cv.md
   - Guides:
     - Exploratory Data Analysis: guides/eda.md
