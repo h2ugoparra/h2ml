@@ -729,7 +729,8 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
                 try:
                     variogram = autocorrelation_range(
                         cv_store.coords[valid],
-                        np.abs(mean_ratio * oof_preds[valid] - oof_labels[valid]),
+                        mean_ratio * oof_preds[valid] - oof_labels[valid],
+                        metric=result.spatial_cv_metric,
                     )
                 except Exception as e:
                     from loguru import logger
