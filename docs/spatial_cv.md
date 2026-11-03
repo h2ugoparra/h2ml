@@ -60,6 +60,16 @@ config = PipelineConfig(
 
 > **Note:** AHC uses `linkage="ward"` by default. Ward requires Euclidean distances, so when `spatial_cv_metric="haversine"` it is automatically downgraded to `"average"`. For projected coordinates (metres, km) `spatial_cv_metric="euclidean"` keeps ward valid.
 
+The linkage shapes the blocks:
+
+| | Ward (`"euclidean"`) | Average (`"haversine"`) |
+|---|---|---|
+| Merges | the pair adding the least within-cluster variance | the pair with the smallest mean pairwise distance |
+| Blocks | compact and similar in size | follow sampling density, so shapes and sizes vary |
+| CV folds | more even, so less noisy scores | can be lopsided, so noisier scores |
+
+On evenly spread points the two give similar blocks. On clumpy sampling, average tends to give a few large blocks and many tiny ones, while ward splits the clumps into balanced regions. If you want ward, project the coordinates and use `"euclidean"`. [Plot the splitter](#checking-the-spatial-clustering) to see which you got.
+
 ---
 
 ## Parameter reference
