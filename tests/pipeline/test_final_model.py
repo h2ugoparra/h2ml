@@ -964,8 +964,63 @@ class TestBuildDeltaConformal:
         reg_r = MockResult(cv=oversized_cv)
         assert _delta_oof_residuals(clf_r, reg_r, reg_f, X, y, pos) is None
 
+    def test_signed_residuals_are_prediction_minus_observed(self):
+        clf_r, reg_r, reg_f, X, y, pos = self._setup()
+        signed = _delta_oof_residuals(clf_r, reg_r, reg_f, X, y, pos, signed=True)
+        np.testing.assert_allclose(np.abs(signed), _delta_oof_residuals(clf_r, reg_r, reg_f, X, y, pos))
+        assert (signed < 0).any() and (signed > 0).any()
+
 
 class TestBuildDeltaFinalModel:
+    def test_variogram_fitted_on_delta_residuals(self):
+        """The delta variogram must describe the count-scale delta residuals the
+        intervals use, not the classifier's probability-scale ones."""
+        from sklearn.ensemble import RandomForestRegressor as RFR
+        from sklearn.linear_model import LogisticRegression
+
+        from h2ml.pipeline.step import make_classifier, make_regressor
+
+        rng = np.random.default_rng(0)
+        n = 60
+        X_full = rng.standard_normal((n, len(DELTA_FEATURES))).astype(np.float32)
+        y_full = rng.integers(0, 8, n).astype(float)
+        coords = rng.uniform(0, 10, (n, 2))
+        positive_indices = np.where(y_full > 0)[0]
+        mock_sel = MagicMock(spec=FeatureSelector)
+        mock_sel.fit_transform.side_effect = lambda s, y=None: s
+        mock_sel.transform.side_effect = lambda s: s
+        spatial = dict(n_splits=3, n_trials=1, spatial_cv_method="block", n_blocks_per_fold=2)
+
+        clf_store = PipelineData(
+            X=X_full, feature_names=DELTA_FEATURES, y=(y_full > 0).astype(np.float32), coords=coords
+        )
+        clf_pipeline = H2MLPipeline(
+            models=[make_classifier(LogisticRegression(max_iter=200, random_state=42))],
+            config=PipelineConfig(task_type=TaskType.CLASSIFICATION, spatial_cv_metric="haversine", **spatial),
+        )
+        reg_store = PipelineData(
+            X=X_full[positive_indices],
+            feature_names=DELTA_FEATURES,
+            y=y_full[positive_indices].astype(np.float32),
+            coords=coords[positive_indices],
+        )
+        reg_pipeline = H2MLPipeline(
+            models=[make_regressor(RFR(n_estimators=10, random_state=42))],
+            config=PipelineConfig(task_type=TaskType.REGRESSION, metric="R2", **spatial),
+        )
+        with patch("h2ml.pipeline.pipeline.FeatureSelector", return_value=mock_sel):
+            clf_result = clf_pipeline.run_step1_only(clf_store)
+            reg_result = reg_pipeline.run_step1_only(reg_store)
+
+        with patch("h2ml.utils.variogram.autocorrelation_range") as fit:
+            delta = build_delta_final_model(clf_result, reg_result, X_full, y_full, positive_indices)
+
+        delta_call = fit.call_args_list[-1]
+        assert delta.variogram is fit.return_value
+        assert delta_call.kwargs["metric"] == "haversine"
+        np.testing.assert_allclose(np.sort(np.abs(delta_call.args[1])), delta.conformal.scores)
+        assert (delta_call.args[1] < 0).any() and (delta_call.args[1] > 0).any()
+
     def test_returns_delta_final_model(self):
         from sklearn.ensemble import RandomForestRegressor as RFR
         from sklearn.linear_model import LogisticRegression

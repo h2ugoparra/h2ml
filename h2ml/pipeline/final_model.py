@@ -722,20 +722,9 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
         oof_preds = result.oof_predictions
         oof_labels = result.oof_labels
         if oof_preds is not None and oof_labels is not None and oof_preds.ndim == 1:
-            valid = np.isfinite(oof_preds) & np.isfinite(oof_labels)
-            if valid.sum() >= 10:
-                from h2ml.utils.variogram import autocorrelation_range
-
-                try:
-                    variogram = autocorrelation_range(
-                        cv_store.coords[valid],
-                        mean_ratio * oof_preds[valid] - oof_labels[valid],
-                        metric=result.spatial_cv_metric,
-                    )
-                except Exception as e:
-                    from loguru import logger
-
-                    logger.debug(f"Variogram fit skipped (diagnostic only): {e}")
+            variogram = _fit_variogram(
+                cv_store.coords, mean_ratio * oof_preds - oof_labels, metric=result.spatial_cv_metric
+            )
 
     return FinalModel(
         estimator=estimator,
@@ -752,6 +741,22 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
         applicability=_build_applicability(result, cv_store),
         mean_ratio=mean_ratio,
     )
+
+
+def _fit_variogram(coords: np.ndarray, residuals: np.ndarray, metric: str) -> Optional[Any]:
+    """Fit the diagnostic variogram on the finite signed residuals; None when under 10 remain or the fit fails."""
+    valid = np.isfinite(residuals)
+    if valid.sum() < 10:
+        return None
+    from h2ml.utils.variogram import autocorrelation_range
+
+    try:
+        return autocorrelation_range(coords[valid], residuals[valid], metric=metric)
+    except Exception as e:
+        from loguru import logger
+
+        logger.debug(f"Variogram fit skipped (diagnostic only): {e}")
+        return None
 
 
 def _build_applicability(result: "PipelineResult", store: PipelineData) -> Optional[ApplicabilityDomain]:
@@ -793,9 +798,13 @@ def _delta_oof_residuals(
     X_full: "pd.DataFrame | np.ndarray",
     y_full: np.ndarray,
     positive_indices: np.ndarray,
+    signed: bool = False,
 ) -> Optional[np.ndarray]:
     """
     Sample-indexed combined delta OOF residuals: |y_full - (P_oof × count_hat)|.
+
+    With ``signed=True`` it returns ``P_oof × count_hat - y_full`` instead (the
+    variogram's input); the warnings and NaN positions are the same.
 
     The returned array has length len(y_full) and is indexed by original sample
     position, with NaN where a residual is unavailable (e.g. a failed CV fold). It is
@@ -887,13 +896,13 @@ def _delta_oof_residuals(
         count_hat_full[zero_indices] = reg_final.predict(X_zero)
 
     delta_oof = P_oof * count_hat_full
-    delta_resid = np.abs(y_full - delta_oof)
+    delta_resid = delta_oof - y_full
     n_excluded = int((~np.isfinite(delta_resid)).sum())
     if n_excluded:
         logger.warning(
             f"Delta conformal calibration: {n_excluded} samples excluded due to NaN (likely from failed CV folds)."
         )
-    return delta_resid
+    return delta_resid if signed else np.abs(delta_resid)
 
 
 def _build_delta_conformal(
@@ -1117,7 +1126,10 @@ def build_delta_final_model(
     # unavailable. Shared by the global and local calibrators so both are calibrated
     # on the same residuals — the local one must NOT fall back to the classifier's
     # probability-scale scores, which would miscalibrate count-scale intervals.
-    delta_resid = _delta_oof_residuals(clf_result, reg_result, reg_final, X_full, y_full, positive_indices)
+    signed_resid = _delta_oof_residuals(
+        clf_result, reg_result, reg_final, X_full, y_full, positive_indices, signed=True
+    )
+    delta_resid = None if signed_resid is None else np.abs(signed_resid)
 
     conformal: Optional[ConformalCalibration] = None
     if delta_resid is not None:
@@ -1145,7 +1157,12 @@ def build_delta_final_model(
                 oof_scores=delta_resid,
             )
 
-    variogram = clf_final.variogram  # reuse — same spatial residual structure
+    # The classifier's own variogram describes probability-scale residuals; this one is
+    # fitted on the count-scale delta residuals the intervals are calibrated on.
+    variogram = None
+    if signed_resid is not None and clf_store is not None and clf_store.coords is not None:
+        if len(clf_store.coords) == len(signed_resid):
+            variogram = _fit_variogram(clf_store.coords, signed_resid, metric=clf_result.spatial_cv_metric)
 
     return DeltaFinalModel(
         clf=clf_final,
