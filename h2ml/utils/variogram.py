@@ -21,6 +21,7 @@ Usage:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, Optional
 
 import numpy as np
@@ -275,7 +276,7 @@ def plot_variogram(
     n_lags: int = 15,
     max_dist: Optional[float] = None,
     units: Optional[str] = None,
-    save_path=None,
+    save_path: Optional[str | Path] = None,
     metric: Literal["euclidean", "haversine"] = "euclidean",
 ) -> VariogramResult:
     """

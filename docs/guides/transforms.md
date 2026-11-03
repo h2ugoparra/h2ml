@@ -24,7 +24,7 @@ Only supported for regression (`task_type="regression"`).
 
 Winsorize-based transforms return `None` when nothing lies above the cap and are **silently skipped** by `build_transform_stores`. If all winsorized variants are skipped, only non-winsorized transforms are evaluated.
 
-The cap ignores zeros, so on a zero-heavy target it stays in the tail instead of cutting into ordinary catches. A cap removes real signal when large values are genuine: it lowers predicted totals, so compare totals as well as RMSE before choosing a winsorized model.
+The cap ignores zeros, so on a zero-heavy target it stays in the tail instead of cutting into ordinary non-zero values. A cap removes real signal when large values are genuine: it lowers predicted totals, so compare totals as well as RMSE before choosing a winsorized model.
 
 ### Winsorize limits are fitted per training fold
 
@@ -34,7 +34,7 @@ The upper limit is a statistic of the data, so computing it on the full `y` befo
 
 CV metrics in steps 1 and 3 are computed in the **original scale** when `y_true` is provided — the inverse transform is applied to predictions before metric computation. This ensures `R2`, `MAE`, `RMSE`, and `PoissonDev` are comparable across transforms.
 
-`metric="PoissonDev"` suits non-negative counts or rates such as CPUE. It scales errors by the predicted value, so a few huge catches don't dominate selection as they can under RMSE. It raises an error on negative targets, and predictions are floored just above zero, where the deviance is undefined.
+`metric="PoissonDev"` suits non-negative counts or rates (e.g. counts per unit of effort). It scales errors by the predicted value, so a few very large values don't dominate selection as they can under RMSE. It raises an error on negative targets, and predictions are floored just above zero, where the deviance is undefined.
 
 ## Predictions and transforms
 

@@ -68,7 +68,7 @@ Available transform names: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`
 
 ### Partial runs
 
-All partial-run methods accept an optional `transforms` list (same as `pipeline.run()`).
+The methods that start at step 1 accept an optional `transforms` list (same as `pipeline.run()`); the resume methods take `transform_stores` instead.
 
 ```python
 # Screen models only (step 1)
@@ -118,9 +118,19 @@ Step 4 is skipped when the winning model has `opt_enabled=False` in the registry
 | `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; best is kept |
 | `min_features` | `1` | Minimum features retained after the correlation filter |
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for supporting classifiers; `"auto"` only when the minority-class ratio is below 0.1 |
+| `max_vif` | `None` | Step 2: after the correlation filter, drop features whose variance inflation factor exceeds this value; `None` skips |
 | `prefer_reduced_on_tie` | `False` | Step 3: select a reduced-feature candidate over an all-features winner when the two are statistically tied on paired folds (1-SE rule) |
+| `select_features_in_folds` | `False` | Step 3: re-run feature selection on each fold's training rows, so the default-vs-reduced comparison is unbiased (about `n_splits`× the step-2 cost) |
+| `selection_scoring` | `"pooled"` | Regression selection in steps 1, 3 and 4: one score over all out-of-fold rows. `"fold_mean"` uses the mean of fold scores with a fold-spread penalty. Classification always uses the fold mean |
+| `mean_correction` | `None` | `"ratio"`: the final model rescales `log`/`sqrt`-family predictions so their total matches the observed out-of-fold total. CV scores and selection stay uncorrected |
+| `holdout_frac` | `0.0` | Fraction of rows set aside before step 1 and scored once on the final configuration |
+| `holdout_strategy` | `"auto"` | `"auto"` (whole spatial blocks with coords, else random), `"random"` or `"time"` (latest rows by `store.times`) |
+| `holdout_refit` | `"dev"` | Rows the final model fits on with a holdout: `"dev"` or `"all"` |
+| `time_bin_resolution` | `"month"` | Time bins for local conformal cells: `"month"` or `"season"` |
 | `random_state` | `42` | Global seed |
 | `verbose` | `False` | Log step-by-step progress to stdout |
+
+See the [full reference](https://h2ugoparra.github.io/h2ml/pipeline/#pipelineconfig) for details.
 
 ### Spatial CV parameters
 
@@ -150,18 +160,19 @@ Set `store.coords` to an `(n_samples, 2)` array of spatial coordinates to activa
 ```python
 result.summary()                  # combined agg DataFrame across all completed stages
 result.summary("AUC_Test_Mean")   # sorted by metric; "_Test_Mean" = mean of per-fold held-out scores
+                                  # (regression also has "_Test_Pooled", the score selection uses)
 result.completed_steps            # e.g. [1, 2, 3, 4]
 result.best_model_name            # winning model
 result.best_stage                 # "default" | "reduced" | "optimized"
 result.best_feature_stage         # "default" | "reduced" — feature store used by build_final_model()
 result.y_transform                # winning y-transform (regression only)
 result.cv_type                    # "spatial" | "random" — set from store.coords
-result.cv_warnings                # failed folds, metric-suitability and ranking-robustness flags
+result.cv_warnings                # failed folds and [metric], [ranking], [selection], [transform], [holdout] flags
 result.ranking_robustness()       # paired-fold ties and per-metric ranks of the selection
 result.step1_agg_df               # per-model mean/std metrics from step 1
 result.features_reduced           # PipelineData after feature selection
 result.selector.importance_summary()  # SHAP importances as a DataFrame
-result.oof_predictions            # assembled OOF predictions (None if step 1 only)
+result.oof_predictions            # assembled OOF predictions of the selected configuration
 result.oof_labels                 # true labels paired with oof_predictions
 result.best_cv_result             # CVResult for the final winning model
 ```
@@ -185,7 +196,7 @@ final = FinalModel.load("models/final.pkl")
 
 ### Conformal prediction intervals
 
-`build_final_model()` automatically calibrates a conformal predictor from the out-of-fold CV predictions — no held-out data required.
+`build_final_model()` automatically calibrates a conformal predictor from the out-of-fold CV predictions — no held-out data required. With `holdout_frac > 0` it uses the holdout residuals instead.
 
 ```python
 final = result.build_final_model()
@@ -202,11 +213,11 @@ sets = final.predict_set(X_new, alpha=0.10)
 
 Both methods work on any input — held-out test samples, a prediction grid, spatial rasters, etc. The `alpha` parameter controls the miscoverage level: `alpha=0.10` targets ≥ 90% coverage.
 
-**How it works:** nonconformity scores (`|y − ŷ|` for regression, `1 − p(true class)` for classification) are computed from the OOF folds and a single threshold `q` is stored. At inference time the interval is `ŷ ± q` (regression) or the set of classes with score ≤ `q` (classification).
+**How it works:** nonconformity scores (`|y − ŷ|` for regression, `1 − p(true class)` for classification) are computed from the OOF folds (or the holdout) and a threshold `q` is stored. At inference time the interval is `ŷ ± q` (regression) or the set of classes with score ≤ `q` (classification).
 
 **Limitations:**
 
-- Intervals are **constant-width** — the same `q` is added to every prediction, so regions of the input space with higher inherent variance get the same interval as low-variance regions.
+- By default intervals are **constant-width** — the same `q` is added to every prediction. With `store.coords` (and optionally `store.times`), passing `coords=`/`times=` to `predict_interval` uses per-block thresholds instead; see [spatio-temporal local calibration](https://h2ugoparra.github.io/h2ml/guides/conformal/#spatio-temporal-local-calibration).
 - Coverage is **marginal**, not conditional: the guarantee holds on average over new draws from the training distribution. Predictions on out-of-distribution inputs (e.g. spatial extrapolation beyond the training extent) may not achieve nominal coverage.
 - If `result.y_transform` is set, `predict()` and `predict_interval()` both return the **original scale** — don't apply the inverse transform to their output. Intervals stay symmetric, so they can't follow the skew of a log or sqrt target.
 
@@ -270,8 +281,8 @@ Pass `n_folds` to override automatic fold-count inference — useful when compar
 
 ```python
 from h2ml.plots.plots import (
-    pipeline_scores,    # model scores across all three pipeline stages
-    cv_diagnostics,     # classification or regression diagnostic panel
+    pipeline_scores,    # model scores across the default, reduced and optimized stages
+    cv_diagnostics,     # classification or regression diagnostic panel (takes a CVResult)
     shap_importance,    # horizontal bar chart of SHAP feature importances
     shap_summary_plot,  # SHAP beeswarm for the final best model
     shap_dependence,    # scatter + lowess for top-N features

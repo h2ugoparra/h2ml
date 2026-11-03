@@ -65,7 +65,7 @@ All notable changes to this project will be documented in this file.
   step 2 skips SHAP and keeps every feature (`FeatureSelector(keep_all=True)`), instead
   of reducing by column order. Applies to classification too.
 - `metric="PoissonDev"` selects regression models on Poisson deviance, for non-negative
-  counts or rates such as CPUE. It is pooled like the other regression metrics, works
+  counts or rates. It is pooled like the other regression metrics, works
   in Optuna, and raises an error on negative targets. It is opt-in in `multi_metric`
   (`metrics=[..., "PoissonDev"]`). Every regression fold table also gains
   `PoissonDev_Test` and `PoissonDev_Train`.
@@ -73,7 +73,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - **`wincount`, `winlog` and `winsqrt` now cap at the 99th percentile of non-zero
-  values**, not Q3 + 1.5 × IQR, which removed 44–88% of the catch in tests. Runs using
+  values**, not Q3 + 1.5 × IQR, which removed 44–88% of the target total in tests. Runs using
   them need rerunning, while saved models predict as before. Targets with 75% zeros or
   more were skipped by the old rule and now use these transforms. They are also skipped
   less often, because only ties at the top leave nothing above the cap. On log and sqrt
@@ -101,6 +101,13 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Docs: the `PipelineConfig` tables now list `mean_correction` (and, in the README, the
+  holdout, selection and VIF options); `persistence.md` lists the files `save()` actually
+  writes; `visualization.md` drops the non-existent `spatial_folds` and shows the real
+  `model_scores` and `cv_diagnostics` arguments; `conformal.md` no longer contradicts
+  itself on the `local=` default; `compare_results` documents that `metric=` switches
+  regression scores from pooled to fold mean. The variogram functions are in the API
+  reference.
 - `DeltaFinalModel.variogram` reused the classifier's variogram, fitted on
   probability-scale residuals. It's now fitted on the signed delta residuals
   (P × count minus observed) that the intervals are calibrated on, using the

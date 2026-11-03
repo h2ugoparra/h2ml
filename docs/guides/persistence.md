@@ -10,16 +10,21 @@ Creates a directory with:
 
 | File | Contents |
 |------|----------|
-| `step1_fold_df.parquet` | Per-fold metrics, step 1 |
-| `step3_fold_df.parquet` | Per-fold metrics, step 3 |
-| `step4_fold_df.parquet` | Per-fold metrics, step 4 |
-| `features.npy` + metadata | Full feature matrix |
-| `features_reduced.npy` + metadata | Reduced feature matrix |
+| `metadata.json` | Scalar fields (model name, stage, params, transform, metric, warnings, …) |
+| `step1_fold.parquet` / `step1_agg.parquet` | Per-fold and aggregated metrics, step 1 |
+| `step3_fold.parquet` / `step3_agg.parquet` | Per-fold and aggregated metrics, step 3 |
+| `step4_fold.parquet` / `step4_agg.parquet` | Per-fold and aggregated metrics, step 4 |
+| `holdout_agg.parquet` | Holdout metrics (`holdout_df`), when a holdout was scored |
+| `features/` | Full feature store: `X.npy`, `y.npy`, optional `y_true.npy`, `coords.npy`, `times.npy`, and `meta.json` |
+| `features_reduced/` | Reduced feature store, same layout |
+| `holdout/` + `holdout_idx.npy` | Held-out rows and their indices, when a holdout was used |
 | `selector.pkl` | Fitted `FeatureSelector` |
-| `step1_cv_result.pkl` | Raw `CVResult` list, step 1 |
-| `step3_cv_result.pkl` | Raw `CVResult` list, step 3 |
+| `best_base_estimator.pkl` | Unfitted winning estimator |
+| `step1_cv_result.pkl` / `step3_cv_result.pkl` | Raw `CVResult` lists, steps 1 and 3 |
 | `step4_cv_result.pkl` | `CVResult`, step 4 |
-| `meta.json` | Scalar fields (model name, stage, params, …) |
+| `holdout_cv_result.pkl` | One-fold `CVResult` of the holdout score |
+
+`result.splitter` and `result.step3_reduced_stores` are not saved, so both are `None` after loading.
 
 Reload with:
 
@@ -28,6 +33,8 @@ from h2ml import PipelineResult
 
 result = PipelineResult.load("runs/experiment_01")
 ```
+
+Saving refuses to overwrite a path that exists unless it is an empty directory or a previous save.
 
 !!! warning
     The `.pkl` files use `joblib` (pickle under the hood). Only load results from trusted sources — pickle executes arbitrary code on deserialisation.
@@ -46,6 +53,15 @@ result = PipelineResult.load("runs/partial")
 result = pipeline.run_from_step3(result)
 ```
 
+Results saved before `selection_scoring` existed resume on `"fold_mean"`, the rule they were selected with.
+
+## Multi-metric results
+
+```python
+mm.save("runs/multi")                       # multi_metric.json, runs.csv, results/<metric>/
+mm = MultiMetricResult.load("runs/multi")   # each results/<metric>/ is a saved PipelineResult
+```
+
 ## Saving the final model
 
 `FinalModel` is saved independently of `PipelineResult` — it is the deployment artifact:
@@ -59,3 +75,5 @@ final.save("models/final.pkl")
 final = FinalModel.load("models/final.pkl")
 final.predict(X_new)
 ```
+
+Models saved by older versions still load. Fields added since then take neutral values: `mean_ratio` is 1.0, `variogram.status` is `"unknown"`, and `applicability` is `None`. Rebuild with `result.build_final_model()` to get them.

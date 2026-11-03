@@ -42,6 +42,7 @@ Full parameter reference:
 | `max_vif` | `None` | Step 2: after the correlation filter, drop the lowest-ranked feature whose variance inflation factor exceeds this value until none does. It catches features that are linear combinations of several retained ones, which pairwise correlation misses. `5` or `10` are common choices. |
 | `prefer_reduced_on_tie` | `False` | Step 3: when an all-features winner is statistically tied (paired folds, within one corrected SE) with a reduced-feature candidate, select the best-ranked tied reduced candidate instead. See [Preferring reduced features on ties](#preferring-reduced-features-on-ties). |
 | `selection_scoring` | `"pooled"` | Regression selection in steps 1, 3 and 4: one score over all out-of-fold rows. `"fold_mean"` uses the mean of fold scores with a fold-spread penalty. Classification always uses the fold mean. |
+| `mean_correction` | `None` | `"ratio"`: `build_final_model()` rescales the predictions of `log`/`sqrt`-family models so their total matches the observed out-of-fold total (`FinalModel.mean_ratio`, clamped to 0.1–10). CV scores, selection and `holdout_df` stay uncorrected. See [Predicted totals](guides/transforms.md#predicted-totals-and-mean_correction). |
 | `select_features_in_folds` | `False` | Step 3: re-run the step-2 selector on each fold's training rows and score reduced candidates on those per-fold sets, so the default-vs-reduced comparison is unbiased. Costs about `n_splits` extra step-2 runs. See [Selecting features inside CV folds](#selecting-features-inside-cv-folds). |
 | `holdout_frac` | `0.0` | Fraction of rows set aside before step 1 and scored once at the end. `0` disables it; range `[0, 0.5]`. See [Outer holdout](#outer-holdout). |
 | `holdout_strategy` | `"auto"` | `"auto"` — whole spatial blocks when `store.coords` is set, else random (stratified for classification). `"random"` — random even with coords. `"time"` — the latest rows by `store.times`. |
@@ -80,8 +81,9 @@ result.y_transform            # winning y-transform (regression only, or None)
 result.cv_type                # "spatial" | "random"
 result.spatial_cv_metric      # "euclidean" | "haversine" — forwarded from config
 result.time_bin_resolution    # "month" | "season" — forwarded from config
-result.cv_warnings            # list[str] — failed CV folds, [metric] suitability and
-                              # [ranking] robustness flags, prefer_reduced_on_tie switches
+result.cv_warnings            # list[str] — failed CV folds, [metric], [ranking], [selection],
+                              # [transform] and [holdout] flags, prefer_reduced_on_tie switches
+                              # (see "Warnings in cv_warnings" below)
 result.metric                 # short metric name, e.g. "AUC"
 ```
 
@@ -381,6 +383,9 @@ result.step3_agg_df           # mean/std per model, step 3
 result.step4_fold_df          # per-fold metrics, winning model, step 4
 result.step4_agg_df           # mean/std, winning model, step 4
 ```
+
+For regression the agg frames also hold `<metric>_Test_Pooled`, the score selection
+ranks on by default. Read it, not `<metric>_Test_Mean`, to see why a candidate won.
 
 ### Feature selection
 

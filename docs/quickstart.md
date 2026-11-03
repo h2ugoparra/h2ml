@@ -128,7 +128,7 @@ result = pipeline.run_step4_only(result)
 A winner can be statistically tied with other candidates, or rank lower on another metric. Check both before relying on it:
 
 ```python
-print(result.cv_warnings)       # failed folds, metric-suitability and ranking flags
+print(result.cv_warnings)       # failed folds, [metric], [ranking], [selection], [transform], [holdout] flags
 result.ranking_robustness()     # paired-fold ties and per-metric ranks
 ```
 
