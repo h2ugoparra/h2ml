@@ -604,8 +604,15 @@ def optimize_all(
     Models not found in the registry are skipped with a warning.
 
     Args:
-        names:  List of model class names to optimize.
-        Others: Same as run_study().
+        names:        List of model class names to optimize.
+        X:            Feature matrix.
+        y:            Target vector.
+        task:         "classification" or "regression".
+        metric:       Metric to optimise; defaults to the task's default, as in run_study().
+        n_trials:     Optuna trials per model.
+        n_splits:     CV folds per trial (k-fold, stratified for classification; no spatial splitting).
+        random_state: Seed for folds and the sampler.
+        verbose:      Log study progress.
 
     Returns:
         Dict[model_name, optuna.Study]

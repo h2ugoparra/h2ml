@@ -109,7 +109,10 @@ All notable changes to this project will be documented in this file.
   regression scores from pooled to fold mean. The variogram functions are in the API
   reference. The Pipeline docs section is split into Overview, Configuration, Results
   and Validation & robustness pages; old `pipeline.md#...` anchors for moved sections
-  no longer resolve.
+  no longer resolve. A new guide covers custom models, the model registry, search spaces
+  and `optimize_all`; the Results page documents `CVResult`/`FoldResult`,
+  `final_feature_names` and the standalone step-2 filters, and the API reference gains
+  pages for them.
 - `DeltaFinalModel.variogram` reused the classifier's variogram, fitted on
   probability-scale residuals. It's now fitted on the signed delta residuals
   (P × count minus observed) that the intervals are calibrated on, using the

@@ -153,7 +153,7 @@ Set `store.coords` to an `(n_samples, 2)` array of spatial coordinates to activa
 
 **Regressors** — PoissonRegressor, KNeighborsRegressor, RandomForestRegressor, GradientBoostingRegressor, HistGradientBoostingRegressor, SVR, ExtraTreesRegressor, BaggingRegressor, AdaBoostRegressor, LGBMRegressor\*, CatBoostRegressor\*, XGBRegressor\*
 
-\* Registered only when the package is installed. Custom models can be injected by passing a `models` list directly to `H2MLPipeline`.
+\* Registered only when the package is installed. Custom models can be injected by passing a `models` list directly to `H2MLPipeline`; see [Custom Models and Search Spaces](https://h2ugoparra.github.io/h2ml/guides/models/).
 
 ## `PipelineResult`
 

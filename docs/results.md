@@ -91,6 +91,23 @@ result.selector               # FeatureSelector (fitted)
 result.selector.importance_summary()   # SHAP importances as DataFrame
 result.selector.selected_features_    # list[str]
 result.selector.removed_features      # list[str]
+result.features.to_frame()            # the feature matrix as a DataFrame
+
+from h2ml.pipeline.nested import final_feature_names
+final_feature_names(result)           # features the final model uses (reduced set if that stage won)
+```
+
+The step-2 filters are also available on their own, for example to test a threshold
+before a run:
+
+```python
+from h2ml.features.correlation import (
+    remove_correlated_features,    # (X_df, importance, corr_threshold) → kept features, by rank
+    variance_inflation_factors,    # (X_df) → VIF per column
+    remove_high_vif_features,      # (X_df, features, max_vif) → kept features
+)
+importance = result.selector.feature_importance_    # mean |SHAP| per feature, ranked
+kept = remove_correlated_features(result.features.to_frame(), importance, corr_threshold=0.8)
 ```
 
 ## OOF predictions
@@ -100,6 +117,27 @@ result.oof_predictions        # assembled OOF probabilities or values
 result.oof_labels             # matching true labels
 result.best_cv_result         # CVResult for the final winning model
 ```
+
+`oof_predictions` and `oof_labels` are assembled from `best_cv_result`, a `CVResult`
+that keeps every fold:
+
+```python
+cv = result.best_cv_result
+cv.model_name, cv.y_transform, cv.n_folds
+cv.failed_folds               # ids of folds that raised (excluded from .folds)
+
+fold = cv.folds[0]            # FoldResult
+fold.train_idx, fold.test_idx       # row positions in result.features
+fold.y_test, fold.y_pred_test       # observed and predicted, original scale
+fold.y_prob_test                    # class probabilities (classification)
+fold.fit_time                       # seconds
+
+cv.fold_arrays("y_pred_test") # one array per fold
+```
+
+The step-wise lists (`result.step1_cv_result`, `step3_cv_result`) hold one `CVResult`
+per model × transform, and `result.holdout_cv_result` is a one-fold `CVResult` of the
+holdout score.
 
 ## Building the final model
 

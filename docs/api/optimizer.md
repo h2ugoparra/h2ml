@@ -4,6 +4,10 @@
 
 ::: h2ml.optimization.optimizer.run_study
 
+## optimize_all
+
+::: h2ml.optimization.optimizer.optimize_all
+
 ## Available metrics
 
 | Dict | Keys |
