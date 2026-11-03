@@ -101,6 +101,12 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `DeltaFinalModel.variogram` reused the classifier's variogram, fitted on
+  probability-scale residuals. It's now fitted on the signed delta residuals
+  (P × count minus observed) that the intervals are calibrated on, using the
+  classifier's coordinates and `spatial_cv_metric`. With many absences these residuals
+  carry presence noise, so abundance structure can read `no_structure` there while
+  `delta.reg.variogram` still shows it.
 - `predict_map` failed on a fresh install with an `ImportError`: `h2mare` 0.9.0 moved
   `cartopy` to its `viz` extra, and the lock pinned 0.1.1, so nothing caught it. h2ml
   now depends on `h2mare[viz]>=0.9.0`.
