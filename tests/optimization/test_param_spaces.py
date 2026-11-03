@@ -37,6 +37,10 @@ class _StubTrial:
         return choices[0]
 
 
+# Constants a search space may fix: they make trials faster or quieter only.
+RUNTIME_ONLY = {"n_jobs", "thread_count", "verbose", "silent"}
+
+
 def _optimizable_entries(registry):
     return [(name, entry) for name, entry in registry.items() if entry.param_fn is not None]
 
@@ -53,6 +57,16 @@ class TestParamSpaceConsistency:
         params = entry.param_fn(trial)
         missing = [s for s in trial.suggested if s not in params]
         assert not missing, f"{name}: suggested params {missing} are not keys of the returned dict"
+
+    def test_constants_are_runtime_settings_only(self, name, entry):
+        """study.best_params keeps only sampled values, so a constant that changes the
+        model (random_state, max_iter, objective, ...) would apply during trials but
+        not to the tuned or final model. Only settings that don't change predictions
+        may be fixed here; the rest belong in default_kwargs."""
+        trial = _StubTrial()
+        params = entry.param_fn(trial)
+        constants = set(params) - set(trial.suggested)
+        assert constants <= RUNTIME_ONLY, f"{name}: constants {sorted(constants - RUNTIME_ONLY)} change the model"
 
     def test_estimator_accepts_returned_params(self, name, entry):
         """Sklearn estimators reject unknown constructor kwargs — instantiating

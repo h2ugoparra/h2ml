@@ -1,4 +1,10 @@
-"""Optimization Parameters and search ranges for Regressors"""
+"""Optimization Parameters and search ranges for Regressors
+
+Each function returns sampled values only, plus runtime settings (n_jobs, verbosity)
+that don't change predictions. study.best_params keeps only the sampled values, so a
+constant that affects the model would apply during trials but not to the tuned or
+final model; such settings belong in the registry's default_kwargs.
+"""
 
 
 def extratrees_r_params(trial):
@@ -9,7 +15,6 @@ def extratrees_r_params(trial):
         "min_samples_split": trial.suggest_int("min_samples_split", 2, 32),
         "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 32),
         "max_features": trial.suggest_float("max_features", 0.1, 1.0),
-        "random_state": 42,
     }
 
 
@@ -23,7 +28,6 @@ def histgradientboosting_r_params(trial):
         "max_iter": trial.suggest_int("max_iter", 50, 1000),
         "max_leaf_nodes": trial.suggest_int("max_leaf_nodes", 2, 100),
         "l2_regularization": trial.suggest_float("l2_regularization", 1e-5, 0.1, log=True),
-        "random_state": 42,
     }
 
 
@@ -37,22 +41,20 @@ def gradientboosting_r_params(trial):
         "min_samples_split": trial.suggest_int("min_samples_split", 2, 20),
         "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 10),
         "max_features": trial.suggest_categorical("max_features", ["sqrt", "log2", None]),
-        "random_state": 42,
     }
 
 
 def svr_r_params(trial):
     """Support Vector Machine (SVM) Optuna trials.
 
-    Same reshaping as svc_c_params: rbf/linear only, C <= 10, max_iter cap,
-    continuous gamma for rbf.
+    Same reshaping as svc_c_params: rbf/linear only, C <= 10, continuous gamma for
+    rbf. The max_iter cap is a registry default.
     """
     kernel = trial.suggest_categorical("kernel", ["rbf", "linear"])
     params = {
         "C": trial.suggest_float("C", 0.01, 10, log=True),  # Regularization parameter
         "epsilon": trial.suggest_float("epsilon", 0.01, 1.0),  # Epsilon-tube within which no penalty is given
         "kernel": kernel,
-        "max_iter": 1_000_000,
     }
     if kernel == "rbf":
         params["gamma"] = trial.suggest_float("gamma", 1e-4, 1.0, log=True)
@@ -70,12 +72,9 @@ def catboost_r_params(trial):
         "bagging_temperature": trial.suggest_float("bagging_temperature", 0.0, 1.0),
         "border_count": trial.suggest_int("border_count", 32, 128),
         "grow_policy": trial.suggest_categorical("grow_policy", ["SymmetricTree", "Depthwise", "Lossguide"]),
-        "od_type": "Iter",
         "od_wait": trial.suggest_int("od_wait", 20, 50),
-        "thread_count": -1,
-        "loss_function": "RMSE",
-        "silent": True,
-        "random_seed": 42,
+        "thread_count": -1,  # runtime only: speeds up trials, same predictions
+        "silent": True,  # runtime only: quiet trials
     }
 
 
@@ -91,9 +90,8 @@ def lightgbm_r_params(trial):
         "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
         "reg_alpha": trial.suggest_float("reg_alpha", 0.0, 10),
         "reg_lambda": trial.suggest_float("reg_lambda", 0.0, 10),
-        "n_jobs": -1,
-        "random_state": 42,
-        "verbose": -1,
+        "n_jobs": -1,  # runtime only: speeds up trials, same predictions
+        "verbose": -1,  # runtime only: quiet trials
     }
 
 
@@ -105,8 +103,7 @@ def randomforest_r_params(trial):
         "min_samples_split": trial.suggest_int("min_samples_split", 2, 20),
         "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 10),
         "max_features": trial.suggest_categorical("max_features", ["sqrt", "log2"]),
-        "n_jobs": -1,
-        "random_state": 42,
+        "n_jobs": -1,  # runtime only: speeds up trials, same predictions
     }
 
 
@@ -122,8 +119,5 @@ def xgboost_r_params(trial):
         "reg_alpha": trial.suggest_float("reg_alpha", 0, 1),
         "reg_lambda": trial.suggest_float("reg_lambda", 0, 10),
         "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
-        "booster": "gbtree",
-        "objective": "reg:squarederror",
-        "n_jobs": -1,
-        "random_state": 42,
+        "n_jobs": -1,  # runtime only: speeds up trials, same predictions
     }

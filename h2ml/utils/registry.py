@@ -129,7 +129,7 @@ CLASSIFIER_REGISTRY: dict[str, ModelEntry] = {
     ),
     "SVC": ModelEntry(
         SVC,
-        default_kwargs={"random_state": 42, "probability": True},
+        default_kwargs={"random_state": 42, "probability": True, "max_iter": 1_000_000},
         requires_scaling=True,
         param_fn=cp.svc_c_params,
         supports_class_weight=True,
@@ -225,6 +225,7 @@ REGRESSOR_REGISTRY: dict[str, ModelEntry] = {
     ),
     "SVR": ModelEntry(
         SVR,
+        default_kwargs={"max_iter": 1_000_000},
         requires_scaling=True,
         param_fn=rp.svr_r_params,
     ),

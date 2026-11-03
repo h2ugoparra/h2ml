@@ -644,7 +644,7 @@ class H2MLPipeline:
                   columns in fold/agg DataFrames. When None, only stage is set.
 
     Raises:
-        ValueError: If the resolved model list is empty.
+        ValueError: If the resolved model list is empty or two models share a name.
 
     Example:
         >>> pipeline = H2MLPipeline(config=PipelineConfig())
@@ -662,6 +662,15 @@ class H2MLPipeline:
             models = build_models(config.task_type.value)
         if not models:
             raise ValueError("models cannot be empty.")
+        # Models are looked up by name for selection, tuning and the final fit, so a
+        # repeated name would silently resolve to the last model with it.
+        names = [m.name for m in models]
+        duplicates = sorted({n for n in names if names.count(n) > 1})
+        if duplicates:
+            raise ValueError(
+                f"Model names must be unique, but {duplicates} appear more than once. "
+                "Pass name= to make_classifier/make_regressor to tell them apart."
+            )
         self.models = models
         self._model_map = {m.name: m for m in models}
         self.config = config

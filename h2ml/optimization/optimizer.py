@@ -273,7 +273,8 @@ def _build_objective(
 
     base_estimator: when given, each trial model is clone(base_estimator) with the
                sampled params set on top, so its other constructor arguments are
-               kept. When None, the model is built from entry.model_cls(**params).
+               kept. When None, the model is entry.model_cls built from the registry's
+               default_kwargs with the sampled params on top.
 
     requires_scaling: overrides entry.requires_scaling when not None.
 
@@ -352,7 +353,9 @@ def _build_objective(
         if base_estimator is not None:
             model = clone(base_estimator).set_params(**params)
         else:
-            model = entry.model_cls(**params)
+            # Search spaces hold only sampled values, so start from the registry defaults
+            # (e.g. SVC's probability=True), as the pipeline's base estimator does.
+            model = entry.model_cls(**{**entry.default_kwargs, **params})
 
         fold_scores: list[float] = []
         pooled_true: list[np.ndarray] = []

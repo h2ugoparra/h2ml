@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **`H2MLPipeline` rejects repeated model names.** Models are looked up by name, so with
+  two models of the same name (e.g. two `RandomForestRegressor`s without `name=`) both
+  were cross-validated but only the last could be selected, tuned or refitted. Pass
+  `name=` to tell them apart.
+- **Search spaces no longer fix model settings.** `study.best_params` keeps only sampled
+  values, so constants in the built-in spaces (`random_state`/`random_seed`,
+  `probability`, `max_iter`, CatBoost's `od_type` and `loss_function`, XGBoost's
+  `objective` and `booster`) applied during Optuna trials but not to the tuned or final
+  model, and overrode the user's own values in trials. They are removed; only runtime
+  settings (`n_jobs`, `thread_count`, `verbose`, `silent`) remain. Trials now use the
+  estimator's own seed and settings. `run_study`/`optimize_all` without an estimator start
+  from the registry's `default_kwargs`. SVC and SVR get `max_iter=1_000_000` as a registry
+  default, so steps 1 and 3 and the final model now share the cap trials always had; this
+  only changes an SVM that doesn't converge within it.
 - Variogram diagnostic: `FinalModel.variogram` is now fitted on signed residuals and
   honours `spatial_cv_metric`, so haversine runs report km. The practical range can't
   exceed the longest lag. Semivariances use the robust Cressie–Hawkins estimator, so
