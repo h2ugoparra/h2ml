@@ -47,9 +47,13 @@ nav:
   - Quick Start: quickstart.md
   - Pipeline:
     - Overview: pipeline.md
+    - Configuration: configuration.md
+    - Results: results.md
+    - Validation & robustness: validation.md
     - Spatial CV: spatial_cv.md
   - Guides:
     - Exploratory Data Analysis: guides/eda.md
+    - Custom Models and Search Spaces: guides/models.md
     - Y-Transforms: guides/transforms.md
     - Conformal Prediction: guides/conformal.md
     - Geo Prediction: guides/geo_predict.md
@@ -58,6 +62,9 @@ nav:
     - Persistence: guides/persistence.md
   - API Reference:
     - Pipeline: api/pipeline.md
+    - Models and Registry: api/models.md
+    - CV Results: api/cv_result.md
+    - Feature Selection: api/feature_selection.md
     - EDA: api/eda.md
     - PipelineData: api/feature_store.md
     - Spatial CV: api/spatial_cv.md

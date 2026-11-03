@@ -34,6 +34,7 @@ The pipeline can also be run partially: `run_step1_only()` screens models, and `
 
 - **Model screening** — a curated set of sklearn classifiers and regressors in one parallel CV pass
 - **Optional boosting** — LightGBM, XGBoost, CatBoost registered when installed
+- **[Custom models](guides/models.md)** — your own estimators, a subset of the registry, or different search spaces
 - **SHAP feature selection** — out-of-fold SHAP avoids leaking importance scores
 - **Cross-validation** — stratified k-fold for classification and k-fold for regression, or [spatial block and AHC-based splitters](spatial_cv.md) when `store.coords` is set
 - **y-transform sweep** — log, sqrt, and winsorized variants evaluated jointly
@@ -41,12 +42,12 @@ The pipeline can also be run partially: `run_step1_only()` screens models, and `
 
 ### Trustworthy selection
 
-- **[Ranking robustness](pipeline.md#selection-robustness)** — paired-fold ties and per-metric ranks, with an optional [1-SE rule](pipeline.md#preferring-reduced-features-on-ties) favouring reduced features
-- **[Per-fold feature selection](pipeline.md#selecting-features-inside-cv-folds)** — an unbiased default-vs-reduced comparison
-- **[Outer holdout](pipeline.md#outer-holdout)** — one score no selection step has seen
-- **[Nested CV](pipeline.md#nested-cv)** — how well the whole pipeline generalises
-- **[Seed stability](pipeline.md#seed-stability)** — how much a run depends on its seed
-- **[Metric comparison](pipeline.md#comparing-selection-metrics)** — compare selection metrics while sharing CV work
+- **[Ranking robustness](results.md#selection-robustness)** — paired-fold ties and per-metric ranks, with an optional [1-SE rule](configuration.md#preferring-reduced-features-on-ties) favouring reduced features
+- **[Per-fold feature selection](configuration.md#selecting-features-inside-cv-folds)** — an unbiased default-vs-reduced comparison
+- **[Outer holdout](validation.md#outer-holdout)** — one score no selection step has seen
+- **[Nested CV](validation.md#nested-cv)** — how well the whole pipeline generalises
+- **[Seed stability](validation.md#seed-stability)** — how much a run depends on its seed
+- **[Metric comparison](validation.md#comparing-selection-metrics)** — compare selection metrics while sharing CV work
 
 ### Before and after the pipeline
 
@@ -61,5 +62,5 @@ The pipeline can also be run partially: `run_step1_only()` screens models, and `
 - [Installation](installation.md)
 - [Quick Start](quickstart.md)
 - [Pipeline Overview](pipeline.md)
-- Guides: [EDA](guides/eda.md) · [Y-Transforms](guides/transforms.md) · [Conformal Prediction](guides/conformal.md) · [Geo Prediction](guides/geo_predict.md) · [Comparing Runs](guides/comparison.md) · [Visualization](guides/visualization.md) · [Persistence](guides/persistence.md)
+- Guides: [EDA](guides/eda.md) · [Custom Models](guides/models.md) · [Y-Transforms](guides/transforms.md) · [Conformal Prediction](guides/conformal.md) · [Geo Prediction](guides/geo_predict.md) · [Comparing Runs](guides/comparison.md) · [Visualization](guides/visualization.md) · [Persistence](guides/persistence.md)
 - [API Reference](api/pipeline.md)

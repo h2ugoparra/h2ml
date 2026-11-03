@@ -8,7 +8,7 @@
     With `PipelineConfig(holdout_frac=...)` the calibrator uses the residuals on rows no
     selection step saw instead (split conformal), which restores the guarantee for the
     model fitted on the dev rows (`holdout_refit="dev"`). Local calibration is then
-    skipped — see [Outer holdout](../pipeline.md#outer-holdout).
+    skipped — see [Outer holdout](../validation.md#outer-holdout).
 
 A conformal calibrator is essentially a recorded history of how wrong the model has been, used to answer one question at prediction time:
 *"how much buffer do I need around my estimate to be right X% of the time?"*
@@ -148,11 +148,11 @@ Note: at α=0.10, compound cells need ≥ 10 samples before the conformal quanti
 `predict_for_year` and `predict_for_year_delta` accept `alpha` to add conformal bound columns. By default they use the global conformal threshold (constant-width intervals). Pass `local=True` to use a `LocalConformalCalibration` when the model has one — the `lon`, `lat`, and `time` columns from the scan are then used so interval widths vary across space and time.
 
 ```python
-# Spatio-temporally varying intervals (default when local_conformal is present)
+# Global constant-width intervals (default)
 df = predict_for_year(target="sparrow", year=2023, ..., alpha=0.10)
 
-# Global constant-width intervals (opt out of local calibration)
-df = predict_for_year(target="sparrow", year=2023, ..., alpha=0.10, local=False)
+# Spatio-temporally varying intervals (requires a LocalConformalCalibration)
+df = predict_for_year(target="sparrow", year=2023, ..., alpha=0.10, local=True)
 ```
 
 ### Regression
@@ -228,6 +228,8 @@ delta.save("models/sparrow_delta-model")
 delta = DeltaFinalModel.load("models/sparrow_delta-model")
 ```
 
+`delta.variogram` is fitted on the signed delta residuals (P × count minus observed), the ones the intervals are calibrated on, using the classifier's coordinates. With many absences these residuals carry presence noise, so structure in abundance alone can read `"no_structure"` there while `delta.reg.variogram` still shows it. See the [variogram diagnostic](#variogram-diagnostic).
+
 ---
 
 ## Variogram diagnostic
@@ -243,8 +245,11 @@ if vr:
     print(f"Nugget: {vr.nugget:.3f}, Sill: {vr.sill:.3f}")
 
 from h2ml.utils.variogram import plot_variogram
-plot_variogram(store.coords, oof_residuals)
+residuals = result.oof_predictions - result.oof_labels   # signed, as the fit uses
+plot_variogram(result.features.coords, residuals, metric=result.spatial_cv_metric)
 ```
+
+`result.features` holds the rows the CV ran on (the dev rows with a holdout), so its coordinates line up with the OOF residuals.
 
 Residuals are signed (predicted minus observed), and distances follow `spatial_cv_metric`: coordinate units for `"euclidean"`, km for `"haversine"`. For `plot_variogram` and `autocorrelation_range`, pass `metric="haversine"` yourself.
 
@@ -271,7 +276,9 @@ The calibrator does not touch the model itself. It sits on top of any model and 
 - Binary classification: `1 − p(true class)`
 - Multiclass: `1 − p(true class)` (looked up via `estimator.classes_`)
 
-The scores are sorted ascending. **n** is the total number of held-out samples across all folds (e.g. 5-fold CV on 1000 samples gives n = 1000).
+With a holdout they come from the holdout rows instead, and with `mean_correction="ratio"` they are measured against the corrected predictions (`|y − mean_ratio × ŷ|`), so intervals stay centred on `predict()`.
+
+The scores are sorted ascending. **n** is the total number of held-out samples across all folds (e.g. 5-fold CV on 1000 samples gives n = 1000), or the number of holdout rows.
 
 ```python
 scores = [0.1, 0.3, 0.4, 0.5, 0.5, 0.7, 0.9, 1.2, 1.8, 3.1, ...]

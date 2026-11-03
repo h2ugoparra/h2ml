@@ -60,6 +60,16 @@ config = PipelineConfig(
 
 > **Note:** AHC uses `linkage="ward"` by default. Ward requires Euclidean distances, so when `spatial_cv_metric="haversine"` it is automatically downgraded to `"average"`. For projected coordinates (metres, km) `spatial_cv_metric="euclidean"` keeps ward valid.
 
+The linkage shapes the blocks:
+
+| | Ward (`"euclidean"`) | Average (`"haversine"`) |
+|---|---|---|
+| Merges | the pair adding the least within-cluster variance | the pair with the smallest mean pairwise distance |
+| Blocks | compact and similar in size | follow sampling density, so shapes and sizes vary |
+| CV folds | more even, so less noisy scores | can be lopsided, so noisier scores |
+
+On evenly spread points the two give similar blocks. On clumpy sampling, average tends to give a few large blocks and many tiny ones, while ward splits the clumps into balanced regions. If you want ward, project the coordinates and use `"euclidean"`. [Plot the splitter](#checking-the-spatial-clustering) to see which you got.
+
 ---
 
 ## Parameter reference
@@ -91,6 +101,36 @@ Use **spcv** when:
 - Spatial autocorrelation is the primary concern
 - You want a strict, extrapolation-style estimate: test folds that differ from training in covariate and target space
 - Dataset is small enough for AHC (or approximate AHC handles the scale)
+
+---
+
+## Checking the spatial clustering
+
+After a run, plot the splitter to see how the rows were grouped and which region each fold holds out:
+
+```python
+result = pipeline.run(store)
+result.splitter.plot()                               # or save_path="figures/spatial_folds.png"
+
+from h2ml.plots import plot_spatial_blocks           # the same plot as a function
+plot_spatial_blocks(result.splitter, save_path="figures/spatial_folds.png")
+```
+
+The figure has two panels:
+
+- **Spatial blocks** (left) — each point coloured by its block: quantile-grid cells for `"block"`, AHC clusters for `"spcv"`.
+- **Fold assignments** (right) — each point coloured by the fold whose test set holds it.
+
+What to look for:
+
+- **Compact blocks.** Each block should be one contiguous patch. Blocks that interleave mean nearby rows can still fall on both sides of a split.
+- **Block size against the autocorrelation range.** Blocks much smaller than the residuals' [variogram](guides/conformal.md#variogram-diagnostic) range leave neighbours correlated across folds, so scores stay optimistic. With `"spcv"`, raise `ahc_threshold` for fewer, larger clusters; with `"block"`, lower `n_blocks_per_fold`.
+- **Fold layout.** Block folds are scattered tiles across the whole area. SPCV folds group blocks that are alike in location, covariates and (with `spcv_use_target`) the target, so each fold is a distinct region of that combined space. A fold confined to one corner tests extrapolation into it.
+- **Empty areas.** With a holdout, the splitter covers the dev rows only, so held-out blocks show as gaps.
+
+`lon_col` / `lat_col` (default `1` / `0`) pick the coordinate columns for the x and y axes and assume `[lat, lon]` coords; pass `lon_col=0, lat_col=1` for `[lon, lat]` or projected `[x, y]`. With many AHC clusters, colours of neighbouring block IDs are similar and the colour bar is crowded, so judge compactness by eye rather than by label.
+
+`result.splitter` is not saved, so it is `None` after `PipelineResult.load()`. See [Visualization](guides/visualization.md#spatial-blocks-and-folds) to rebuild it.
 
 ---
 

@@ -128,11 +128,11 @@ result = pipeline.run_step4_only(result)
 A winner can be statistically tied with other candidates, or rank lower on another metric. Check both before relying on it:
 
 ```python
-print(result.cv_warnings)       # failed folds, metric-suitability and ranking flags
+print(result.cv_warnings)       # failed folds, [metric], [ranking], [selection], [transform], [holdout] flags
 result.ranking_robustness()     # paired-fold ties and per-metric ranks
 ```
 
-See [Selection robustness](pipeline.md#selection-robustness) for how to read them.
+See [Selection robustness](results.md#selection-robustness) for how to read them.
 
 ## Compare selection metrics
 
@@ -154,7 +154,7 @@ Leave out `metrics=` to run every metric for the task. For regression, pass `tra
 
 If `Top_Selection_Fraction` is 1, the choice doesn't depend on the metric. If the metrics disagree, choose the one that matches how predictions will be used: Brier or LogLoss for probabilities, AUC or AUCPR for ranking, F1 for thresholded decisions. Scores can only be compared within a metric.
 
-See [Comparing selection metrics](pipeline.md#comparing-selection-metrics) for class weighting, shared tuning and what runs once.
+See [Comparing selection metrics](validation.md#comparing-selection-metrics) for class weighting, shared tuning and what runs once.
 
 ## Deploy the final model
 
@@ -195,7 +195,7 @@ Labels appear as columns in all fold and agg DataFrames, making multi-run concat
 ## Next steps
 
 - [Exploratory Data Analysis](guides/eda.md) — catch data problems before the first run
-- [Outer holdout](pipeline.md#outer-holdout) — get one score no selection step has seen
-- [Nested CV](pipeline.md#nested-cv) — estimate how well the whole pipeline generalises
-- [Seed stability](pipeline.md#seed-stability) — measure how much a run depends on its seed
+- [Outer holdout](validation.md#outer-holdout) — get one score no selection step has seen
+- [Nested CV](validation.md#nested-cv) — estimate how well the whole pipeline generalises
+- [Seed stability](validation.md#seed-stability) — measure how much a run depends on its seed
 - [Comparing Runs](guides/comparison.md) — compare results side by side
