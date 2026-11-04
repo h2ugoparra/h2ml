@@ -22,6 +22,7 @@
 | `holdout_frac` | `0.0` | Fraction of rows set aside before step 1 and scored once at the end. `0` disables it; range `[0, 0.5]`. See [Outer holdout](validation.md#outer-holdout). |
 | `holdout_strategy` | `"auto"` | `"auto"` — whole spatial blocks when `store.coords` is set, else random (stratified for classification). `"random"` — random even with coords. `"time"` — the latest rows by `store.times`. |
 | `holdout_refit` | `"dev"` | Rows `build_final_model()` fits on when a holdout exists: `"dev"` (the steps' rows only) or `"all"` (dev + holdout) |
+| `holdout_min_minority` | `None` | Drop the holdout (run as with `holdout_frac=0`) when it would hold fewer rows than this of its rarest class (classification) or of non-zero rows (regression); recorded in `cv_warnings`. `None` always keeps it |
 | `random_state` | `42` | Global seed for folds, models, and Optuna |
 | `verbose` | `False` | Log step-by-step progress |
 | `time_bin_resolution` | `"month"` | Time bin granularity for compound (spatial block × time) conformal cells: `"month"` (bins 1–12) or `"season"` (0=DJF, 1=MAM, 2=JJA, 3=SON). Only used when `store.times` is provided. |

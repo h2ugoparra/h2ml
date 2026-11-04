@@ -27,6 +27,11 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `PipelineConfig.holdout_min_minority` drops the holdout, and runs as with
+  `holdout_frac=0`, when the drawn split would hold fewer rows than this of its rarest
+  class (classification) or of non-zero rows (regression). The decision is recorded as a
+  `[holdout] Holdout dropped` warning. Default `None` keeps the current behaviour.
+  `split_holdout(min_minority=...)` raises the new `HoldoutTooThin` for the same check.
 - `VariogramResult.status` says how far to trust the range: `"ok"`, `"at_bound"` (the
   true range is at least this), `"no_structure"` (a permutation check or the fit found
   none) or `"unknown"` (saved before the field existed).

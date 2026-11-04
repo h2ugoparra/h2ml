@@ -96,6 +96,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 | `holdout_frac` | `0.0` | Rows set aside before step 1, scored once on the final config (`result.holdout_df`); steps run on the rest. Conformal then uses holdout residuals and local conformal is skipped |
 | `holdout_strategy` | `"auto"` | `"auto"` (whole spatial blocks drawn at random up to `holdout_frac` if coords, else random/stratified), `"random"`, `"time"` (latest rows by `store.times`) |
 | `holdout_refit` | `"dev"` | `build_final_model` fits on `"dev"` rows only, or `"all"` (dev + holdout) |
+| `holdout_min_minority` | `None` | Drop the holdout (as `holdout_frac=0`) when the drawn split holds fewer rarest-class (classification) or non-zero (regression) rows; `[holdout] Holdout dropped` in `cv_warnings` |
 | `spatial_cv_method` | `"spcv"` | Spatial CV strategy: `"block"` or `"spcv"` (ignored when `store.coords` is `None`) |
 | `spatial_cv_metric` | `"euclidean"` | Distance metric: `"euclidean"` or `"haversine"` |
 | `time_bin_resolution` | `"month"` | Temporal bin granularity for spatial CV and local conformal calibration: `"month"` or `"season"` |

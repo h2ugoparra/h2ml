@@ -126,6 +126,7 @@ Step 4 is skipped when the winning model has `opt_enabled=False` in the registry
 | `holdout_frac` | `0.0` | Fraction of rows set aside before step 1 and scored once on the final configuration |
 | `holdout_strategy` | `"auto"` | `"auto"` (whole spatial blocks with coords, else random), `"random"` or `"time"` (latest rows by `store.times`) |
 | `holdout_refit` | `"dev"` | Rows the final model fits on with a holdout: `"dev"` or `"all"` |
+| `holdout_min_minority` | `None` | Drop the holdout when it would hold fewer rare-class (or non-zero) rows than this |
 | `time_bin_resolution` | `"month"` | Time bins for local conformal cells: `"month"` or `"season"` |
 | `random_state` | `42` | Global seed |
 | `verbose` | `False` | Log step-by-step progress to stdout |
