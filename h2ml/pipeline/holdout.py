@@ -36,6 +36,26 @@ MAX_HOLDOUT_DRIFT = 2.0
 MAX_HOLDOUT_SIZE_MISS = 0.25
 
 
+class HoldoutTooThin(ValueError):
+    """Raised by split_holdout when the holdout falls below min_minority (see holdout_minority)."""
+
+    def __init__(self, n_minority: int, min_minority: int, n_holdout: int):
+        self.n_minority = n_minority
+        self.min_minority = min_minority
+        self.n_holdout = n_holdout
+        super().__init__(f"The holdout would hold {n_minority} minority row(s), below min_minority={min_minority}.")
+
+
+def holdout_minority(y_holdout: np.ndarray, y_all: np.ndarray, task_type: TaskType) -> int:
+    """
+    Rows of what a holdout score depends on: the rarest class of y_all (classification)
+    or the non-zero rows (regression). A class missing from the holdout counts as 0.
+    """
+    if task_type == TaskType.CLASSIFICATION:
+        return min(int(np.sum(y_holdout == c)) for c in np.unique(y_all))
+    return int(np.count_nonzero(y_holdout))
+
+
 def _draw_blocks(block_ids: np.ndarray, target: float, random_state: int) -> np.ndarray:
     """
     Row indices of whole blocks drawn at random until the total is closest to target rows.
@@ -59,6 +79,7 @@ def split_holdout(
     strategy: str,
     random_state: int,
     spatial: Optional[SpatialCVConfig] = None,
+    min_minority: Optional[int] = None,
 ) -> tuple[np.ndarray, np.ndarray, str]:
     """
     Split store rows into development and holdout indices.
@@ -71,10 +92,17 @@ def split_holdout(
         random until the total is closest to frac * n. Blocks come from coords alone, so
         for the same rows and seed the holdout does not depend on y or X.
 
+    Args:
+        min_minority: When set, a holdout with fewer rows than this of its rarest class
+                      (classification) or of non-zero rows (regression) raises
+                      HoldoutTooThin instead of being returned. None skips the check.
+
     Returns:
         (dev_idx, test_idx, resolved_strategy) — sorted, disjoint, covering every row.
 
     Raises:
+        HoldoutTooThin: If min_minority is set and the holdout falls below it, checked
+            before the single-class check, so a single-class holdout raises it too.
         ValueError: If "time" is requested without store.times, the holdout is empty,
             or a classification holdout or dev set holds a single class.
     """
@@ -112,6 +140,10 @@ def split_holdout(
 
     test_idx = np.sort(test_idx)
     dev_idx = np.setdiff1d(all_idx, test_idx)
+    if min_minority is not None and test_idx.size > 0:
+        n_minority = holdout_minority(store.y[test_idx], store.y, task_type)
+        if n_minority < min_minority:
+            raise HoldoutTooThin(n_minority, min_minority, test_idx.size)
     if test_idx.size == 0 or dev_idx.size == 0:
         raise ValueError(f"Holdout split left an empty set (dev={dev_idx.size}, holdout={test_idx.size}).")
     if task_type == TaskType.CLASSIFICATION:
@@ -161,7 +193,8 @@ def holdout_warnings(dev: PipelineData, holdout: PipelineData, task_type: TaskTy
         if n_nonzero < MIN_HOLDOUT_NONZERO:
             warnings.append(
                 f"[holdout] The holdout holds only {n_nonzero} non-zero row(s), so its score mostly reflects "
-                "the zeros. Consider holdout_frac=0 for this target or a larger holdout_frac."
+                "the zeros. Consider holdout_frac=0 for this target, a larger holdout_frac, or "
+                "holdout_min_minority to drop such holdouts automatically."
             )
         drifted("non-zero rate", n_nonzero / n_holdout, float(np.mean(dev.y != 0)))
     return warnings

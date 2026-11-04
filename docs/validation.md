@@ -48,6 +48,19 @@ as "no evidence of optimism" rather than as an exact correction.
   prevalence. Below 20 such rows, a `[holdout]` warning is added. For very rare
   targets, prefer `holdout_frac=0`: CV scores, with conformal calibrated on the CV
   residuals.
+- **Dropping thin holdouts automatically** — `holdout_min_minority=20` makes that
+  choice per run: when the drawn holdout holds fewer rows than this of its rarest
+  class (classification) or of non-zero rows (regression), the pipeline drops it and
+  runs as with `holdout_frac=0`. The count is taken on the actual split, and the
+  decision is recorded as a `[holdout] Holdout dropped` warning. Useful when one config
+  runs many targets of very different prevalence:
+
+    ```python
+    config = PipelineConfig(task_type="classification", holdout_frac=0.2, holdout_min_minority=20)
+    result = H2MLPipeline(config).run(store)
+    result.holdout_store is None  # True when the holdout was dropped
+    ```
+
 - **Other `[holdout]` warnings** — `cv_warnings` also flags fewer than 30 rows and a
   size more than 25% from the request. For regression it flags fewer than 20 non-zero
   rows on a target with zeros, and a mean or non-zero rate more than 2× from the dev

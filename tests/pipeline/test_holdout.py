@@ -25,7 +25,15 @@ from h2ml.core.spatial_config import SpatialCVConfig
 from h2ml.features.selector import FeatureSelector
 from h2ml.features.spatial_cv import build_splitter
 from h2ml.persistence.result_io import load_result, save_result
-from h2ml.pipeline.holdout import _draw_blocks, concat_stores, holdout_warnings, split_holdout, stage_store
+from h2ml.pipeline.holdout import (
+    HoldoutTooThin,
+    _draw_blocks,
+    concat_stores,
+    holdout_minority,
+    holdout_warnings,
+    split_holdout,
+    stage_store,
+)
 from h2ml.pipeline.multi_metric import multi_metric
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig
 from h2ml.pipeline.step import make_classifier, make_regressor
@@ -212,6 +220,42 @@ class TestSplitHoldout:
         with pytest.raises(ValueError, match="single class"):
             split_holdout(store, TaskType.CLASSIFICATION, 0.2, "time", random_state=0)
 
+    def _time_store(self, y: np.ndarray) -> PipelineData:
+        times = np.arange(y.size).astype("datetime64[D]")
+        return PipelineData(X=np.zeros((y.size, 6)), feature_names=FEATURE_NAMES, y=y, times=times)
+
+    @pytest.mark.parametrize("n_tail_positives, raised", [(3, True), (5, False)])
+    def test_min_minority_counts_the_rarest_class(self, n_tail_positives, raised):
+        y = np.r_[np.tile([0, 1], 40), np.zeros(20 - n_tail_positives), np.ones(n_tail_positives)].astype(int)
+        store = self._time_store(y)  # time holdout = the last 20 rows
+        if raised:
+            with pytest.raises(HoldoutTooThin) as info:
+                split_holdout(store, TaskType.CLASSIFICATION, 0.2, "time", random_state=0, min_minority=5)
+            assert (info.value.n_minority, info.value.min_minority, info.value.n_holdout) == (3, 5, 20)
+        else:
+            _, test_idx, _ = split_holdout(store, TaskType.CLASSIFICATION, 0.2, "time", random_state=0, min_minority=5)
+            assert test_idx.size == 20
+
+    def test_min_minority_turns_a_single_class_holdout_into_too_thin(self):
+        y = np.r_[np.tile([0, 1], 40), np.zeros(20)].astype(int)
+        with pytest.raises(HoldoutTooThin) as info:
+            split_holdout(self._time_store(y), TaskType.CLASSIFICATION, 0.2, "time", random_state=0, min_minority=1)
+        assert info.value.n_minority == 0
+
+    def test_min_minority_counts_non_zero_rows_for_regression(self):
+        y = np.r_[np.ones(80), np.zeros(17), np.ones(3)]
+        store = self._time_store(y)
+        with pytest.raises(HoldoutTooThin, match="3 minority"):
+            split_holdout(store, TaskType.REGRESSION, 0.2, "time", random_state=0, min_minority=4)
+        split_holdout(store, TaskType.REGRESSION, 0.2, "time", random_state=0, min_minority=3)
+
+    def test_holdout_minority_helper(self):
+        y_all = np.r_[np.zeros(90), np.ones(10)]
+        assert holdout_minority(np.r_[np.zeros(15), np.ones(2)], y_all, TaskType.CLASSIFICATION) == 2
+        assert holdout_minority(np.r_[np.ones(15), np.zeros(1)], y_all, TaskType.CLASSIFICATION) == 1  # absences rarer
+        assert holdout_minority(np.zeros(5), y_all, TaskType.CLASSIFICATION) == 0
+        assert holdout_minority(np.array([0.0, 0.5, 2.0]), y_all, TaskType.REGRESSION) == 2
+
 
 # ---------------------------------------------------------------------------
 # holdout_warnings
@@ -296,6 +340,12 @@ class TestHoldoutConfig:
         assert config.holdout_frac == 0.0
         assert config.holdout_strategy == "auto"
         assert config.holdout_refit == "dev"
+        assert config.holdout_min_minority is None
+
+    @pytest.mark.parametrize("value", [0, -3, 2.5, True, "20"])
+    def test_invalid_min_minority_raises(self, value):
+        with pytest.raises(ValueError, match="holdout_min_minority"):
+            PipelineConfig(holdout_min_minority=value)
 
     @pytest.mark.parametrize("frac", [-0.1, 0.6])
     def test_invalid_frac_raises(self, frac):
@@ -392,6 +442,45 @@ class TestPipelineHoldout:
             result = _lr_pipeline(holdout_frac=0.2).run(store)
         rare = [w for w in result.cv_warnings if w.startswith("[holdout]") and "rarest class" in w]
         assert bool(rare) is warned
+
+    def _rare_store(self) -> PipelineData:
+        rng = np.random.default_rng(0)
+        n = 400
+        X = rng.standard_normal((n, len(FEATURE_NAMES)))
+        y = (X[:, 0] + rng.standard_normal(n) > np.quantile(X[:, 0], 0.92)).astype(int)
+        return PipelineData(X=X, feature_names=FEATURE_NAMES, y=y)  # 20% holdout: ~6 positives
+
+    def test_min_minority_drops_a_thin_holdout(self):
+        store = self._rare_store()
+        with _mock_selector(FEATURE_NAMES[:3]):
+            result = _lr_pipeline(holdout_frac=0.2, holdout_min_minority=20).run(store)
+        assert result.features is store  # every row back in the dev set
+        assert result.holdout_store is None and result.holdout_idx is None and result.holdout_df is None
+        dropped = [w for w in result.cv_warnings if w.startswith("[holdout] Holdout dropped")]
+        assert len(dropped) == 1 and "rarest class" in dropped[0] and "holdout_min_minority=20" in dropped[0]
+        assert not any("rarest class, so its" in w for w in result.cv_warnings)  # no score-time warning
+
+    def test_min_minority_keeps_a_holdout_that_reaches_it(self):
+        store = self._rare_store()
+        with _mock_selector(FEATURE_NAMES[:3]):
+            result = _lr_pipeline(holdout_frac=0.2, holdout_min_minority=2).run(store)
+        assert result.holdout_store is not None and result.holdout_df is not None
+        assert not any("Holdout dropped" in w for w in result.cv_warnings)
+
+    def test_min_minority_counts_non_zero_rows_for_regression(self):
+        store = TestHoldoutWarnings()._zero_tail_store()  # time holdout: the last 20 rows are all zero
+        with _mock_selector(FEATURE_NAMES[:2]):
+            result = _ridge_pipeline(holdout_frac=0.16, holdout_strategy="time", holdout_min_minority=1).run(store)
+        assert result.holdout_store is None and result.features is store
+        assert any("Holdout dropped" in w and "0 non-zero rows" in w for w in result.cv_warnings)
+
+    def test_multi_metric_drops_it_for_every_metric(self):
+        pipeline = _ridge_pipeline(holdout_frac=0.16, holdout_strategy="time", holdout_min_minority=1)
+        with _mock_selector(FEATURE_NAMES[:2]):
+            result = multi_metric(pipeline, TestHoldoutWarnings()._zero_tail_store(), metrics=["R2", "RMSE"])
+        for metric_result in result.results.values():
+            assert metric_result.holdout_store is None
+            assert any("Holdout dropped" in w for w in metric_result.cv_warnings)
 
     def test_rare_class_warning_skipped_for_regression(self):
         with _mock_selector(FEATURE_NAMES[:3]):

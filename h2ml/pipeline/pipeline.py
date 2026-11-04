@@ -48,6 +48,7 @@ from h2ml.pipeline.holdout import (
     HOLDOUT_STRATEGIES,
     MIN_HOLDOUT_MINORITY,
     FixedSplit,
+    HoldoutTooThin,
     concat_stores,
     holdout_warnings,
     split_holdout,
@@ -210,6 +211,13 @@ class PipelineConfig:
                              describe the deployed model exactly. "all" — dev + holdout
                              rows; more data, but both are then approximate.
                              Default: "dev".
+        holdout_min_minority: Drop the holdout, and run as if holdout_frac=0, when it would
+                             hold fewer rows than this of its rarest class (classification)
+                             or of non-zero rows (regression). Its rows then return to the
+                             dev set, conformal calibration uses CV residuals, and a
+                             [holdout] warning records it. The count is taken on the actual
+                             split, so spatial blocks are counted as drawn. None — always
+                             keep the holdout. Default: None.
     """
 
     task_type: TaskType | str = TaskType.CLASSIFICATION
@@ -241,6 +249,7 @@ class PipelineConfig:
     holdout_frac: float = 0.0
     holdout_strategy: Literal["auto", "random", "time"] = "auto"
     holdout_refit: Literal["dev", "all"] = "dev"
+    holdout_min_minority: Optional[int] = None
 
     def __post_init__(self):
         # Accept the string "classification" / "regression" so callers need not import TaskType.
@@ -295,6 +304,12 @@ class PipelineConfig:
             raise ValueError(f"holdout_strategy must be one of {HOLDOUT_STRATEGIES}, got {self.holdout_strategy!r}")
         if self.holdout_refit not in HOLDOUT_REFITS:
             raise ValueError(f"holdout_refit must be one of {HOLDOUT_REFITS}, got {self.holdout_refit!r}")
+        if self.holdout_min_minority is not None and (
+            isinstance(self.holdout_min_minority, bool)
+            or not isinstance(self.holdout_min_minority, int)
+            or self.holdout_min_minority < 1
+        ):
+            raise ValueError(f"holdout_min_minority must be None or an int >= 1, got {self.holdout_min_minority!r}")
         if not isinstance(self.prefer_reduced_on_tie, bool):
             raise ValueError(f"prefer_reduced_on_tie must be True or False, got {self.prefer_reduced_on_tie!r}")
 
@@ -1457,22 +1472,36 @@ class H2MLPipeline:
         """Validate store, set aside the holdout rows, and return a fresh result plus the dev rows."""
         self._validate_store(store)
         holdout_store, holdout_idx, holdout_strategy = None, None, None
+        dropped_warning = None
         if self.config.holdout_frac > 0:
-            dev_idx, holdout_idx, holdout_strategy = split_holdout(
-                store,
-                self.config.task_type,
-                frac=self.config.holdout_frac,
-                strategy=self.config.holdout_strategy,
-                random_state=self.config.random_state,
-                spatial=self.config.spatial_cv,
-            )
-            holdout_store = store.take(holdout_idx)
-            store = store.take(dev_idx)
-            self._log(
-                f"Holdout ({holdout_strategy}): {holdout_idx.size}/{holdout_idx.size + dev_idx.size} rows set aside"
-            )
+            try:
+                dev_idx, holdout_idx, holdout_strategy = split_holdout(
+                    store,
+                    self.config.task_type,
+                    frac=self.config.holdout_frac,
+                    strategy=self.config.holdout_strategy,
+                    random_state=self.config.random_state,
+                    spatial=self.config.spatial_cv,
+                    min_minority=self.config.holdout_min_minority,
+                )
+            except HoldoutTooThin as e:
+                is_clf = self.config.task_type == TaskType.CLASSIFICATION
+                kind = "rows of its rarest class" if is_clf else "non-zero rows"
+                dropped_warning = (
+                    f"[holdout] Holdout dropped: it would hold {e.n_minority} {kind} of {e.n_holdout}, below "
+                    f"holdout_min_minority={e.min_minority}. Steps run on all rows and conformal uses CV residuals."
+                )
+                logger.warning(dropped_warning)
+            else:
+                holdout_store = store.take(holdout_idx)
+                store = store.take(dev_idx)
+                self._log(
+                    f"Holdout ({holdout_strategy}): {holdout_idx.size}/{holdout_idx.size + dev_idx.size} rows set aside"
+                )
         self._resolve_class_weights(store.y, log=log_class_weights)
         result = self._new_result(store)
+        if dropped_warning is not None:
+            result.cv_warnings.append(dropped_warning)
         result.holdout_store = holdout_store
         result.holdout_idx = holdout_idx
         result.holdout_strategy = holdout_strategy
