@@ -19,7 +19,7 @@ models = [
 pipeline = H2MLPipeline(PipelineConfig(task_type="regression", metric="RMSE"), models=models)
 ```
 
-- **`name`** labels the model in every table and in `best_model_name`. It defaults to the class name. Give each model a distinct name: two models with the same name both run, but only the last one can be selected and refitted.
+- **`name`** labels the model in every table and in `best_model_name`. It defaults to the class name, so two models of the same class need distinct names; `H2MLPipeline` raises a `ValueError` on repeated names.
 - **`requires_scaling`** (default `False`) standardises features inside each fold, fitted on that fold's training rows. Set it for scale-sensitive models (linear models, SVMs, k-NN). Registry models already carry the right flag.
 - **Your constructor arguments are kept.** Step 4's tuned values are applied on top of a clone of your estimator, so settings the search space doesn't touch survive into the final model. The unfitted winner is stored as `result.best_base_estimator`.
 - Any estimator with sklearn's `fit`/`predict` (and `predict_proba` for classifiers) works.
@@ -88,7 +88,7 @@ REGRESSOR_REGISTRY["RandomForestRegressor"] = replace(entry, param_fn=shallow_fo
 
 The same pattern adds a search space to an unregistered class: register a `ModelEntry(model_cls=Ridge, param_fn=..., requires_scaling=True)` under the name `"Ridge"`.
 
-- Return only sampled values. `best_params` keeps only what Optuna sampled, so a constant in the returned dict applies during trials but not to the final model. Set constants on the estimator you pass instead.
+- Return only sampled values, plus runtime settings such as `n_jobs` that don't change predictions. `best_params` keeps only what Optuna sampled, so any other constant in the returned dict would apply during trials but not to the tuned or final model. Set such constants on the estimator you pass, or in the entry's `default_kwargs`. The built-in spaces follow this rule.
 - The change lasts until the process ends, so it also affects later runs in the same session.
 
 ## Tuning outside the pipeline

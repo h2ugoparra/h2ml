@@ -366,6 +366,63 @@ class TestBuildObjective:
         assert all(ccp_alpha == 0.01 for ccp_alpha, _ in seen)
         assert all(max_depth in (2, 3) for _, max_depth in seen)  # sampled value applied
 
+    def test_trials_keep_the_base_estimators_seed(self, clf_data):
+        """Search spaces no longer pin random_state, so a seed set on the estimator
+        is the one trials use — as the tuned and final models do."""
+        from sklearn.ensemble import RandomForestClassifier
+
+        from h2ml.utils.registry import CLASSIFIER_REGISTRY
+
+        X, y = clf_data
+        seeds = []
+
+        def score_fn(model, X_train, X_test, y_train, y_test):
+            seeds.append(model.get_params()["random_state"])
+            return 0.5
+
+        study = optuna.create_study(direction="maximize")
+        study.optimize(
+            _build_objective(
+                CLASSIFIER_REGISTRY["RandomForestClassifier"],
+                X,
+                y,
+                "classification",
+                n_splits=2,
+                random_state=42,
+                score_fn=score_fn,
+                base_estimator=RandomForestClassifier(n_estimators=5, random_state=7),
+            ),
+            n_trials=1,
+        )
+        assert seeds and set(seeds) == {7}
+
+    def test_without_base_estimator_trials_start_from_registry_defaults(self, clf_data):
+        """run_study/optimize_all pass no estimator: the trial model must still get the
+        registry defaults the search space no longer repeats (SVC probability=True)."""
+        from h2ml.utils.registry import CLASSIFIER_REGISTRY
+
+        X, y = clf_data
+        seen = []
+
+        def score_fn(model, X_train, X_test, y_train, y_test):
+            seen.append((model.get_params()["probability"], model.get_params()["max_iter"]))
+            return 0.5
+
+        study = optuna.create_study(direction="maximize")
+        study.optimize(
+            _build_objective(
+                CLASSIFIER_REGISTRY["SVC"],
+                X,
+                y,
+                "classification",
+                n_splits=2,
+                random_state=42,
+                score_fn=score_fn,
+            ),
+            n_trials=1,
+        )
+        assert seen and set(seen) == {(True, 1_000_000)}
+
     def test_requires_scaling_overrides_entry(self, clf_data):
         """requires_scaling=True scales folds even though the entry says False."""
         X, y = clf_data

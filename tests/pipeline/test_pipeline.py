@@ -831,6 +831,23 @@ class TestConstruction:
         with pytest.raises(ValueError, match="empty"):
             H2MLPipeline(models=[], config=_clf_config())
 
+    def test_duplicate_model_names_raise(self):
+        """Models are looked up by name, so a repeated name would silently select,
+        tune and refit only the last model with it."""
+        models = [
+            make_classifier(RandomForestClassifier(n_estimators=5)),
+            make_classifier(RandomForestClassifier(n_estimators=50)),
+        ]
+        with pytest.raises(ValueError, match=r"\['RandomForestClassifier'\].*name="):
+            H2MLPipeline(models=models, config=_clf_config())
+
+    def test_distinct_names_for_the_same_class_are_accepted(self):
+        models = [
+            make_classifier(RandomForestClassifier(n_estimators=5), name="RF5"),
+            make_classifier(RandomForestClassifier(n_estimators=50), name="RF50"),
+        ]
+        assert [m.name for m in H2MLPipeline(models=models, config=_clf_config()).models] == ["RF5", "RF50"]
+
     def test_repr_contains_task_type(self, clf_pipeline):
         assert "classification" in repr(clf_pipeline)
 
