@@ -32,14 +32,14 @@ class FeatureSelector(BasePreprocessor):
     Fit phase:
         1. Computes out-of-fold (OOF) SHAP values — each sample's importance is derived
            from the fold where it was held out, so no training sample leaks into its own
-           SHAP computation. Set use_oof=False to revert to full-dataset SHAP.
-        2. Ranks features by mean absolute SHAP importance
-        3. Removes features correlated above threshold with higher-ranked features
-        4. Optionally (max_vif) removes multicollinear features, lowest-ranked first
-        5. Stores selected_features_ for use in transform
+           SHAP computation. Set `use_oof=False` to revert to full-dataset SHAP.
+        2. Ranks features by mean absolute SHAP importance.
+        3. Removes features correlated above `corr_threshold` with higher-ranked features.
+        4. Optionally (`max_vif`) removes multicollinear features, lowest-ranked first.
+        5. Stores `selected_features_` for use in `transform`.
 
     Transform phase:
-        - Returns a reduced PipelineData containing only selected features
+        Returns a reduced `PipelineData` containing only the selected features.
 
     Args:
         step:           A ModelWrapper whose class and params seed each fold's model.
@@ -77,7 +77,7 @@ class FeatureSelector(BasePreprocessor):
                         SHAP pass so it matches the pipeline's CV folds. Leave None
                         for non-spatial use; the pipeline injects it when relevant.
 
-    Example:
+    Examples:
         >>> selector = FeatureSelector(best_step, TaskType.CLASSIFICATION, corr_threshold=0.7)
         >>> store_reduced = selector.fit_transform(store, store.y)
         >>> store_reduced.feature_names   # reduced feature list

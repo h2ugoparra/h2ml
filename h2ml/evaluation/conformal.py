@@ -150,9 +150,11 @@ class LocalConformalCalibration:
     Block-local conformal calibration in combined space-time.
 
     Threshold lookup uses three levels of fallback:
-      1. Compound cell (spatial block × time bin) — finest granularity.
-      2. Spatial block (all time bins pooled) — if compound cell has < min_compound_n samples.
-      3. Global fallback — if spatial block has < min_block_n samples.
+
+    1. Compound cell (spatial block × time bin) — finest granularity.
+    2. Spatial block (all time bins pooled) — if the compound cell has fewer than
+       `min_compound_n` samples.
+    3. Global fallback — if the spatial block has fewer than `min_block_n` samples.
 
     At inference each query point is assigned to the spatial block of its nearest OOF
     training sample via k-NN in a jointly normalised context space. The time bin is
@@ -289,15 +291,15 @@ class LocalConformalCalibration:
         so no resolution argument is needed.
 
         Columns:
-            block:    Spatial block index (into scores_by_block).
-            level:    "spatial" or "compound".
-            time_bin: Integer time bin for compound rows; <NA> for spatial rows.
-            bin_name: "all" for spatial rows; season/month label for compound rows.
-            n:        Number of calibration samples in the cell.
-            q:        Conformal quantile at alpha (the threshold this cell would apply).
-            used:     Which fallback level a query resolving here actually hits —
-                      "compound" (n ≥ min_compound_n), "block" (block n ≥ min_block_n),
-                      or "global" (falls through to fallback_scores).
+            - `block`: spatial block index (into `scores_by_block`).
+            - `level`: `"spatial"` or `"compound"`.
+            - `time_bin`: integer time bin for compound rows; `<NA>` for spatial rows.
+            - `bin_name`: `"all"` for spatial rows; season/month label for compound rows.
+            - `n`: number of calibration samples in the cell.
+            - `q`: conformal quantile at `alpha` (the threshold this cell would apply).
+            - `used`: which fallback level a query resolving here actually hits —
+              `"compound"` (n ≥ `min_compound_n`), `"block"` (block n ≥ `min_block_n`),
+              or `"global"` (falls through to `fallback_scores`).
 
         Args:
             alpha:      Miscoverage level (0.10 → 90% coverage).

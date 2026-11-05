@@ -61,7 +61,7 @@ class ModelWrapper(BaseClassifier, BaseRegressor):
                               before fitting. The CV engine reads this flag.
         verbose:              Print fit/predict progress.
 
-    Example:
+    Examples:
         >>> from sklearn.ensemble import RandomForestClassifier
         >>> step = ModelWrapper(RandomForestClassifier(n_estimators=100))
         >>> step.fit(X_train, y_train)
@@ -190,7 +190,7 @@ def make_classifier(
     """
     Shorthand for wrapping a sklearn classifier.
 
-    Example:
+    Examples:
         >>> from sklearn.svm import SVC
         >>> step = make_classifier(SVC(), requires_scaling=True)
     """
@@ -209,7 +209,7 @@ def make_regressor(
     """
     Shorthand for wrapping a sklearn regressor.
 
-    Example:
+    Examples:
         >>> from sklearn.linear_model import Ridge
         >>> step = make_regressor(Ridge(), requires_scaling=True)
     """
@@ -227,7 +227,7 @@ def make_preprocessor(
     """
     Shorthand for wrapping a sklearn transformer.
 
-    Example:
+    Examples:
         >>> from sklearn.preprocessing import StandardScaler
         >>> step = make_preprocessor(StandardScaler(), name="scaler")
     """

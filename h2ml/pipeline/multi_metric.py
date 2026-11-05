@@ -107,11 +107,12 @@ class MultiMetricResult:
         One-row summary across metrics.
 
         Columns:
-            N_metrics, N_distinct_selections: how many metrics completed and how many
-                different (model, transform, stage) they chose.
-            Top_Selection, Top_Selection_Fraction: most frequent choice and the share of
-                metrics that picked it — 1.0 means the choice does not depend on the metric.
-            N_hpo_runs: step-4 tunings actually run.
+            - `N_metrics`, `N_distinct_selections`: how many metrics completed and how
+              many different (model, transform, stage) they chose.
+            - `Top_Selection`, `Top_Selection_Fraction`: most frequent choice and the
+              share of metrics that picked it — 1.0 means the choice does not depend on
+              the metric.
+            - `N_hpo_runs`: step-4 tunings actually run.
         """
         top = self.selection_counts().iloc[0]
         transform = f" | {top['Y_transform']}" if top["Y_transform"] else ""
