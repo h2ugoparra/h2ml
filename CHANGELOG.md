@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-05
+
 ### Added
 
 - `PipelineConfig.holdout_min_minority` drops the holdout, and runs as with
@@ -158,11 +160,24 @@ All notable changes to this project will be documented in this file.
   (`AUC_PR_Test_Mean` → `AUCPR_Test_Mean`, and likewise for `_Train` and `_Gap`).
   Code that reads the old column names directly must be updated.
 
+- The `ImportError` messages in `h2ml/geo/geo_predict.py` no longer tell users to
+  install a `[geo]` extra. Since `h2mare` is a core dependency, a failure there
+  means a broken install, and the messages now say so.
+
 ### Deprecated
 
 - `metric="AUC_PR"` in `PipelineConfig` and `run_study`. It still works, maps to
   `"AUCPR"` and logs a warning. Results saved under the old name load with the
   metric and columns renamed.
+
+### Removed
+
+- The `[geo]` optional extra. It listed `h2mare`, `cartopy` and `polars`, all of
+  which the base install already provides — `h2mare` and `polars` are core
+  dependencies, and `h2mare` declares `cartopy>=0.23.0` itself — so the extra
+  installed nothing. `h2ml.geo.geo_predict` has always worked with the base
+  install. Drop the `[geo]` suffix from any pin; installers warn about an unknown
+  extra and fall back to the base package, so nothing breaks in the meantime.
 
 ### Fixed
 
@@ -241,23 +256,6 @@ All notable changes to this project will be documented in this file.
 
 - `<metric>_Test_Mean` columns are now documented as the mean of the per-fold
   held-out scores, as distinct from a single score on the pooled OOF predictions.
-
-## [0.3.1] - 2026-08-06
-
-### Removed
-
-- The `[geo]` optional extra. It listed `h2mare`, `cartopy` and `polars`, all of
-  which the base install already provides — `h2mare` and `polars` are core
-  dependencies, and `h2mare` declares `cartopy>=0.23.0` itself — so the extra
-  installed nothing. `h2ml.geo.geo_predict` has always worked with the base
-  install. Drop the `[geo]` suffix from any pin; installers warn about an unknown
-  extra and fall back to the base package, so nothing breaks in the meantime.
-
-### Changed
-
-- The `ImportError` messages in `h2ml/geo/geo_predict.py` no longer tell users to
-  install a `[geo]` extra. Since `h2mare` is a core dependency, a failure there
-  means a broken install, and the messages now say so.
 
 ## [0.2.0] - 2026-06-05
 

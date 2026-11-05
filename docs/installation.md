@@ -29,7 +29,7 @@ Without this extra, the pipeline runs the sklearn models only. The registry dete
 The geo module (`h2ml.geo.geo_predict`) needs nothing extra. Its dependency, [h2mare](https://github.com/h2ugoparra/h2mare), comes with the standard install, along with `cartopy` and `polars`.
 
 !!! note "`[geo]` extra removed"
-    The `[geo]` extra was removed in 0.3.1 because the standard install already provides everything it listed. If you have `h2ml[geo]` pinned somewhere, drop the suffix.
+    The `[geo]` extra was removed in 0.4.0 because the standard install already provides everything it listed. If you have `h2ml[geo]` pinned somewhere, drop the suffix.
 
 ## Development setup
 
