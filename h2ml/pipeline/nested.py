@@ -56,13 +56,14 @@ class NestedCVResult:
         One-row summary of the procedure's generalisation.
 
         Columns:
-            Outer_<metric>_Mean / _Std: mean and std of the outer test score — the
-                unbiased estimate of what running the pipeline on new data yields.
-            Inner_<metric>_Mean: mean of the inner CV estimates the pipeline reported.
-            Optimism_Mean: mean of (inner − outer), sign-adjusted so positive always
-                means the inner CV estimate was too optimistic.
-            N_folds, N_distinct_selections: completed folds and distinct
-                (model, transform, stage) choices across them.
+            - `Outer_<metric>_Mean` / `Outer_<metric>_Std`: mean and std of the outer
+              test score — the unbiased estimate of what running the pipeline on new
+              data yields.
+            - `Inner_<metric>_Mean`: mean of the inner CV estimates the pipeline reported.
+            - `Optimism_Mean`: mean of (inner − outer), sign-adjusted so positive always
+              means the inner CV estimate was too optimistic.
+            - `N_folds`, `N_distinct_selections`: completed folds and distinct
+              (model, transform, stage) choices across them.
         """
         test_col = METRIC_COL[self.metric].replace("_Mean", "")
         outer = self.folds_df[test_col]

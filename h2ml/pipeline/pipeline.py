@@ -642,16 +642,19 @@ class H2MLPipeline:
     Step 4 — Hyperparameter optimization + final CV → select overall best
 
     Y-transform sweep:
-        Pass a list of transform names to run() to sweep transforms within each step
-        rather than running the full pipeline independently per transform.
+        Pass a list of transform names to `run()` to sweep them in step 1, instead of
+        running the full pipeline once per transform. Steps 2–4 use the winning one.
 
-        >>> result = pipeline.run(store, transforms=["log", "sqrt", "count"])
+        ```python
+        result = pipeline.run(store, transforms=["log", "sqrt", "count"])
+        ```
 
     Partial runs:
-        run_step1_only()      — step 1 only, quick model screening
-        run_step1_to_step2()  — steps 1-2, inspect SHAP importance / reduced features
-        run_step1_to_step3()  — steps 1-3, full selection without HPO
-        run_from_step3()      — resume from a pre-reduced result (steps 3-4)
+        - `run_step1_only()` — step 1 only, quick model screening
+        - `run_step1_to_step2()` — steps 1–2, inspect SHAP importance / reduced features
+        - `run_step1_to_step3()` — steps 1–3, full selection without HPO
+        - `run_from_step3()` — resume from a steps 1–2 result (steps 3–4)
+        - `run_step4_only()` — re-run HPO on a steps 1–3 result
 
     Args:
         config:   Pipeline configuration.
@@ -663,7 +666,7 @@ class H2MLPipeline:
     Raises:
         ValueError: If the resolved model list is empty or two models share a name.
 
-    Example:
+    Examples:
         >>> pipeline = H2MLPipeline(config=PipelineConfig())
         >>> result   = pipeline.run(store)
         >>> result.summary()
@@ -843,8 +846,8 @@ class H2MLPipeline:
         Typical use: load a saved result, then call this to add or redo optimisation
         without repeating CV on all models.
 
-        Requires: features, features_reduced, selector, best_model_name, best_stage,
-                  best_model_value.
+        The result must have `features`, `features_reduced`, `selector`,
+        `best_model_name`, `best_stage` and `best_model_value` set.
 
         Args:
             result:           PipelineResult with steps 1-3 complete.

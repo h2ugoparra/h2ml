@@ -96,7 +96,7 @@ class FinalModel:
                           Conformal scores are built on the corrected predictions, so
                           predict_interval() matches predict().
 
-    Example:
+    Examples:
         >>> final = result.build_final_model()
         >>> final.predict(X_new_df)
         >>> final.save("models/final_model.pkl")
@@ -961,7 +961,7 @@ class DeltaFinalModel:
         variogram:       Fitted VariogramResult for the delta residuals (diagnostic
                          only; imported lazily). None when unavailable.
 
-    Example:
+    Examples:
         >>> positive_idx = np.where(y_all > 0)[0]
         >>> delta = build_delta_final_model(clf_result, reg_result, X_all, y_all, positive_idx)
         >>> delta.save("models/sparrow_delta-model")
@@ -1112,12 +1112,11 @@ def build_delta_final_model(
     Returns:
         DeltaFinalModel with clf, reg, and a combined ConformalCalibration.
 
-    Example
-    -------
-    >>> positive_idx = np.where(y_all > 0)[0]
-    >>> X_df = pd.DataFrame(X_all, columns=feature_names)
-    >>> delta = build_delta_final_model(clf_result, reg_result, X_df, y_all, positive_idx)
-    >>> delta.save("models/sparrow_delta-model")
+    Examples:
+        >>> positive_idx = np.where(y_all > 0)[0]
+        >>> X_df = pd.DataFrame(X_all, columns=feature_names)
+        >>> delta = build_delta_final_model(clf_result, reg_result, X_df, y_all, positive_idx)
+        >>> delta.save("models/sparrow_delta-model")
     """
     clf_final = build_final_model(clf_result)
     reg_final = build_final_model(reg_result)

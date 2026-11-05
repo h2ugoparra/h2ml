@@ -31,7 +31,7 @@ class PipelineData:
                        Used to build temporally-aware conformal calibration in
                        LocalConformalCalibration. Optional — pipeline runs without it.
 
-    Example:
+    Examples:
         >>> store = PipelineData(X=X_arr, feature_names=df.columns.tolist(), y=y_arr)
         >>> store.to_frame()   # recover DataFrame locally when needed
         >>> store.n_features   # 10

@@ -657,7 +657,7 @@ def plot_spatial_blocks(
         lat_col:   Column index in splitter.coords for latitude  (default 0).
         save_path: Path to save figure. If None, shows the plot interactively.
 
-    Example:
+    Examples:
         >>> coords = np.column_stack([lats, lons])
         >>> splitter = SpatialBlockSplitter(coords, n_splits=5, n_blocks_per_fold=5)
         >>> plot_spatial_blocks(splitter)

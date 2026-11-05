@@ -50,12 +50,13 @@ class SeedStabilityResult:
         One-row summary across seeds.
 
         Columns:
-            <metric>_Mean / _Std / _Min / _Max: spread of the reported CV score — how much
-                of a difference between two runs could be the seed alone.
-            Holdout_<metric>_Mean / _Std: same for the holdout score, when scored.
-            Top_Selection, Top_Selection_Fraction: most frequent (model, transform, stage)
-                and the share of seeds that picked it.
-            N_runs, N_distinct_selections.
+            - `<metric>_Mean` / `_Std` / `_Min` / `_Max`: spread of the reported CV
+              score — how much of a difference between two runs could be the seed alone.
+            - `Holdout_<metric>_Mean` / `Holdout_<metric>_Std`: the same for the holdout
+              score, when scored.
+            - `Top_Selection`, `Top_Selection_Fraction`: most frequent (model, transform,
+              stage) and the share of seeds that picked it.
+            - `N_runs`, `N_distinct_selections`: completed seeds and distinct choices.
         """
         score = self.runs_df[self.metric]
         top = self.selection_counts().iloc[0]
