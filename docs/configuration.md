@@ -12,7 +12,7 @@
 | `corr_threshold` | `0.7` | Feature drop threshold. A feature is removed if it exceeds this value in **any** of Pearson, Spearman, or Kendall correlation with a higher-ranked feature. |
 | `min_features` | `1` | Hard lower bound on retained features after the correlation filter |
 | `n_trials` | `50` | Optuna trial budget in step 4 |
-| `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; the best repeat is kept |
+| `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; the best repeat is kept. `n_trials` is split across them (`n_trials // n_hpo_repeats` each), so the total cost stays the same |
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers that support it. `"auto"` injects only when the minority-class ratio is below 0.1 |
 | `max_vif` | `None` | Step 2: after the correlation filter, drop the lowest-ranked feature whose variance inflation factor exceeds this value until none does. It catches features that are linear combinations of several retained ones, which pairwise correlation misses. `5` or `10` are common choices. |
 | `prefer_reduced_on_tie` | `False` | Step 3: when an all-features winner is statistically tied (paired folds, within one corrected SE) with a reduced-feature candidate, select the best-ranked tied reduced candidate instead. See [Preferring reduced features on ties](#preferring-reduced-features-on-ties). |

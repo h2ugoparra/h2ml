@@ -68,7 +68,7 @@ Available transform names: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`
 
 ### Partial runs
 
-The methods that start at step 1 accept an optional `transforms` list (same as `pipeline.run()`); the resume methods take `transform_stores` instead.
+The methods that start at step 1 accept an optional `transforms` list (same as `pipeline.run()`); the resume methods take an optional `transform_stores` and otherwise rebuild the winning transform's store from `result.features`.
 
 ```python
 # Screen models only (step 1)
@@ -83,7 +83,6 @@ print(result.features_reduced.feature_names)
 result = pipeline.run_step1_to_step3(store)
 
 # Resume from step 3 using a result that already has features_reduced.
-# Pass transform_stores if the original run used y-transforms.
 result = pipeline.run_from_step3(result)
 
 # Re-run HPO only on a previously saved result (skips steps 1–3).
@@ -115,7 +114,7 @@ Step 4 is skipped when the winning model has `opt_enabled=False` in the registry
 | `opt_n_splits` | `3` | Folds used inside Optuna (fewer = faster) |
 | `corr_threshold` | `0.7` | Correlation threshold for dropping features in step 2. A feature is dropped if it exceeds this value in any of Pearson, Spearman, or Kendall correlation with a higher-ranked feature. |
 | `n_trials` | `50` | Optuna trials in step 4 |
-| `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; best is kept |
+| `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; best is kept. `n_trials` is split across them |
 | `min_features` | `1` | Minimum features retained after the correlation filter |
 | `handle_imbalance` | `False` | Inject `class_weight="balanced"` for supporting classifiers; `"auto"` only when the minority-class ratio is below 0.1 |
 | `max_vif` | `None` | Step 2: after the correlation filter, drop features whose variance inflation factor exceeds this value; `None` skips |

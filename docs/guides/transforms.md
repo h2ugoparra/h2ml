@@ -1,6 +1,6 @@
 # Y-Transforms
 
-Y-transforms allow the pipeline to evaluate whether predicting in a transformed target space improves generalisation. Steps 1 and 3 sweep all (model × transform) combinations; the winning pair is selected once and used throughout.
+Y-transforms allow the pipeline to evaluate whether predicting in a transformed target space improves generalisation. Step 1 sweeps all (model × transform) combinations; the winning transform is then used in steps 2–4, so step 3 cross-validates the reduced features under that transform only.
 
 ## Usage
 

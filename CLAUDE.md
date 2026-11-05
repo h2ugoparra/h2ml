@@ -99,7 +99,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 | `holdout_min_minority` | `None` | Drop the holdout (as `holdout_frac=0`) when the drawn split holds fewer rarest-class (classification) or non-zero (regression) rows; `[holdout] Holdout dropped` in `cv_warnings` |
 | `spatial_cv_method` | `"spcv"` | Spatial CV strategy: `"block"` or `"spcv"` (ignored when `store.coords` is `None`) |
 | `spatial_cv_metric` | `"euclidean"` | Distance metric: `"euclidean"` or `"haversine"` |
-| `time_bin_resolution` | `"month"` | Temporal bin granularity for spatial CV and local conformal calibration: `"month"` or `"season"` |
+| `time_bin_resolution` | `"month"` | Temporal bin granularity for local conformal calibration (not used by CV): `"month"` or `"season"` |
 | `n_blocks_per_fold` | `5` | Blocks per test fold for the block splitter |
 | `ahc_threshold` | `None` | AHC distance threshold for SPCVSplitter (auto-derived when `None`) |
 | `pca_components` | `0.95` | Variance retained by PCA on block covariates |

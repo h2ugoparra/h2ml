@@ -142,14 +142,16 @@ class PipelineConfig:
                              lat/lon in decimal degrees. Default: "euclidean".
         n_blocks_per_fold:   Number of spatial blocks assigned to the test set per fold
                              in the block splitter. Default: 5.
-        time_bin_resolution: Temporal granularity for binning dates in spatial CV and
-                             local conformal calibration. "month" — 12 bins (Jan…Dec).
+        time_bin_resolution: Temporal granularity for binning dates in local conformal
+                             calibration (compound block × time cells); not used by CV.
+                             "month" — 12 bins (Jan…Dec).
                              "season" — 4 bins (DJF, MAM, JJA, SON). Default: "month".
         ahc_threshold:       Distance threshold for cutting the AHC dendrogram in
                              SPCVSplitter. Derived automatically from the data when None.
                              Default: None.
         pca_components:      Variance fraction retained by PCA applied to block
-                             covariates before AHC clustering in SPCVSplitter.
+                             covariates in SPCVSplitter stage 2 (after AHC, before the
+                             cluster ensemble).
                              Default: 0.95.
         exact_max_samples:   Sample count below which exact scipy AHC is used; above this
                              an approximate sklearn AHC (k-NN graph) is used instead.
