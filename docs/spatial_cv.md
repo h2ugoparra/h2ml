@@ -14,6 +14,7 @@ store = PipelineData(
     coords=np.column_stack([lats, lons]),  # (n_samples, 2), lat then lon — activates spatial CV
     times=date_array,                      # (n_samples,) YYYY-MM-DD — activates temporal conformal cells
 )
+pipeline = H2MLPipeline(PipelineConfig(spatial_cv_metric="haversine"))  # lat/lon in degrees
 result = pipeline.run(store)
 print(result.cv_type)   # "spatial"
 ```

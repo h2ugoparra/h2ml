@@ -252,7 +252,8 @@ class SPCVSplitter:
         metric:       "euclidean" (projected coords) or "haversine" (lat/lon in
                       decimal degrees). See the Note on linkage interaction.
         pca_components: Variance fraction retained by PCA applied to block
-                      covariates before clustering. Default 0.95.
+                      covariates in stage 2 (after AHC, before the cluster
+                      ensemble). Default 0.95.
         exact_max_samples: Sample count below which exact scipy AHC is used; above
                       it an approximate sklearn AHC (k-NN graph) is used. Default 5000.
         knn_neighbors: k for the k-NN connectivity graph in approximate AHC.

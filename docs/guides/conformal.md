@@ -137,7 +137,7 @@ the fallback level a query resolving to that cell actually hits (`compound`, `bl
 final.local_conformal.min_compound_n = 3  # runtime change, no rebuild needed
 ```
 
-Note: at α=0.10, compound cells need ≥ 10 samples before the conformal quantile formula can return anything other than the cell maximum. Very small cells are conservative (always return the worst observed residual).
+Note: at α=0.10, compound cells need ≥ 19 samples (n ≥ 1/α − 1) before the conformal quantile formula can return anything other than the cell maximum. Very small cells are conservative (always return the worst observed residual).
 
 **SPCVSplitter** produces more and smaller blocks than the block splitter (AHC cluster count is controlled by `ahc_threshold`). With many small blocks, most compound cells will have few samples and fall back to spatial level. Increasing `ahc_threshold` reduces the block count and increases cell density.
 
@@ -288,7 +288,7 @@ scores = [0.1, 0.3, 0.4, 0.5, 0.5, 0.7, 0.9, 1.2, 1.8, 3.1, ...]
 The threshold `q` at level α:
 
 ```python
-q = ⌈(1−alpha)(n+1)/n⌉ quantile of scores
+q = ⌈(1−alpha)(n+1)⌉ / n quantile of scores
 ```
 
 Applied as:

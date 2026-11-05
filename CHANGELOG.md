@@ -4,27 +4,6 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Changed
-
-- **`H2MLPipeline` rejects repeated model names.** Models are looked up by name, so with
-  two models of the same name (e.g. two `RandomForestRegressor`s without `name=`) both
-  were cross-validated but only the last could be selected, tuned or refitted. Pass
-  `name=` to tell them apart.
-- **Search spaces no longer fix model settings.** `study.best_params` keeps only sampled
-  values, so constants in the built-in spaces (`random_state`/`random_seed`,
-  `probability`, `max_iter`, CatBoost's `od_type` and `loss_function`, XGBoost's
-  `objective` and `booster`) applied during Optuna trials but not to the tuned or final
-  model, and overrode the user's own values in trials. They are removed; only runtime
-  settings (`n_jobs`, `thread_count`, `verbose`, `silent`) remain. Trials now use the
-  estimator's own seed and settings. `run_study`/`optimize_all` without an estimator start
-  from the registry's `default_kwargs`. SVC and SVR get `max_iter=1_000_000` as a registry
-  default, so steps 1 and 3 and the final model now share the cap trials always had; this
-  only changes an SVM that doesn't converge within it.
-- Variogram diagnostic: `FinalModel.variogram` is now fitted on signed residuals and
-  honours `spatial_cv_metric`, so haversine runs report km. The practical range can't
-  exceed the longest lag. Semivariances use the robust Cressie–Hawkins estimator, so
-  existing values change on refit.
-
 ### Added
 
 - `PipelineConfig.holdout_min_minority` drops the holdout, and runs as with
@@ -91,6 +70,25 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **`H2MLPipeline` rejects repeated model names.** Models are looked up by name, so with
+  two models of the same name (e.g. two `RandomForestRegressor`s without `name=`) both
+  were cross-validated but only the last could be selected, tuned or refitted. Pass
+  `name=` to tell them apart.
+- **Search spaces no longer fix model settings.** `study.best_params` keeps only sampled
+  values, so constants in the built-in spaces (`random_state`/`random_seed`,
+  `probability`, `max_iter`, CatBoost's `od_type` and `loss_function`, XGBoost's
+  `objective` and `booster`) applied during Optuna trials but not to the tuned or final
+  model, and overrode the user's own values in trials. They are removed; only runtime
+  settings (`n_jobs`, `thread_count`, `verbose`, `silent`) remain. Trials now use the
+  estimator's own seed and settings. `run_study`/`optimize_all` without an estimator start
+  from the registry's `default_kwargs`. SVC and SVR get `max_iter=1_000_000` as a registry
+  default, so steps 1 and 3 and the final model now share the cap trials always had; this
+  only changes an SVM that doesn't converge within it.
+- Variogram diagnostic: `FinalModel.variogram` is now fitted on signed residuals and
+  honours `spatial_cv_metric`, so haversine runs report km. The practical range can't
+  exceed the longest lag. Semivariances use the robust Cressie–Hawkins estimator, so
+  existing values change on refit.
+
 - **`wincount`, `winlog` and `winsqrt` now cap at the 99th percentile of non-zero
   values**, not Q3 + 1.5 × IQR, which removed 44–88% of the target total in tests. Runs using
   them need rerunning, while saved models predict as before. Targets with 75% zeros or
@@ -117,6 +115,54 @@ All notable changes to this project will be documented in this file.
   scores and selections on those runs can shift.
 - **`nested_cv` outer folds no longer use the target** under `spcv`, so their folds
   and scores differ from earlier runs.
+
+- **Breaking:** `FinalModel.predict()` now returns the original y scale when a
+  y-transform won, matching `predict_interval()` and `DeltaFinalModel.predict()`.
+  Before, it returned the transformed space, so scoring it against `y` was wrong.
+  Remove any manual `INVERSE_TRANSFORMS` step after `predict()`, which would now
+  invert twice; models saved earlier behave the same way once loaded. `predict_map`
+  now maps original-scale values too: it never inverted, so transformed models drew
+  log- or sqrt-scale maps. Use `final.estimator.predict()` for the transformed space.
+- Steps 1 and 3 rank candidates by a confidence bound built from the fold-centred std
+  (each fold's scores minus that fold's median across candidates) instead of the raw
+  fold std. The same score orders `ranking_robustness` and therefore the candidate
+  `prefer_reduced_on_tie` switches to. The raw std counted fold difficulty that every
+  model shares as instability. Under uneven spatial folds, e.g. prevalence from 1 % to
+  53 %, it favoured models that hedge every prediction towards the middle: they score
+  uniformly mediocre, while a better model is penalised for its one bad fold. This
+  changes selections. On 12 presence/absence targets it changed 34 of 60 step-3 picks,
+  and 22 of the 29 scorable changes improved the pooled out-of-fold score.
+  `select_best(..., fold_df=None)` and `selection_score` keep the raw-std bound.
+- `multi_metric`'s default metric order is now explicit: Brier, LogLoss, AUC, AUCPR,
+  F1 for classification (was AUC, AUCPR, LogLoss, F1, Brier) and RMSE, R2, MAE for
+  regression (was R2, MAE, RMSE). It only changes results when `metrics=` is omitted
+  and `reuse_step4="model"`: shared step-4 tuning is now optimised for the proper
+  scoring rule rather than AUC/R2. Otherwise only the row order changes.
+- The SVC and SVR search spaces are narrowed so HPO trials no longer stall for
+  minutes. On noisy data, a linear kernel with large C made libsvm run millions of
+  iterations per fit (over 80s for one fit at ~1k rows). Kernels are now `rbf` and
+  `linear` (`poly` and `sigmoid` removed, along with SVR's `degree`). `C` ranges
+  over 0.01–10 instead of 0.1–100, `max_iter=1_000_000` caps any remaining slow
+  fits, and `gamma` for `rbf` is tuned log-uniformly over 1e-4–1. It replaces the
+  `"scale"`/`"auto"` choice, which gives nearly the same value once features are
+  scaled. Tuned SVC/SVR results will differ from earlier runs.
+
+- `PipelineResult.best_params` now holds only the overrides applied on top of the
+  winning estimator (tuned params plus fixed ones like `class_weight`), not the
+  registry's full default kwargs. When step 4 is skipped or does not improve it is
+  `{}` (or just the fixed overrides).
+- `run_study()` accepts optional `estimator` and `requires_scaling` arguments. With
+  `estimator`, each trial is `clone(estimator).set_params(**sampled)`.
+- The precision–recall metric is renamed from `"AUC_PR"` to `"AUCPR"`, in line
+  with `LogLoss` and XGBoost's `aucpr`. Its result columns follow suit
+  (`AUC_PR_Test_Mean` → `AUCPR_Test_Mean`, and likewise for `_Train` and `_Gap`).
+  Code that reads the old column names directly must be updated.
+
+### Deprecated
+
+- `metric="AUC_PR"` in `PipelineConfig` and `run_study`. It still works, maps to
+  `"AUCPR"` and logs a warning. Results saved under the old name load with the
+  metric and columns renamed.
 
 ### Fixed
 
@@ -190,56 +236,6 @@ All notable changes to this project will be documented in this file.
 - CatBoostClassifier HPO no longer fails every trial with "Only one of parameters
   ['verbose', 'logging_level', 'verbose_eval', 'silent'] should be set". Its search
   space set `verbose=0` on top of the registry's `silent=True`.
-
-### Changed
-
-- **Breaking:** `FinalModel.predict()` now returns the original y scale when a
-  y-transform won, matching `predict_interval()` and `DeltaFinalModel.predict()`.
-  Before, it returned the transformed space, so scoring it against `y` was wrong.
-  Remove any manual `INVERSE_TRANSFORMS` step after `predict()`, which would now
-  invert twice; models saved earlier behave the same way once loaded. `predict_map`
-  now maps original-scale values too: it never inverted, so transformed models drew
-  log- or sqrt-scale maps. Use `final.estimator.predict()` for the transformed space.
-- Steps 1 and 3 rank candidates by a confidence bound built from the fold-centred std
-  (each fold's scores minus that fold's median across candidates) instead of the raw
-  fold std. The same score orders `ranking_robustness` and therefore the candidate
-  `prefer_reduced_on_tie` switches to. The raw std counted fold difficulty that every
-  model shares as instability. Under uneven spatial folds, e.g. prevalence from 1 % to
-  53 %, it favoured models that hedge every prediction towards the middle: they score
-  uniformly mediocre, while a better model is penalised for its one bad fold. This
-  changes selections. On 12 presence/absence targets it changed 34 of 60 step-3 picks,
-  and 22 of the 29 scorable changes improved the pooled out-of-fold score.
-  `select_best(..., fold_df=None)` and `selection_score` keep the raw-std bound.
-- `multi_metric`'s default metric order is now explicit: Brier, LogLoss, AUC, AUCPR,
-  F1 for classification (was AUC, AUCPR, LogLoss, F1, Brier) and RMSE, R2, MAE for
-  regression (was R2, MAE, RMSE). It only changes results when `metrics=` is omitted
-  and `reuse_step4="model"`: shared step-4 tuning is now optimised for the proper
-  scoring rule rather than AUC/R2. Otherwise only the row order changes.
-- The SVC and SVR search spaces are narrowed so HPO trials no longer stall for
-  minutes. On noisy data, a linear kernel with large C made libsvm run millions of
-  iterations per fit (over 80s for one fit at ~1k rows). Kernels are now `rbf` and
-  `linear` (`poly` and `sigmoid` removed, along with SVR's `degree`). `C` ranges
-  over 0.01–10 instead of 0.1–100, `max_iter=1_000_000` caps any remaining slow
-  fits, and `gamma` for `rbf` is tuned log-uniformly over 1e-4–1. It replaces the
-  `"scale"`/`"auto"` choice, which gives nearly the same value once features are
-  scaled. Tuned SVC/SVR results will differ from earlier runs.
-
-- `PipelineResult.best_params` now holds only the overrides applied on top of the
-  winning estimator (tuned params plus fixed ones like `class_weight`), not the
-  registry's full default kwargs. When step 4 is skipped or does not improve it is
-  `{}` (or just the fixed overrides).
-- `run_study()` accepts optional `estimator` and `requires_scaling` arguments. With
-  `estimator`, each trial is `clone(estimator).set_params(**sampled)`.
-- The precision–recall metric is renamed from `"AUC_PR"` to `"AUCPR"`, in line
-  with `LogLoss` and XGBoost's `aucpr`. Its result columns follow suit
-  (`AUC_PR_Test_Mean` → `AUCPR_Test_Mean`, and likewise for `_Train` and `_Gap`).
-  Code that reads the old column names directly must be updated.
-
-### Deprecated
-
-- `metric="AUC_PR"` in `PipelineConfig` and `run_study`. It still works, maps to
-  `"AUCPR"` and logs a warning. Results saved under the old name load with the
-  metric and columns renamed.
 
 ### Documentation
 
