@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Optional, cast
+from typing import TYPE_CHECKING, Any, Iterable, Literal, Optional, cast
 
 from loguru import logger
 
@@ -30,16 +30,49 @@ from h2ml.evaluation.metrics import (
     # PipelineConfig.metric_col / minimize_metric.
     METRIC_COL,
     METRIC_MINIMIZE,
+    SELECTION_SCORINGS,
     RunMetadata,
     aggregate_metrics,
     compute_metrics_all,
+    resolve_metric,
     select_best,
+    selection_col,
 )
+from h2ml.evaluation.ranking import KEY_COLS, flat_warnings, ranking_robustness, ranking_warnings
 from h2ml.features.selector import FeatureSelector
+from h2ml.features.spatial_cv import BlockGroupSplitter
 from h2ml.optimization.optimizer import run_study
 from h2ml.pipeline.cv import CrossValidator, CVResult
+from h2ml.pipeline.holdout import (
+    HOLDOUT_REFITS,
+    HOLDOUT_STRATEGIES,
+    MIN_HOLDOUT_MINORITY,
+    FixedSplit,
+    HoldoutTooThin,
+    concat_stores,
+    holdout_warnings,
+    split_holdout,
+    stage_store,
+)
 from h2ml.preprocessing.transform_stores import build_transform_stores
+from h2ml.preprocessing.transforms import MEAN_CORRECTABLE_TRANSFORMS, get_train_target_fn, total_ratio
 from h2ml.utils.registry import build_models
+
+# Minority-class share below which a target counts as imbalanced — drives both the
+# validation warning and handle_imbalance="auto".
+IMBALANCE_RATIO_THRESHOLD = 0.1
+
+# Metric-suitability thresholds (see H2MLPipeline._check_metric_suitability).
+# Max/min ratio of the minority-class share across test folds above which AUCPR is noisy.
+PREVALENCE_SPREAD_RATIO = 2.0
+# Test-fold variance of y, as a fraction of the overall variance, below which R2 is unstable.
+LOW_FOLD_VARIANCE_RATIO = 0.1
+# Share of the total squared deviation carried by the top 1% of points above which RMSE is
+# dominated by a few observations.
+TAIL_SSD_SHARE = 0.5
+# Relative gap between the predicted and observed OOF totals above which a log/sqrt winner
+# gets a [transform] warning.
+MAX_TOTAL_MISS = 0.20
 
 
 @dataclass
@@ -54,13 +87,21 @@ class PipelineConfig:
         metric:              Short metric name used for model selection (steps 1–3) and
                              HPO (step 4). Minimisation direction and sort order are
                              derived automatically — no need to set a separate flag.
-                             Classification: "AUC" (default), "AUC_PR", "F1", "LogLoss",
-                             "Brier". Regression: "R2" (default), "MAE", "RMSE".
+                             Classification: "AUC" (default), "AUCPR", "F1", "LogLoss",
+                             "Brier". Regression: "R2" (default), "MAE", "RMSE",
+                             "PoissonDev" (non-negative counts or rates such as CPUE).
         n_splits:            CV folds used in steps 1–3 for model screening and feature
                              selection. More folds = more reliable estimates, higher
                              cost. Default: 5.
         random_state:        Seed for fold splitting and model initialisation. Default: 42.
         verbose:             Log step-by-step progress. Default: False.
+        n_jobs:              Worker processes used to CV models in parallel (steps 1 and 3)
+                             and to explain row chunks in step 2's SHAP pass for
+                             model-agnostic explainers (SVC/SVR with non-linear kernels, KNN, ...).
+                             -1 uses all cores. Lower it when memory is the constraint
+                             rather than CPU — each worker holds its own copy of the
+                             model being fitted — or to leave headroom on a shared
+                             machine. Must not be 0. Default: -1.
 
         corr_threshold:      (Step 2) Drop a feature when its correlation with any
                              already-retained feature exceeds this value in Pearson,
@@ -68,6 +109,12 @@ class PipelineConfig:
         min_features:        (Step 2) Hard lower bound on features kept after the
                              correlation filter; prevents the selector from removing
                              everything. Default: 1.
+        max_vif:             (Step 2) After the correlation filter, drop the lowest-ranked
+                             feature whose variance inflation factor exceeds this value,
+                             repeating until none does. Catches features that are linear
+                             combinations of several retained ones, which pairwise
+                             correlations miss. Must be > 1 (5 or 10 are common). None
+                             skips it. Default: None.
 
         n_trials:            (Step 4) Total Optuna trials budget. Each trial evaluates
                              one hyperparameter configuration using opt_n_splits-fold
@@ -95,25 +142,84 @@ class PipelineConfig:
                              lat/lon in decimal degrees. Default: "euclidean".
         n_blocks_per_fold:   Number of spatial blocks assigned to the test set per fold
                              in the block splitter. Default: 5.
-        time_bin_resolution: Temporal granularity for binning dates in spatial CV and
-                             local conformal calibration. "month" — 12 bins (Jan…Dec).
+        time_bin_resolution: Temporal granularity for binning dates in local conformal
+                             calibration (compound block × time cells); not used by CV.
+                             "month" — 12 bins (Jan…Dec).
                              "season" — 4 bins (DJF, MAM, JJA, SON). Default: "month".
         ahc_threshold:       Distance threshold for cutting the AHC dendrogram in
                              SPCVSplitter. Derived automatically from the data when None.
                              Default: None.
         pca_components:      Variance fraction retained by PCA applied to block
-                             covariates before AHC clustering in SPCVSplitter.
+                             covariates in SPCVSplitter stage 2 (after AHC, before the
+                             cluster ensemble).
                              Default: 0.95.
         exact_max_samples:   Sample count below which exact scipy AHC is used; above this
                              an approximate sklearn AHC (k-NN graph) is used instead.
                              Default: 5 000.
         knn_neighbors:       k for the k-NN connectivity graph in approximate AHC.
                              Default: 15.
+        spcv_use_target:     Include the target view when SPCVSplitter assigns CV folds.
+                             False assigns folds from location and covariates alone, so
+                             targets on the same rows and X share folds. Holdouts and
+                             nested_cv outer folds never use the target. Default: True.
 
         handle_imbalance:    (Classification only) Inject class_weight="balanced" into
                              every model whose registry entry has
-                             supports_class_weight=True. No effect on regression tasks.
+                             supports_class_weight=True. True — always; False — never;
+                             "auto" — only when the minority-class ratio of the input
+                             target is below IMBALANCE_RATIO_THRESHOLD (0.1), decided
+                             when a run starts. No effect on regression tasks.
                              Default: False.
+        prefer_reduced_on_tie: In step 3, when the winner uses all features ("default"
+                             stage) but a reduced-feature candidate is indistinguishable
+                             from it on paired folds (within one Nadeau–Bengio corrected
+                             SE — the Indistinguishable flag of ranking_robustness), select
+                             the best-ranked such reduced candidate instead (1-SE rule
+                             favouring the simpler feature set). Skipped when the reduced
+                             set kept every feature. Each switch is logged and recorded in
+                             cv_warnings. Default: False.
+        select_features_in_folds: (Step 3) Re-run the step-2 selector on each CV fold's
+                             training rows and score the reduced candidates on those
+                             per-fold feature sets, so the default-vs-reduced comparison
+                             is not biased by a feature set chosen on every row. Step 4's
+                             acceptance CV uses the same per-fold sets when the reduced
+                             stage won. The deployed feature set is still step 2's.
+                             Costs about n_splits extra step-2 runs. Default: False.
+
+        selection_scoring:   How regression candidates are scored in steps 1, 3 and 4,
+                             including Optuna trials. "pooled" — one score over all
+                             out-of-fold rows, so folds count by their size. "fold_mean"
+                             — mean of the per-fold scores with a fold-spread penalty.
+                             Classification always uses the fold mean. Default: "pooled".
+        mean_correction:     (Regression, log/sqrt transforms) "ratio" — build_final_model
+                             rescales predictions so their total matches the observed total
+                             on the out-of-fold rows. Totals improve, but rowwise error
+                             usually grows. CV scores, selection and holdout_df stay
+                             uncorrected. None — no correction. Default: None.
+
+        holdout_frac:        Fraction of rows set aside before step 1 and scored once on
+                             the final selected configuration — an estimate no selection
+                             step has seen. Steps 1–4 run on the remaining (dev) rows. With
+                             a holdout, conformal calibration uses the holdout residuals
+                             and local conformal calibration is skipped. Range [0, 0.5];
+                             0 disables it. Default: 0.0.
+        holdout_strategy:    How holdout rows are chosen. "auto" — whole spatial blocks,
+                             drawn at random up to holdout_frac, when store.coords is set,
+                             else random (stratified for classification). "random" —
+                             random even with coords. "time" — the latest rows by
+                             store.times. Default: "auto".
+        holdout_refit:       Rows build_final_model fits on when a holdout exists. "dev" —
+                             the dev rows only, so the holdout score and conformal coverage
+                             describe the deployed model exactly. "all" — dev + holdout
+                             rows; more data, but both are then approximate.
+                             Default: "dev".
+        holdout_min_minority: Drop the holdout, and run as if holdout_frac=0, when it would
+                             hold fewer rows than this of its rarest class (classification)
+                             or of non-zero rows (regression). Its rows then return to the
+                             dev set, conformal calibration uses CV residuals, and a
+                             [holdout] warning records it. The count is taken on the actual
+                             split, so spatial blocks are counted as drawn. None — always
+                             keep the holdout. Default: None.
     """
 
     task_type: TaskType | str = TaskType.CLASSIFICATION
@@ -121,9 +227,11 @@ class PipelineConfig:
     n_splits: int = 5
     opt_n_splits: int = 3
     corr_threshold: float = 0.7
+    max_vif: Optional[float] = None
     n_trials: int = 50
     random_state: int = 42
     verbose: bool = False
+    n_jobs: int = -1
     min_features: int = 1
     n_hpo_repeats: int = 1
     n_blocks_per_fold: int = 5
@@ -134,7 +242,16 @@ class PipelineConfig:
     pca_components: float = 0.95
     exact_max_samples: int = 5_000
     knn_neighbors: int = 15
-    handle_imbalance: bool = False
+    spcv_use_target: bool = True
+    handle_imbalance: bool | Literal["auto"] = False
+    prefer_reduced_on_tie: bool = False
+    select_features_in_folds: bool = False
+    selection_scoring: Literal["pooled", "fold_mean"] = "pooled"
+    mean_correction: Optional[Literal["ratio"]] = None
+    holdout_frac: float = 0.0
+    holdout_strategy: Literal["auto", "random", "time"] = "auto"
+    holdout_refit: Literal["dev", "all"] = "dev"
+    holdout_min_minority: Optional[int] = None
 
     def __post_init__(self):
         # Accept the string "classification" / "regression" so callers need not import TaskType.
@@ -147,6 +264,7 @@ class PipelineConfig:
                 ) from None
         if self.task_type not in (TaskType.CLASSIFICATION, TaskType.REGRESSION):
             raise ValueError(f'task_type must be "classification" or "regression", got "{self.task_type.value}"')
+        self.metric = resolve_metric(self.metric)
         if self.metric not in METRIC_COL:
             raise ValueError(f"metric must be one of {list(METRIC_COL)}, got {self.metric!r}")
         if self.n_splits < 2:
@@ -162,6 +280,8 @@ class PipelineConfig:
             )
         if not 0 < self.corr_threshold <= 1:
             raise ValueError(f"corr_threshold must be in (0, 1], got {self.corr_threshold}")
+        if self.max_vif is not None and self.max_vif <= 1:
+            raise ValueError(f"max_vif must be > 1, got {self.max_vif}")
         if self.n_trials < 1:
             raise ValueError(f"n_trials must be >= 1, got {self.n_trials}")
         if self.min_features < 1:
@@ -170,8 +290,30 @@ class PipelineConfig:
             raise ValueError(f"n_hpo_repeats must be >= 1, got {self.n_hpo_repeats}")
         if self.n_blocks_per_fold < 1:
             raise ValueError(f"n_blocks_per_fold must be >= 1, got {self.n_blocks_per_fold}")
+        if self.n_jobs == 0:
+            raise ValueError("n_jobs must be non-zero (-1 uses all cores), got 0")
         if self.spatial_cv_method not in ("block", "spcv"):
             raise ValueError(f"spatial_cv_method must be 'block' or 'spcv', got {self.spatial_cv_method!r}")
+        if not (isinstance(self.handle_imbalance, bool) or self.handle_imbalance == "auto"):
+            raise ValueError(f"handle_imbalance must be True, False or 'auto', got {self.handle_imbalance!r}")
+        if self.selection_scoring not in SELECTION_SCORINGS:
+            raise ValueError(f"selection_scoring must be one of {SELECTION_SCORINGS}, got {self.selection_scoring!r}")
+        if self.mean_correction not in (None, "ratio"):
+            raise ValueError(f"mean_correction must be None or 'ratio', got {self.mean_correction!r}")
+        if not 0 <= self.holdout_frac <= 0.5:
+            raise ValueError(f"holdout_frac must be in [0, 0.5], got {self.holdout_frac}")
+        if self.holdout_strategy not in HOLDOUT_STRATEGIES:
+            raise ValueError(f"holdout_strategy must be one of {HOLDOUT_STRATEGIES}, got {self.holdout_strategy!r}")
+        if self.holdout_refit not in HOLDOUT_REFITS:
+            raise ValueError(f"holdout_refit must be one of {HOLDOUT_REFITS}, got {self.holdout_refit!r}")
+        if self.holdout_min_minority is not None and (
+            isinstance(self.holdout_min_minority, bool)
+            or not isinstance(self.holdout_min_minority, int)
+            or self.holdout_min_minority < 1
+        ):
+            raise ValueError(f"holdout_min_minority must be None or an int >= 1, got {self.holdout_min_minority!r}")
+        if not isinstance(self.prefer_reduced_on_tie, bool):
+            raise ValueError(f"prefer_reduced_on_tie must be True or False, got {self.prefer_reduced_on_tie!r}")
 
     @property
     def minimize_metric(self) -> bool:
@@ -194,6 +336,7 @@ class PipelineConfig:
             pca_components=self.pca_components,
             exact_max_samples=self.exact_max_samples,
             knn_neighbors=self.knn_neighbors,
+            use_target=self.spcv_use_target,
         )
 
 
@@ -211,8 +354,12 @@ class PipelineResult:
         step1_fold_df:        Per-fold metrics from step 1 (all models × transforms).
         step1_agg_df:         Aggregated (mean ± std) step-1 metrics per model.
         best_model_name:      Winning model name after step 1.
-        best_model_value:     Best model's score on the selection metric.
+        best_model_value:     Best model's score on the selection metric, under
+                              selection_scoring.
         best_model_std:       Fold std of the best model's selection metric.
+        selection_scoring:    Scoring rule this result selected with ("pooled" or
+                              "fold_mean"), kept when resuming. Results saved before the
+                              option load as "fold_mean".
         features_reduced:     PipelineData after step-2 feature reduction.
         selector:             Fitted FeatureSelector (SHAP + correlation filter).
         step3_fold_df:        Per-fold metrics from step 3 (reduced features).
@@ -222,7 +369,15 @@ class PipelineResult:
                               "reduced", never "optimized".
         step3_reduced_stores: Cached reduced PipelineDatas keyed by transform name
                               ("" for no transform). Not persisted.
-        best_params:          Best hyperparameters found in step 4 (None = defaults).
+        best_base_estimator:  Unfitted clone of the winning model's estimator, exactly as
+                              CV ran it (constructor args and injected class_weight
+                              included). build_final_model refits clone(this) with
+                              best_params set on top.
+        best_requires_scaling: Whether the winning model was scaled in CV.
+        best_params:          Overrides applied to best_base_estimator in step 4 (tuned
+                              params plus fixed ones such as class_weight). None when
+                              step 4 did not run. Results saved before
+                              best_base_estimator existed hold full constructor kwargs.
         step4_fold_df:        Per-fold metrics from the step-4 final CV.
         step4_agg_df:         Aggregated step-4 metrics.
         step1_cv_result:      Raw step-1 CVResults — preserved for plots/persistence.
@@ -233,10 +388,30 @@ class PipelineResult:
         spatial_cv_metric:    Distance metric forwarded from PipelineConfig; used by
                               build_final_model to build LocalConformalCalibration.
         time_bin_resolution:  Temporal bin resolution forwarded from PipelineConfig.
-        cv_warnings:          Warnings for models with ≥1 failed CV fold (steps 1 & 3).
-        metric:               Short selection metric name, e.g. "AUC" or "R2".
+        cv_warnings:          Warnings for models with ≥1 failed CV fold (steps 1 & 3), plus
+                              data conditions that make the selection metric unreliable
+                              (checked in step 1), ranking-robustness flags (steps 1 & 3),
+                              and any prefer_reduced_on_tie switch (step 3). All but the
+                              switch are advisory.
+        class_weight_balanced: True when CV ran with class_weight="balanced" injected
+                              (handle_imbalance resolved active); build_final_model
+                              re-applies it when step 4 did not produce best_params.
+        metric:            Short selection metric name, e.g. "AUC" or "R2".
         splitter:             Splitter built once in step 1 and reused in steps 3-4.
                               Not persisted.
+        step3_fold_features:  Feature names selected on each step-3 CV fold's training rows
+                              (select_features_in_folds=True), indexed like the splitter's
+                              folds; None otherwise.
+        holdout_store:        Raw rows set aside by holdout_frac; None without a holdout.
+                              features then holds only the dev rows steps 1–4 ran on.
+        holdout_idx:          Row indices of holdout_store in the store passed to run().
+        holdout_strategy:     Resolved holdout strategy: "spatial", "random" or "time".
+        holdout_refit:        "dev" or "all" — rows build_final_model fits on (from
+                              PipelineConfig.holdout_refit).
+        holdout_cv_result:    One-fold CVResult: the final configuration fitted on the dev
+                              rows and scored on the holdout rows.
+        holdout_df:           Holdout metrics, same _Mean columns as the agg DataFrames
+                              (_Std is NaN — there is one fold).
     """
 
     # Input data
@@ -258,6 +433,9 @@ class PipelineResult:
     best_feature_stage: Optional[str] = None
     # Step 3: cached reduced PipelineDatas keyed by transform name (or "" for no transform)
     step3_reduced_stores: Optional[dict[str, "PipelineData"]] = field(default=None, repr=False)
+    # Winning estimator as CV ran it (unfitted) — the base build_final_model refits
+    best_base_estimator: Any = field(default=None, repr=False)
+    best_requires_scaling: bool = False
     # Step 4: hyperparameter optimization + final CV + select overall best
     best_params: Optional[dict] = None
     step4_fold_df: Optional[pd.DataFrame] = None
@@ -275,12 +453,25 @@ class PipelineResult:
     spatial_cv_metric: str = "euclidean"
     # Temporal bin resolution forwarded from PipelineConfig
     time_bin_resolution: str = "month"
-    # Models that had at least one failed CV fold — populated by step 1 and step 3
+    # Failed CV folds (steps 1 & 3), metric-suitability (step 1), ranking robustness (steps 1 & 3)
     cv_warnings: list[str] = field(default_factory=list)
+    # Whether CV ran with class_weight="balanced" (resolved handle_imbalance)
+    class_weight_balanced: bool = False
     # Short metric name used for model selection, e.g. "AUC" or "R2" (from PipelineConfig)
     metric: Optional[str] = None
     # Splitter built once in step 1 and reused in steps 3 and 4 (not persisted)
     splitter: Any = field(default=None, repr=False, compare=False)
+    # Per-fold feature sets from select_features_in_folds (step 3)
+    step3_fold_features: Optional[list[list[str]]] = None
+    # Outer holdout — rows no selection step has seen, scored once on the final configuration
+    holdout_store: Optional[PipelineData] = field(default=None, repr=False)
+    holdout_idx: Optional[np.ndarray] = field(default=None, repr=False)
+    holdout_strategy: Optional[str] = None
+    holdout_refit: str = "dev"
+    selection_scoring: str = "fold_mean"
+    mean_correction: Optional[str] = None
+    holdout_cv_result: Optional[CVResult] = field(default=None, repr=False)
+    holdout_df: Optional[pd.DataFrame] = None
     # Transient cache — populated on first call to shap_summary_plot / shap_dependence
     # Not persisted (result_io.py enumerates fields explicitly).
     _final_shap_cache: Optional[tuple] = field(default=None, repr=False, compare=False, init=False)
@@ -304,17 +495,16 @@ class PipelineResult:
     @property
     def best_cv_result(self) -> Optional[CVResult]:
         """
-        CVResult for the final winning model.
-        Returns step4_cv_result when HPO ran, otherwise the best model's
-        CVResult from step3 (used when opt_enabled=False).
+        CVResult of the selected configuration: step 4 only when the tuned params were
+        kept, otherwise the winner's step-3 (reduced) or step-1 (default) CVResult.
         """
-        if self.step4_cv_result is not None:
+        if self.best_stage == "optimized":
             return self.step4_cv_result
-        if self.step3_cv_result and self.best_model_name:
-            for cv in self.step3_cv_result:
-                if cv.model_name == self.best_model_name:
-                    return cv
-        return None
+        feature_stage = self.best_feature_stage or self.best_stage
+        cv_results = self.step3_cv_result if feature_stage == "reduced" else self.step1_cv_result
+        matches = [cv for cv in cv_results or [] if cv.model_name == self.best_model_name]
+        # Results saved before CVResult.y_transform existed can only match by model name
+        return next((cv for cv in matches if cv.y_transform == (self.y_transform or None)), next(iter(matches), None))
 
     @property
     def completed_steps(self) -> list[int]:
@@ -332,7 +522,8 @@ class PipelineResult:
 
     def summary(self, metric: Optional[str] = None, ascending: bool = False) -> pd.DataFrame:
         """
-        Combined agg DataFrame across all completed stages.
+        Combined agg DataFrame across all completed stages, plus a "holdout" row
+        when a holdout was scored.
 
         Args:
             metric:    Column name to sort by (e.g. "AUC_Test_Mean"). When None,
@@ -350,6 +541,7 @@ class PipelineResult:
             (self.step1_agg_df, "default"),
             (self.step3_agg_df, "reduced"),
             (self.step4_agg_df, "optimized"),
+            (self.holdout_df, "holdout"),
         ]:
             if agg_df is not None:
                 row = agg_df.copy()
@@ -369,6 +561,37 @@ class PipelineResult:
             df = df.sort_values(metric, ascending=ascending).reset_index(drop=True)
 
         return df
+
+    def ranking_robustness(self, step: Optional[int] = None) -> pd.DataFrame:
+        """
+        Paired-fold and cross-metric robustness of the step-1 or step-3 selection.
+
+        See h2ml.evaluation.ranking.ranking_robustness for the columns. Works on
+        loaded results — fold DataFrames and metric are persisted. Is_Winner marks
+        the winner before any prefer_reduced_on_tie switch, which would make it differ
+        from best_stage (the switch is recorded in cv_warnings).
+
+        Args:
+            step: 1 (models × transforms on all features) or 3 (default and reduced
+                  candidates together, as step 3 selects among both). None → 3 when
+                  step 3 has run, else 1.
+
+        Returns:
+            One row per candidate, sorted by rank under result.metric.
+
+        Raises:
+            ValueError: If step is not 1/3 or that step has not run.
+        """
+        if step is None:
+            step = 3 if self.step3_fold_df is not None else 1
+        if step not in (1, 3):
+            raise ValueError(f"step must be 1 or 3, got {step!r}")
+        if self.metric is None or self.step1_fold_df is None or (step == 3 and self.step3_fold_df is None):
+            raise ValueError(f"Step {step} has not run on this result.")
+        fold_df = self.step1_fold_df
+        if step == 3:
+            fold_df = pd.concat([self.step1_fold_df, self.step3_fold_df], ignore_index=True)
+        return ranking_robustness(fold_df, self.metric, selection_scoring=self.selection_scoring)
 
     def build_final_model(self) -> "FinalModel":
         """
@@ -438,7 +661,7 @@ class H2MLPipeline:
                   columns in fold/agg DataFrames. When None, only stage is set.
 
     Raises:
-        ValueError: If the resolved model list is empty.
+        ValueError: If the resolved model list is empty or two models share a name.
 
     Example:
         >>> pipeline = H2MLPipeline(config=PipelineConfig())
@@ -456,12 +679,25 @@ class H2MLPipeline:
             models = build_models(config.task_type.value)
         if not models:
             raise ValueError("models cannot be empty.")
+        # Models are looked up by name for selection, tuning and the final fit, so a
+        # repeated name would silently resolve to the last model with it.
+        names = [m.name for m in models]
+        duplicates = sorted({n for n in names if names.count(n) > 1})
+        if duplicates:
+            raise ValueError(
+                f"Model names must be unique, but {duplicates} appear more than once. "
+                "Pass name= to make_classifier/make_regressor to tell them apart."
+            )
         self.models = models
         self._model_map = {m.name: m for m in models}
         self.config = config
         self.metadata = metadata
-        if config.handle_imbalance and config.task_type == TaskType.CLASSIFICATION:
+        # Whether class_weight="balanced" is in effect. "auto" is resolved per run by
+        # _resolve_class_weights() once the target is known.
+        self._class_weight_active = False
+        if config.handle_imbalance is True and config.task_type == TaskType.CLASSIFICATION:
             self._inject_class_weights()
+            self._class_weight_active = True
         self._cv = CrossValidator(
             n_splits=config.n_splits,
             shuffle=True,
@@ -491,13 +727,13 @@ class H2MLPipeline:
         Returns:
             PipelineResult with all four steps completed.
         """
-        self._validate_store(store)
-        result = self._new_result(store)
+        result, store = self._start(store)
         transform_stores = self._build_transform_stores(store, transforms)
         result = self._run_step1(result, transform_stores)
         result = self._run_step2(result, transform_stores)
         result = self._run_step3(result, transform_stores)
         result = self._run_step4(result, transform_stores)
+        result = self._finish(result)
         self._log_summary(result)
         return result
 
@@ -517,12 +753,9 @@ class H2MLPipeline:
         Returns:
             PipelineResult with step 1 completed.
         """
-        self._validate_store(store)
+        result, store = self._start(store)
         transform_stores = self._build_transform_stores(store, transforms)
-        return self._run_step1(
-            self._new_result(store),
-            transform_stores,
-        )
+        return self._run_step1(result, transform_stores)
 
     def run_step1_to_step2(
         self,
@@ -536,9 +769,8 @@ class H2MLPipeline:
         Returns:
             PipelineResult with steps 1-2 completed.
         """
-        self._validate_store(store)
+        result, store = self._start(store)
         transform_stores = self._build_transform_stores(store, transforms)
-        result = self._new_result(store)
         result = self._run_step1(result, transform_stores)
         result = self._run_step2(result, transform_stores)
         return result
@@ -557,13 +789,12 @@ class H2MLPipeline:
         Returns:
             PipelineResult with steps 1-3 completed (no HPO).
         """
-        self._validate_store(store)
+        result, store = self._start(store)
         transform_stores = self._build_transform_stores(store, transforms)
-        result = self._new_result(store)
         result = self._run_step1(result, transform_stores)
         result = self._run_step2(result, transform_stores)
         result = self._run_step3(result, transform_stores)
-        return result
+        return self._finish(result)
 
     def run_from_step3(
         self,
@@ -593,10 +824,13 @@ class H2MLPipeline:
         ]
         if missing:
             raise ValueError(f"result must have {missing} set. Run run_step1_to_step2() first.")
+        assert result.features is not None  # validated above
+        self._resolve_class_weights(result.features.y)
+        result.class_weight_balanced = self._class_weight_active
         transform_stores = self._rebuild_transform_stores(result, transform_stores)
         result = self._run_step3(result, transform_stores)
         result = self._run_step4(result, transform_stores)
-        return result
+        return self._finish(result)
 
     def run_step4_only(
         self,
@@ -641,8 +875,12 @@ class H2MLPipeline:
                 "Steps 1–3 must be complete (run run_step1_to_step3() or load a result "
                 "that includes them)."
             )
+        assert result.features is not None  # validated above
+        self._resolve_class_weights(result.features.y)
+        result.class_weight_balanced = self._class_weight_active
         transform_stores = self._rebuild_transform_stores(result, transform_stores)
-        return self._run_step4(result, transform_stores)
+        result = self._run_step4(result, transform_stores)
+        return self._finish(result)
 
     # ------------------------------------------------------------------
     # Step implementations
@@ -654,6 +892,18 @@ class H2MLPipeline:
         transform_stores: Optional[dict[str, PipelineData]] = None,
     ) -> PipelineResult:
         """CV all models (× transforms) on all features, then select best."""
+        fold_indices = self._cv_step1(result, transform_stores)
+        return self._select_step1(result, fold_indices)
+
+    def _cv_step1(
+        self,
+        result: PipelineResult,
+        transform_stores: Optional[dict[str, PipelineData]] = None,
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        """
+        Step-1 CV of all models (× transforms) on all features. Metric-independent:
+        sets the splitter and step1_* fields and returns the step-1 fold indices.
+        """
         assert result.features is not None, "result.features must be set before step 1."
         n_transforms = len(transform_stores) if transform_stores else 1
         self._log(
@@ -713,13 +963,14 @@ class H2MLPipeline:
                 inverse_fn=inv,
                 coords=store.coords,
                 spatial=self.config.spatial_cv,
+                train_target_fn=get_train_target_fn(store.y_transform),
                 _splitter=splitter,
                 _scaled_folds=sf,
             )
 
         raw = cast(
             list[tuple[str, CVResult]],
-            Parallel(n_jobs=-1, backend="loky")(
+            Parallel(n_jobs=self.config.n_jobs, backend="loky")(
                 delayed(_run_one)(tn, st, m) for tn, st in stores.items() for m in self.models
             ),
         )
@@ -727,6 +978,7 @@ class H2MLPipeline:
         # Group by transform and compute metrics — identical to the serial path.
         by_transform: dict[str, list[CVResult]] = {}
         for transform_name, cv_result in raw:
+            cv_result.y_transform = transform_name or None
             by_transform.setdefault(transform_name, []).append(cv_result)
 
         for transform_name, cv_results in by_transform.items():
@@ -740,20 +992,37 @@ class H2MLPipeline:
         result.step1_fold_df = pd.concat(all_fold_dfs, ignore_index=True)
         result.step1_agg_df = aggregate_metrics(result.step1_fold_df)
         result.cv_warnings.extend(self._collect_cv_warnings(all_cv_results))
+        return fold_indices
 
+    def _select_step1(
+        self,
+        result: PipelineResult,
+        fold_indices: list[tuple[np.ndarray, np.ndarray]],
+    ) -> PipelineResult:
+        """Select the step-1 winner under config.metric from the step-1 CV (see _cv_step1)."""
+        assert result.features is not None and result.step1_agg_df is not None
+        assert result.step1_fold_df is not None
+        result.cv_warnings.extend(self._check_metric_suitability(result.features.y, fold_indices))
         best = select_best(
             result.step1_agg_df,
-            metric=self.config.metric_col,
+            metric=selection_col(self.config.metric, result.selection_scoring),
             minimize=self.config.minimize_metric,
             n_folds=self.config.n_splits,
+            fold_df=result.step1_fold_df,
         )
+        result.cv_warnings.extend(self._flat_warnings(result, result.step1_agg_df, result.step1_fold_df))
         result.best_model_name = best["model_name"]
         result.best_model_value = float(best["value"])
         std_col = self.config.metric_col.replace("_Mean", "_Std")
         result.best_model_std = float(best["row"].get(std_col, float("nan")))
         result.best_stage = "default"
         result.y_transform = best["row"].get("Y_transform")
+        self._record_best_estimator(result)
         result.metric = self.config.metric
+        robust_df = ranking_robustness(
+            result.step1_fold_df, self.config.metric, self.config.n_splits, result.selection_scoring
+        )
+        result.cv_warnings.extend(self._check_ranking_robustness(robust_df, step=1))
 
         self._log(
             f"  Best: {result.best_model_name}"
@@ -777,17 +1046,8 @@ class H2MLPipeline:
         else:
             fit_store = result.features
 
-        best_model = self._get_model(result.best_model_name)
-        selector = FeatureSelector(
-            step=best_model,
-            task_type=self.config.task_type,
-            corr_threshold=self.config.corr_threshold,
-            min_features=self.config.min_features,
-            use_oof=True,
-            n_splits=self.config.n_splits,
-            random_state=self.config.random_state,
-            verbose=self.config.verbose,
-            _splitter=result.splitter,
+        selector = self._make_selector(
+            result.best_model_name, fit_store, result.splitter, keep_all=self._all_flat(result)
         )
         result.selector = selector
         result.features_reduced = selector.fit_transform(fit_store)
@@ -799,6 +1059,18 @@ class H2MLPipeline:
         transform_stores: Optional[dict[str, PipelineData]] = None,
     ) -> PipelineResult:
         """CV all models on reduced features (step-1-winning transform only), then select best stage."""
+        self._cv_step3(result, transform_stores)
+        return self._select_step3(result)
+
+    def _cv_step3(
+        self,
+        result: PipelineResult,
+        transform_stores: Optional[dict[str, PipelineData]] = None,
+    ) -> None:
+        """
+        Step-3 CV of all models on the reduced features. Metric-independent given the
+        step-2 selection: sets step3_* fields (and step3_fold_features when per-fold).
+        """
         assert result.features_reduced is not None, "features_reduced must be set before step 3."
         assert result.selector is not None, "selector must be set before step 3."
         n_features = result.features_reduced.n_features
@@ -817,38 +1089,74 @@ class H2MLPipeline:
         metadata = self._metadata_with(stage="reduced")
         if transform_name:
             metadata = replace(metadata, y_transform=transform_name)
+        cv_store, fold_columns = reduced_store, None
+        if self.config.select_features_in_folds:
+            # Score the selection procedure, not a set chosen on every row: each fold
+            # runs on the full features with the subset selected on its training rows.
+            cv_store = self._full_store(result, transform_stores)
+            if result.splitter is None:  # not persisted — rebuilt as step 1 built it
+                result.splitter = self._cv._build_splitter(
+                    self.config.task_type,
+                    X=cv_store.X,
+                    y=cv_store.y,
+                    coords=cv_store.coords,
+                    spatial=self.config.spatial_cv,
+                )
+            result.step3_fold_features = self._fold_feature_sets(result, cv_store)
+            fold_columns = self._fold_columns(cv_store, result.step3_fold_features)
         cv_results = self._cv.run_all(
             self.models,
-            reduced_store.X,
-            reduced_store.y,
-            y_true=reduced_store.y_true,
+            cv_store.X,
+            cv_store.y,
+            y_true=cv_store.y_true,
             inverse_fn=inverse_fn,
-            coords=reduced_store.coords,
+            coords=cv_store.coords,
             spatial=self.config.spatial_cv,
+            n_jobs=self.config.n_jobs,
+            train_target_fn=get_train_target_fn(cv_store.y_transform),
+            fold_columns=fold_columns,
             _splitter=result.splitter,
         )
+        for cv_result in cv_results:
+            cv_result.y_transform = transform_name or None
         result.step3_reduced_stores = {transform_name: reduced_store}
         result.step3_cv_result = cv_results
         result.step3_fold_df = compute_metrics_all(cv_results, metadata=metadata)
         result.step3_agg_df = aggregate_metrics(result.step3_fold_df)
         result.cv_warnings.extend(self._collect_cv_warnings(cv_results))
 
+    def _select_step3(self, result: PipelineResult) -> PipelineResult:
+        """Select the best (model, stage) under config.metric from the step-1 and step-3 CVs."""
         # Compare step1 (default) and step3 (reduced) agg dfs directly — pick the best row
         assert result.step1_agg_df is not None and result.step3_agg_df is not None
         all_stages_agg = pd.concat([result.step1_agg_df, result.step3_agg_df], ignore_index=True)
+        assert result.step1_fold_df is not None and result.step3_fold_df is not None
+        both_stages_fold_df = pd.concat([result.step1_fold_df, result.step3_fold_df], ignore_index=True)
+        score_col = selection_col(self.config.metric, result.selection_scoring)
         best = select_best(
             all_stages_agg,
-            metric=self.config.metric_col,
+            metric=score_col,
             minimize=self.config.minimize_metric,
             n_folds=self.config.n_splits,
+            fold_df=both_stages_fold_df,
         )
-        result.best_model_name = best["model_name"]
-        result.best_model_value = float(best["value"])
+        result.cv_warnings.extend(self._flat_warnings(result, all_stages_agg, both_stages_fold_df))
+        robust_df = ranking_robustness(
+            both_stages_fold_df, self.config.metric, self.config.n_splits, result.selection_scoring
+        )
+        result.cv_warnings.extend(self._check_ranking_robustness(robust_df, step=3))
+        best_row = best["row"]
+        if self.config.prefer_reduced_on_tie:
+            best_row = self._prefer_reduced_on_tie(result, robust_df, all_stages_agg, best_row)
+
+        result.best_model_name = best_row["Model"]
+        result.best_model_value = float(best_row[score_col])
         std_col = self.config.metric_col.replace("_Mean", "_Std")
-        result.best_model_std = float(best["row"].get(std_col, float("nan")))
-        result.best_stage = str(best["row"]["Stage"])
+        result.best_model_std = float(best_row.get(std_col, float("nan")))
+        result.best_stage = str(best_row["Stage"])
         result.best_feature_stage = result.best_stage  # preserved — never overwritten by "optimized"
-        result.y_transform = best["row"].get("Y_transform")
+        result.y_transform = best_row.get("Y_transform")
+        self._record_best_estimator(result)
 
         self._log(
             f"  Best: {result.best_model_name} | stage={result.best_stage}"
@@ -863,6 +1171,23 @@ class H2MLPipeline:
         transform_stores: Optional[dict[str, PipelineData]] = None,
     ) -> PipelineResult:
         """Hyperparameter optimization + final CV + select overall best."""
+        tuned_params, fixed_params = self._tune_step4(result, transform_stores)
+        return self._select_step4(result, tuned_params, fixed_params)
+
+    def _tune_step4(
+        self,
+        result: PipelineResult,
+        transform_stores: Optional[dict[str, PipelineData]] = None,
+    ) -> tuple[Optional[dict], dict]:
+        """
+        Optuna HPO of the step-3 winner under config.metric, then the acceptance CV with
+        the tuned params (sets step4_* fields).
+
+        Returns:
+            (tuned_params, fixed_params): the tuned overrides merged with the fixed ones, or
+            None when the winner has no enabled search space; and the fixed params
+            (class_weight) every candidate carries.
+        """
         assert result.features is not None, "result.features must be set before step 4."
         assert result.features_reduced is not None, "features_reduced must be set before step 4."
         assert result.best_model_value is not None, "best_model_value must be set before step 4."
@@ -878,22 +1203,25 @@ class H2MLPipeline:
         y = store_for_opt.y
         y_true = store_for_opt.y_true
         inverse_fn = self._get_inverse_fn(store_for_opt)
+        train_target_fn = get_train_target_fn(store_for_opt.y_transform)
 
         best_model = self._get_model(result.best_model_name)
         estimator_name = best_model.estimator.__class__.__name__
+        # Re-record: a resumed run (run_step4_only on a new pipeline) tunes this
+        # pipeline's model, which the final model must then be rebuilt from.
+        self._record_best_estimator(result)
 
         # Fixed params are injected into every Optuna trial alongside searched params.
         # Built before the opt_enabled check: the skip path must also carry them, or a
         # deployed opt-disabled winner would silently lose class_weight="balanced"
         # even though CV ranked it with weights injected.
         fixed_params: dict = {}
-        if self.config.handle_imbalance and self._supports_class_weight(estimator_name):
+        if self._class_weight_active and self._supports_class_weight(estimator_name):
             fixed_params["class_weight"] = "balanced"
 
         if not self._is_opt_enabled(estimator_name):
-            self._log(f"  {estimator_name} has opt_enabled=False — skipping optimization.")
-            result.best_params = {**self._get_default_params(estimator_name), **fixed_params}
-            return result
+            self._log(f"  {estimator_name} has no enabled search space — skipping optimization.")
+            return None, fixed_params
 
         study = run_study(
             name=estimator_name,
@@ -910,22 +1238,34 @@ class H2MLPipeline:
             fixed_params=fixed_params,
             y_true=y_true,
             inverse_fn=inverse_fn,
+            train_target_fn=train_target_fn,
             _splitter=result.splitter if store_for_opt.coords is not None else None,
+            estimator=best_model.estimator,
+            requires_scaling=best_model.requires_scaling,
+            selection_scoring=result.selection_scoring,
         )
 
-        # study.best_params only contains trial.suggest_* values — merge with
-        # registry default_kwargs so fixed kwargs (e.g. probability=True for SVC)
-        # are preserved when _build_fold_model reconstructs the estimator.
+        # best_params are overrides on top of the winner's own estimator — trials,
+        # the final CV (_build_fold_model) and build_final_model all apply them via
+        # clone(estimator).set_params(), so constructor args (e.g. probability=True
+        # for SVC, or a user's max_iter) are kept everywhere.
         # fixed_params are re-applied last: every trial was evaluated with them
         # overriding sampled values (see _build_objective), so the final model must
         # match — otherwise a sampled class_weight=None from the search space would
         # silently undo handle_imbalance in the deployed params.
-        default_kwargs = {**self._get_default_params(estimator_name), **fixed_params}
-        merged_params = {**default_kwargs, **study.best_params, **fixed_params}
+        merged_params = {**study.best_params, **fixed_params}
 
         metadata = self._metadata_with(stage="optimized")
         if result.y_transform:
             metadata = replace(metadata, y_transform=result.y_transform)
+        # With per-fold feature sets the reduced stage's step-3 score came from them, so
+        # the acceptance CV must use them too — otherwise the tuned params would be
+        # compared against a baseline estimated a different way.
+        fold_columns = None
+        if result.step3_fold_features is not None and result.best_feature_stage == "reduced":
+            full_store = self._full_store(result, transform_stores)
+            X = full_store.X
+            fold_columns = self._fold_columns(full_store, result.step3_fold_features)
         cv_result = self._cv.run(
             best_model,
             X,
@@ -935,27 +1275,50 @@ class H2MLPipeline:
             inverse_fn=inverse_fn,
             coords=store_for_opt.coords,
             spatial=self.config.spatial_cv,
+            train_target_fn=train_target_fn,
+            fold_columns=fold_columns,
             _splitter=result.splitter,
         )
         result.step4_cv_result = cv_result
         result.step4_fold_df = compute_metrics_all([cv_result], metadata=metadata)
         result.step4_agg_df = aggregate_metrics(result.step4_fold_df, group_by_stage=False)
+        return merged_params, fixed_params
 
-        optimized_value = float(result.step4_agg_df.iloc[0][self.config.metric_col])
+    def _select_step4(
+        self,
+        result: PipelineResult,
+        tuned_params: Optional[dict],
+        fixed_params: dict,
+    ) -> PipelineResult:
+        """Keep the tuned params when their acceptance CV (step4_agg_df) beats the step-3
+        winner under config.metric; otherwise the winner's defaults (plus fixed_params)."""
+        if tuned_params is None:
+            result.best_params = dict(fixed_params)
+            return result
+        assert result.step4_agg_df is not None and result.best_model_value is not None
+        tuned = result.step4_agg_df.iloc[0]
+        optimized_value = float(tuned[selection_col(self.config.metric, result.selection_scoring)])
         std_col = self.config.metric_col.replace("_Mean", "_Std")
-        optimized_std = float(result.step4_agg_df.iloc[0].get(std_col, float("nan")))
+        optimized_std = float(tuned.get(std_col, float("nan")))
         improved = (
             optimized_value < result.best_model_value
             if self.config.minimize_metric
             else optimized_value > result.best_model_value
         )
-        if improved:
+        if improved and tuned.get("Is_Flat", False):
+            improved = False
+            result.cv_warnings.append(
+                f"[selection] Tuning {result.best_model_name} gave a constant-prediction model, "
+                "so the untuned parameters were kept."
+            )
+        # A tuned mean over fewer folds isn't comparable with the untuned score
+        if improved and not result.step4_cv_result.failed_folds:
             result.best_model_value = optimized_value
             result.best_model_std = optimized_std
             result.best_stage = "optimized"
-            result.best_params = merged_params
+            result.best_params = dict(tuned_params)
         else:
-            result.best_params = default_kwargs
+            result.best_params = dict(fixed_params)
 
         self._log(
             f"  Optimized {self.config.metric}={optimized_value:.4f} ± {optimized_std:.4f}"
@@ -1028,11 +1391,7 @@ class H2MLPipeline:
     ) -> PipelineData:
         """Resolve the correct PipelineData for step-4 optimization."""
         # Pick the full or reduced store depending on winning stage
-        if transform_stores and result.y_transform:
-            full_store = transform_stores[result.y_transform]
-        else:
-            assert result.features is not None
-            full_store = result.features
+        full_store = self._full_store(result, transform_stores)
 
         if result.best_stage == "reduced":
             assert result.selector is not None
@@ -1042,6 +1401,118 @@ class H2MLPipeline:
             return result.selector.transform(full_store)
         return full_store
 
+    def _full_store(
+        self,
+        result: PipelineResult,
+        transform_stores: Optional[dict[str, PipelineData]],
+    ) -> PipelineData:
+        """All-features store in the winning y-space (the store step 2 selected on)."""
+        if transform_stores and result.y_transform:
+            return transform_stores[result.y_transform]
+        assert result.features is not None
+        return result.features
+
+    @staticmethod
+    def _all_flat(result: PipelineResult) -> bool:
+        """True when every step-1 candidate is flat: SHAP then has nothing to rank."""
+        agg = result.step1_agg_df
+        return agg is not None and "Is_Flat" in agg.columns and bool(agg["Is_Flat"].eq(True).all())
+
+    def _make_selector(
+        self, model_name: Optional[str], store: PipelineData, splitter: Any, keep_all: bool = False
+    ) -> FeatureSelector:
+        """Step-2 FeatureSelector for model_name; splitter drives its OOF SHAP folds."""
+        return FeatureSelector(
+            step=self._get_model(model_name),
+            task_type=self.config.task_type,
+            corr_threshold=self.config.corr_threshold,
+            min_features=self.config.min_features,
+            use_oof=True,
+            n_splits=self.config.n_splits,
+            random_state=self.config.random_state,
+            verbose=self.config.verbose,
+            train_target_fn=get_train_target_fn(store.y_transform),
+            n_jobs=self.config.n_jobs,
+            max_vif=self.config.max_vif,
+            keep_all=keep_all,
+            _splitter=splitter,
+        )
+
+    def _fold_feature_sets(self, result: PipelineResult, store: PipelineData) -> list[list[str]]:
+        """
+        Re-run the step-2 selector on each CV fold's training rows.
+
+        Spatial runs split each training fold along the outer splitter's blocks
+        (BlockGroupSplitter), so the inner OOF SHAP folds stay spatially separated;
+        otherwise the selector's own stratified/plain KFold is used.
+        """
+        block_ids = getattr(result.splitter, "block_id_", None)
+        fold_sets: list[list[str]] = []
+        for k, (train_idx, _) in enumerate(result.splitter.split(store.X, store.y)):
+            inner = None
+            if block_ids is not None:
+                n_blocks = np.unique(block_ids[train_idx]).size
+                if n_blocks >= 2:
+                    inner = BlockGroupSplitter(
+                        block_ids[train_idx],
+                        n_splits=min(self.config.n_splits, n_blocks),
+                        random_state=self.config.random_state,
+                    )
+            selector = self._make_selector(result.best_model_name, store, inner, keep_all=self._all_flat(result))
+            selector.fit(store.take(train_idx))
+            fold_sets.append(list(selector.selected_features_))
+            self._log(f"  Fold {k}: {selector.n_selected}/{store.n_features} features selected on its training rows")
+        return fold_sets
+
+    @staticmethod
+    def _fold_columns(store: PipelineData, fold_features: list[list[str]]) -> list[np.ndarray]:
+        """Column indices into store.X for each fold's feature names."""
+        index = {name: i for i, name in enumerate(store.feature_names)}
+        return [np.array([index[f] for f in names]) for names in fold_features]
+
+    def _start(self, store: PipelineData, log_class_weights: bool = True) -> tuple[PipelineResult, PipelineData]:
+        """Validate store, set aside the holdout rows, and return a fresh result plus the dev rows."""
+        self._validate_store(store)
+        holdout_store, holdout_idx, holdout_strategy = None, None, None
+        dropped_warning = None
+        if self.config.holdout_frac > 0:
+            try:
+                dev_idx, holdout_idx, holdout_strategy = split_holdout(
+                    store,
+                    self.config.task_type,
+                    frac=self.config.holdout_frac,
+                    strategy=self.config.holdout_strategy,
+                    random_state=self.config.random_state,
+                    spatial=self.config.spatial_cv,
+                    min_minority=self.config.holdout_min_minority,
+                )
+            except HoldoutTooThin as e:
+                is_clf = self.config.task_type == TaskType.CLASSIFICATION
+                kind = "rows of its rarest class" if is_clf else "non-zero rows"
+                dropped_warning = (
+                    f"[holdout] Holdout dropped: it would hold {e.n_minority} {kind} of {e.n_holdout}, below "
+                    f"holdout_min_minority={e.min_minority}. Steps run on all rows and conformal uses CV residuals."
+                )
+                logger.warning(dropped_warning)
+            else:
+                holdout_store = store.take(holdout_idx)
+                store = store.take(dev_idx)
+                self._log(
+                    f"Holdout ({holdout_strategy}): {holdout_idx.size}/{holdout_idx.size + dev_idx.size} rows set aside"
+                )
+        self._resolve_class_weights(store.y, log=log_class_weights)
+        result = self._new_result(store)
+        if dropped_warning is not None:
+            result.cv_warnings.append(dropped_warning)
+        result.holdout_store = holdout_store
+        result.holdout_idx = holdout_idx
+        result.holdout_strategy = holdout_strategy
+        if holdout_store is not None:
+            result.cv_warnings.extend(
+                holdout_warnings(store, holdout_store, self.config.task_type, self.config.holdout_frac)
+            )
+        return result, store
+
     def _new_result(self, store: PipelineData) -> PipelineResult:
         """Build a fresh PipelineResult seeded with store and CV metadata from config."""
         return PipelineResult(
@@ -1049,7 +1520,106 @@ class H2MLPipeline:
             cv_type="spatial" if store.coords is not None else "random",
             spatial_cv_metric=self.config.spatial_cv_metric,
             time_bin_resolution=self.config.time_bin_resolution,
+            class_weight_balanced=self._class_weight_active,
+            holdout_refit=self.config.holdout_refit,
+            selection_scoring=self.config.selection_scoring,
+            mean_correction=self.config.mean_correction,
         )
+
+    def _finish(self, result: PipelineResult) -> PipelineResult:
+        """Checks that need the final configuration: its back-transformed totals, then the holdout."""
+        self._check_back_transform(result)
+        return self._score_holdout(result)
+
+    def _check_back_transform(self, result: PipelineResult) -> None:
+        """
+        Add a [transform] warning when the selected log/sqrt model's out-of-fold total is
+        more than MAX_TOTAL_MISS from the observed total. Replaces any earlier one, since
+        resuming a run can change the winner.
+        """
+        result.cv_warnings = [w for w in result.cv_warnings if not w.startswith("[transform]")]
+        if self.config.task_type != TaskType.REGRESSION or result.y_transform not in MEAN_CORRECTABLE_TRANSFORMS:
+            return
+        oof_preds, oof_labels = result.oof_predictions, result.oof_labels
+        ratio = None if oof_preds is None or oof_labels is None else total_ratio(oof_labels, oof_preds)
+        if ratio is None or abs(1 / ratio - 1) <= MAX_TOTAL_MISS:
+            return
+        advice = (
+            "build_final_model applies the correction, but CV scores don't include it."
+            if result.mean_correction == "ratio"
+            else "Totals from this model will be off; mean_correction='ratio' rescales its final predictions."
+        )
+        result.cv_warnings.append(
+            f"[transform] {result.best_model_name} with y_transform='{result.y_transform}' predicts "
+            f"{1 / ratio:.2f} of the observed out-of-fold total, because inverting the transform "
+            f"doesn't recover the mean. {advice}"
+        )
+
+    def _score_holdout(self, result: PipelineResult) -> PipelineResult:
+        """
+        Fit the final configuration on the dev rows and score it once on the holdout rows.
+
+        Reuses CrossValidator.run with a one-fold split over dev + holdout, so scaling,
+        per-fold winsorize clipping and inverse transforms match the CV runs exactly.
+        No-op without a holdout. Adds a [holdout] warning when the holdout score is worse
+        than the CV score by more than two fold standard deviations, and (classification)
+        when the holdout holds fewer than MIN_HOLDOUT_MINORITY rows of its rarest class.
+        """
+        if result.holdout_store is None:
+            return result
+        assert result.features is not None and result.best_model_value is not None
+        feature_stage = result.best_feature_stage or result.best_stage
+        reduced_names = (
+            result.features_reduced.feature_names
+            if feature_stage == "reduced" and result.features_reduced is not None
+            else None
+        )
+        store = stage_store(
+            concat_stores(result.features, result.holdout_store),
+            result.y_transform,
+            reduced_names,
+        )
+        cv_result = self._cv.run(
+            self._get_model(result.best_model_name),
+            store.X,
+            store.y,
+            best_params=result.best_params,
+            y_true=store.y_true,
+            inverse_fn=self._get_inverse_fn(store),
+            train_target_fn=get_train_target_fn(store.y_transform),
+            _splitter=FixedSplit(result.features.n_samples, store.n_samples),
+        )
+        if not cv_result.folds:
+            result.cv_warnings.append("[holdout] Fitting the final configuration on the dev rows failed.")
+            return result
+
+        result.holdout_cv_result = cv_result
+        metadata = self._metadata_with(stage="holdout")
+        if result.y_transform:
+            metadata = replace(metadata, y_transform=result.y_transform)
+        result.holdout_df = aggregate_metrics(compute_metrics_all([cv_result], metadata=metadata), group_by_stage=False)
+        if self.config.task_type == TaskType.CLASSIFICATION:
+            holdout_y = result.holdout_store.y
+            n_minority = min(int(np.sum(holdout_y == c)) for c in np.unique(store.y))
+            if n_minority < MIN_HOLDOUT_MINORITY:
+                result.cv_warnings.append(
+                    f"[holdout] The holdout holds only {n_minority} row(s) of its rarest class, so its "
+                    f"score and the conformal calibration built on it are unreliable. Consider "
+                    "holdout_frac=0 for this target (CV scores and CV-residual conformal) or a larger holdout_frac."
+                )
+
+        holdout_value = float(result.holdout_df.iloc[0][self.config.metric_col])
+        cv_value, cv_std = result.best_model_value, result.best_model_std
+        self._log(f"  Holdout {self.config.metric}={holdout_value:.4f} (CV {cv_value:.4f})")
+        if cv_std is not None and np.isfinite(cv_std):
+            gap = holdout_value - cv_value if self.config.minimize_metric else cv_value - holdout_value
+            if gap > 2 * cv_std:
+                result.cv_warnings.append(
+                    f"[holdout] {self.config.metric} on the holdout ({holdout_value:.4f}) is worse than the "
+                    f"CV estimate ({cv_value:.4f} ± {cv_std:.4f}) by more than 2 fold SDs — the CV score "
+                    "is likely optimistic (selection bias) or the holdout differs from the dev rows."
+                )
+        return result
 
     def _validate_store(self, store: PipelineData) -> None:
         """
@@ -1067,6 +1637,8 @@ class H2MLPipeline:
                 f"store has {store.n_samples} samples but config.n_splits={self.config.n_splits}. "
                 "Provide more data or reduce n_splits."
             )
+        if self.config.metric == "PoissonDev" and np.any(store.y < 0):
+            raise ValueError("metric='PoissonDev' requires a non-negative target.")
         if len(set(store.feature_names)) < len(store.feature_names):
             from collections import Counter
 
@@ -1113,11 +1685,12 @@ class H2MLPipeline:
                 )
             classes, counts = np.unique(store.y, return_counts=True)
             minority_ratio = counts.min() / counts.sum()
-            if minority_ratio < 0.1:
+            if minority_ratio < IMBALANCE_RATIO_THRESHOLD:
                 suggestion = (
-                    "Consider setting handle_imbalance=True in PipelineConfig."
+                    "Consider setting handle_imbalance=True or 'auto' in PipelineConfig."
                     if not self.config.handle_imbalance
-                    else "handle_imbalance=True is active — class_weight='balanced' will be applied."
+                    else f"handle_imbalance={self.config.handle_imbalance!r} is active — "
+                    "class_weight='balanced' will be applied."
                 )
                 logger.warning(
                     f"Class imbalance detected: minority class ratio={minority_ratio:.3f} "
@@ -1136,6 +1709,125 @@ class H2MLPipeline:
             if r.failed_folds
         ]
 
+    def _check_metric_suitability(self, y: np.ndarray, fold_indices: list[tuple[np.ndarray, np.ndarray]]) -> list[str]:
+        """Warn when the data makes config.metric an unreliable selection criterion.
+
+        Advisory only — the metric encodes how predictions will be used, which the data
+        cannot tell, so it is never changed. Only conditions that affect the chosen metric
+        are reported. y is the original-scale target; fold_indices are the step-1 folds.
+        """
+        metric = self.config.metric
+        test_ys = [y[te] for _, te in fold_indices]
+        msgs: list[str] = []
+
+        if self.config.task_type == TaskType.CLASSIFICATION:
+            classes, counts = np.unique(y, return_counts=True)
+            minority_ratio = counts.min() / counts.sum()
+            minority = classes[counts.argmin()]
+            if metric == "AUC" and minority_ratio < IMBALANCE_RATIO_THRESHOLD:
+                msgs.append(
+                    f"AUC with minority class ratio={minority_ratio:.3f}: AUC can look optimistic "
+                    "when negatives dominate. Consider 'AUCPR' or 'Brier'."
+                )
+            if metric in ("AUC", "AUCPR"):
+                n_single = sum(len(np.unique(yt)) < 2 for yt in test_ys)
+                if n_single:
+                    msgs.append(
+                        f"{metric}: {n_single}/{len(test_ys)} test fold(s) hold a single class, so "
+                        f"{metric} is NaN there and the mean uses fewer folds. Consider 'Brier' or 'LogLoss'."
+                    )
+            if metric == "AUCPR":
+                shares = [np.mean(yt == minority) for yt in test_ys]
+                if max(shares) > PREVALENCE_SPREAD_RATIO * min(shares):
+                    msgs.append(
+                        f"AUCPR: minority-class share varies across test folds "
+                        f"({min(shares):.3f}-{max(shares):.3f}); AUCPR's baseline is the prevalence, "
+                        "so fold scores are not comparable. Check the fold std, or consider 'Brier'."
+                    )
+            if metric == "F1" and self._class_weight_active:
+                msgs.append(
+                    "F1 with class_weight='balanced': weighting shifts the effective threshold, so F1 "
+                    "partly ranks thresholds rather than models. Consider a threshold-free metric."
+                )
+        else:
+            if metric == "R2":
+                total_var = np.var(y)
+                n_low = sum(np.var(yt) < LOW_FOLD_VARIANCE_RATIO * total_var for yt in test_ys)
+                if n_low:
+                    msgs.append(
+                        f"R2: {n_low}/{len(test_ys)} test fold(s) have y variance below "
+                        f"{LOW_FOLD_VARIANCE_RATIO:.0%} of the overall variance, where R2 is unstable "
+                        "and can be strongly negative. Consider 'RMSE' or 'MAE'."
+                    )
+            if metric == "RMSE":
+                sq_dev = np.sort((y - y.mean()) ** 2)[::-1]
+                n_top = max(1, int(np.ceil(0.01 * len(y))))
+                tail_share = sq_dev[:n_top].sum() / sq_dev.sum() if sq_dev.sum() > 0 else 0.0
+                if tail_share > TAIL_SSD_SHARE:
+                    msgs.append(
+                        f"RMSE: the top 1% of observations carry {tail_share:.0%} of the squared "
+                        "deviation, so a few points dominate RMSE. Consider 'MAE' or a winsorized transform."
+                    )
+            if metric == "MAE":
+                zero_share = np.mean(y == 0)
+                if zero_share >= 0.5:
+                    msgs.append(
+                        f"MAE with {zero_share:.0%} zeros in y: the median is 0, so MAE rewards "
+                        "predicting ~0 everywhere. Consider 'RMSE' or a delta (hurdle) model."
+                    )
+
+        for m in msgs:
+            logger.warning(f"[metric] {m}")
+        return msgs
+
+    def _check_ranking_robustness(self, robust_df: pd.DataFrame, step: int) -> list[str]:
+        """Warn when the winner is a paired-fold tie or loses on the counterpart-family metric.
+
+        Advisory only — see h2ml.evaluation.ranking. Only prefer_reduced_on_tie (step 3)
+        acts on these ties; the warnings themselves never change the selection.
+        """
+        msgs = [f"step {step}: {m}" for m in ranking_warnings(robust_df, self.config.metric)]
+        for m in msgs:
+            logger.warning(f"[ranking] {m}")
+        return msgs
+
+    def _flat_warnings(self, result: PipelineResult, agg_df: pd.DataFrame, fold_df: pd.DataFrame) -> list[str]:
+        """[selection] warnings for the candidates behind one selection."""
+        return flat_warnings(agg_df, self.config.metric, result.selection_scoring, self.config.n_splits, fold_df)
+
+    def _prefer_reduced_on_tie(
+        self,
+        result: PipelineResult,
+        robust_df: pd.DataFrame,
+        all_stages_agg: pd.DataFrame,
+        best_row: pd.Series,
+    ) -> pd.Series:
+        """1-SE rule: swap a default-stage winner for the best-ranked tied reduced candidate.
+
+        "Tied" is the Indistinguishable flag of ranking_robustness (paired-fold gap within
+        one corrected SE). Returns best_row unchanged when the winner is already reduced,
+        the reduced set kept every feature (stages identical), or no reduced candidate ties.
+        Otherwise records the switch in cv_warnings and returns the reduced agg row.
+        """
+        if best_row["Stage"] != "default":
+            return best_row
+        assert result.features is not None and result.features_reduced is not None
+        if result.features_reduced.n_features == result.features.n_features:
+            return best_row
+        tied = robust_df.loc[(robust_df["Stage"] == "reduced") & robust_df["Indistinguishable"] & ~robust_df["Is_Flat"]]
+        if tied.empty:
+            return best_row
+        pick = tied.iloc[0]  # robust_df is sorted by rank under the selection metric
+        keys = [c for c in KEY_COLS if c in robust_df.columns]
+        new_row = all_stages_agg.loc[(all_stages_agg[keys] == pick[keys]).all(axis=1)].iloc[0]
+        msg = (
+            f"step 3: prefer_reduced_on_tie → {pick['Model']} | reduced "
+            f"(tied with {best_row['Model']} | default: gap {pick['Winner_Gap']:.4g} ≤ SE {pick['Gap_SE']:.4g})"
+        )
+        logger.info(msg)
+        result.cv_warnings.append(msg)
+        return new_row
+
     def _get_inverse_fn(self, store: PipelineData):
         """Return the inverse transform callable for the store's y_transform, or None."""
         if store.y_transform is None:
@@ -1145,12 +1837,16 @@ class H2MLPipeline:
         return INVERSE_TRANSFORMS.get(store.y_transform)
 
     def _is_opt_enabled(self, estimator_name: str) -> bool:
-        """Return False if the model's registry entry has opt_enabled=False."""
+        """Return True only if the model has a registry entry that run_study can tune.
+
+        Mirrors get_entry(): an estimator outside the registry, or one with
+        opt_enabled=False or no param_fn, has no search space and is skipped.
+        """
         from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
 
         registry = CLASSIFIER_REGISTRY if self.config.task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
         entry = registry.get(estimator_name)
-        return entry.opt_enabled if entry is not None else True
+        return entry is not None and entry.opt_enabled and entry.param_fn is not None
 
     def _supports_class_weight(self, estimator_name: str) -> bool:
         """Return True if the classifier's registry entry has supports_class_weight=True."""
@@ -1159,26 +1855,58 @@ class H2MLPipeline:
         entry = CLASSIFIER_REGISTRY.get(estimator_name)
         return entry.supports_class_weight if entry is not None else False
 
-    def _inject_class_weights(self) -> None:
-        """Set class_weight='balanced' on every supporting classifier in self.models."""
-        from h2ml.utils.registry import CLASSIFIER_REGISTRY
+    def _inject_class_weights(self, class_weight: Optional[str] = "balanced") -> None:
+        """Set class_weight on every supporting classifier in self.models.
 
+        Looked up by estimator class name — the same key step 4 uses — so a model
+        given a custom display name (e.g. name="LR") is weighted consistently.
+        """
         injected = []
         for model in self.models:
-            entry = CLASSIFIER_REGISTRY.get(model.name)
-            if entry is not None and entry.supports_class_weight:
-                model.estimator.set_params(class_weight="balanced")
+            if self._supports_class_weight(model.estimator.__class__.__name__):
+                model.estimator.set_params(class_weight=class_weight)
                 injected.append(model.name)
         if injected:
-            logger.debug(f"handle_imbalance: class_weight='balanced' set on {injected}")
+            logger.debug(f"handle_imbalance: class_weight={class_weight!r} set on {injected}")
 
-    def _get_default_params(self, estimator_name: str) -> dict:
-        """Return the default_kwargs for a model from the registry."""
-        from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
+    def _resolve_class_weights(self, y: np.ndarray, log: bool = True) -> None:
+        """Resolve handle_imbalance="auto" against the run's target.
 
-        registry = CLASSIFIER_REGISTRY if self.config.task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
-        entry = registry.get(estimator_name)
-        return entry.default_kwargs if entry is not None else {}
+        Injects class_weight="balanced" when the minority-class ratio is below
+        IMBALANCE_RATIO_THRESHOLD. If an earlier run on this pipeline injected
+        weights and this target is balanced, they are reset to None so a reused
+        pipeline does not carry a stale decision. No-op unless "auto" + classification.
+        log=False leaves the decision unlogged (multi_metric logs one line for all metrics).
+        """
+        if self.config.handle_imbalance != "auto" or self.config.task_type != TaskType.CLASSIFICATION:
+            return
+        _, counts = np.unique(y, return_counts=True)
+        minority_ratio = counts.min() / counts.sum()
+        active = bool(minority_ratio < IMBALANCE_RATIO_THRESHOLD)
+        if active:
+            self._inject_class_weights("balanced")
+        elif self._class_weight_active:
+            self._inject_class_weights(None)
+        self._class_weight_active = active
+        if not log:
+            return
+        logger.info(
+            f"handle_imbalance='auto': minority class ratio={minority_ratio:.3f} → "
+            f"class_weight={'balanced' if active else 'not applied'}"
+        )
+
+    def _record_best_estimator(self, result: PipelineResult) -> None:
+        """Store an unfitted clone of the winning model's estimator on result.
+
+        build_final_model refits from this instead of rebuilding from the registry,
+        so custom display names, non-registry estimators and constructor args all
+        survive into the deployed model.
+        """
+        from sklearn.base import clone
+
+        model = self._get_model(result.best_model_name)
+        result.best_base_estimator = clone(model.estimator)
+        result.best_requires_scaling = model.requires_scaling
 
     def _get_model(self, name: Optional[str]) -> ModelWrapper:
         if name is None:

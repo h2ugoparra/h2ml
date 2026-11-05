@@ -9,27 +9,17 @@ A 4-step AutoML pipeline for tabular data that wraps sklearn-compatible estimato
 ## Installation
 
 ```bash
-pip install h2ml
-# or
 uv add h2ml
+# or
+pip install h2ml
 ```
-
-The [`h2mare`](https://github.com/h2ugoparra/h2mare) companion package is included with the base install.
 
 For boosting libraries (LightGBM, XGBoost, CatBoost):
 
 ```bash
-pip install h2ml[boosting]
-# or
 uv add h2ml[boosting]
-```
-
-For spatial map inference via `h2ml.geo.geo_predict` (adds `cartopy` and `polars` for `predict_map`):
-
-```bash
-pip install h2ml[geo]
 # or
-uv add h2ml[geo]
+pip install h2ml[boosting]
 ```
 
 A runnable example using public sklearn datasets is in [`examples/quickstart.ipynb`](examples/quickstart.ipynb).
@@ -71,14 +61,14 @@ config = PipelineConfig(
     verbose=True,
 )
 pipeline = H2MLPipeline(config=config)
-result = pipeline.run(store, transforms=["log", "sqrt", "count", "winlog"])
+result = pipeline.run(store, transforms=["log", "sqrt", "count", "wincount"])
 ```
 
-Available transform names: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`, `"winlog"`, `"winsqrt"`. Winsorize-based transforms are skipped silently when no upper outliers are found.
+Available transform names: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`, `"winlog"`, `"winsqrt"`. Winsorize-based transforms cap `y` at the 99th percentile of its non-zero values, and are skipped silently when nothing lies above that cap.
 
 ### Partial runs
 
-All partial-run methods accept an optional `transforms` list (same as `pipeline.run()`).
+The methods that start at step 1 accept an optional `transforms` list (same as `pipeline.run()`); the resume methods take an optional `transform_stores` and otherwise rebuild the winning transform's store from `result.features`.
 
 ```python
 # Screen models only (step 1)
@@ -93,7 +83,6 @@ print(result.features_reduced.feature_names)
 result = pipeline.run_step1_to_step3(store)
 
 # Resume from step 3 using a result that already has features_reduced.
-# Pass transform_stores if the original run used y-transforms.
 result = pipeline.run_from_step3(result)
 
 # Re-run HPO only on a previously saved result (skips steps 1–3).
@@ -109,7 +98,7 @@ result = pipeline.run_step4_only(result)
 |------|-------------|-------------------------------|
 | 1 | K-fold CV all models (× optional y-transforms) on all features | `best_model_name`, `step1_agg_df` |
 | 2 | Fit best model → SHAP importance → correlation-based feature drop | `features_reduced`, `selector` |
-| 3 | K-fold CV all models on reduced features (winning transform only); compare vs step 1 | `best_stage` (`"default"` or `"reduced"`), `best_feature_stage` |
+| 3 | K-fold CV all models on reduced features (winning transform only); compare vs step 1 (optionally preferring reduced on ties — `prefer_reduced_on_tie`) | `best_stage` (`"default"` or `"reduced"`), `best_feature_stage` |
 | 4 | Optuna HPO on the winning (model, stage, transform) | `best_params`, `step4_agg_df` |
 
 Step 4 is skipped when the winning model has `opt_enabled=False` in the registry (e.g. LogisticRegression, GaussianNB, KNeighborsClassifier).
@@ -119,16 +108,29 @@ Step 4 is skipped when the winning model has `opt_enabled=False` in the registry
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `task_type` | `"classification"` | `"classification"` or `"regression"` (case-insensitive); a `TaskType` member is also accepted |
-| `metric` | `"AUC"` | Short metric name for model selection and HPO. Minimisation direction is derived automatically. Classification: `"AUC"`, `"AUC_PR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. |
+| `metric` | `"AUC"` | Short metric name for model selection and HPO. Minimisation direction is derived automatically. Classification: `"AUC"`, `"AUCPR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`, `"PoissonDev"` (non-negative counts or rates). `"AUC_PR"` is a deprecated alias for `"AUCPR"`. |
 | `n_splits` | `5` | Folds for steps 1 and 3 |
+| `n_jobs` | `-1` | Parallel workers for CV in steps 1 and 3; must be non-zero |
 | `opt_n_splits` | `3` | Folds used inside Optuna (fewer = faster) |
 | `corr_threshold` | `0.7` | Correlation threshold for dropping features in step 2. A feature is dropped if it exceeds this value in any of Pearson, Spearman, or Kendall correlation with a higher-ranked feature. |
 | `n_trials` | `50` | Optuna trials in step 4 |
-| `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; best is kept |
+| `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; best is kept. `n_trials` is split across them |
 | `min_features` | `1` | Minimum features retained after the correlation filter |
-| `handle_imbalance` | `False` | Inject `class_weight="balanced"` for supporting classifiers |
+| `handle_imbalance` | `False` | Inject `class_weight="balanced"` for supporting classifiers; `"auto"` only when the minority-class ratio is below 0.1 |
+| `max_vif` | `None` | Step 2: after the correlation filter, drop features whose variance inflation factor exceeds this value; `None` skips |
+| `prefer_reduced_on_tie` | `False` | Step 3: select a reduced-feature candidate over an all-features winner when the two are statistically tied on paired folds (1-SE rule) |
+| `select_features_in_folds` | `False` | Step 3: re-run feature selection on each fold's training rows, so the default-vs-reduced comparison is unbiased (about `n_splits`× the step-2 cost) |
+| `selection_scoring` | `"pooled"` | Regression selection in steps 1, 3 and 4: one score over all out-of-fold rows. `"fold_mean"` uses the mean of fold scores with a fold-spread penalty. Classification always uses the fold mean |
+| `mean_correction` | `None` | `"ratio"`: the final model rescales `log`/`sqrt`-family predictions so their total matches the observed out-of-fold total. CV scores and selection stay uncorrected |
+| `holdout_frac` | `0.0` | Fraction of rows set aside before step 1 and scored once on the final configuration |
+| `holdout_strategy` | `"auto"` | `"auto"` (whole spatial blocks with coords, else random), `"random"` or `"time"` (latest rows by `store.times`) |
+| `holdout_refit` | `"dev"` | Rows the final model fits on with a holdout: `"dev"` or `"all"` |
+| `holdout_min_minority` | `None` | Drop the holdout when it would hold fewer rare-class (or non-zero) rows than this |
+| `time_bin_resolution` | `"month"` | Time bins for local conformal cells: `"month"` or `"season"` |
 | `random_state` | `42` | Global seed |
 | `verbose` | `False` | Log step-by-step progress to stdout |
+
+See the [full reference](https://h2ugoparra.github.io/h2ml/configuration/) for details.
 
 ### Spatial CV parameters
 
@@ -143,6 +145,7 @@ Set `store.coords` to an `(n_samples, 2)` array of spatial coordinates to activa
 | `exact_max_samples` | `5000` | n ≤ this → exact scipy AHC; n > → approximate sklearn AHC with k-NN graph |
 | `knn_neighbors` | `15` | k for the k-NN connectivity graph in approximate AHC |
 | `pca_components` | `0.95` | Variance retained by PCA on block covariates in `spcv` stage 2 |
+| `spcv_use_target` | `True` | Include the target view in `spcv` fold assignment; holdouts and `nested_cv` outer folds never use it |
 
 ## Supported models
 
@@ -150,24 +153,26 @@ Set `store.coords` to an `(n_samples, 2)` array of spatial coordinates to activa
 
 **Regressors** — PoissonRegressor, KNeighborsRegressor, RandomForestRegressor, GradientBoostingRegressor, HistGradientBoostingRegressor, SVR, ExtraTreesRegressor, BaggingRegressor, AdaBoostRegressor, LGBMRegressor\*, CatBoostRegressor\*, XGBRegressor\*
 
-\* Registered only when the package is installed. Custom models can be injected by passing a `models` list directly to `H2MLPipeline`.
+\* Registered only when the package is installed. Custom models can be injected by passing a `models` list directly to `H2MLPipeline`; see [Custom Models and Search Spaces](https://h2ugoparra.github.io/h2ml/guides/models/).
 
 ## `PipelineResult`
 
 ```python
 result.summary()                  # combined agg DataFrame across all completed stages
-result.summary("AUC_Test_Mean")   # sorted by metric
+result.summary("AUC_Test_Mean")   # sorted by metric; "_Test_Mean" = mean of per-fold held-out scores
+                                  # (regression also has "_Test_Pooled", the score selection uses)
 result.completed_steps            # e.g. [1, 2, 3, 4]
 result.best_model_name            # winning model
 result.best_stage                 # "default" | "reduced" | "optimized"
 result.best_feature_stage         # "default" | "reduced" — feature store used by build_final_model()
 result.y_transform                # winning y-transform (regression only)
 result.cv_type                    # "spatial" | "random" — set from store.coords
-result.cv_warnings                # list of warning strings for models with failed folds
+result.cv_warnings                # failed folds and [metric], [ranking], [selection], [transform], [holdout] flags
+result.ranking_robustness()       # paired-fold ties and per-metric ranks of the selection
 result.step1_agg_df               # per-model mean/std metrics from step 1
 result.features_reduced           # PipelineData after feature selection
 result.selector.importance_summary()  # SHAP importances as a DataFrame
-result.oof_predictions            # assembled OOF predictions (None if step 1 only)
+result.oof_predictions            # assembled OOF predictions of the selected configuration
 result.oof_labels                 # true labels paired with oof_predictions
 result.best_cv_result             # CVResult for the final winning model
 ```
@@ -191,7 +196,7 @@ final = FinalModel.load("models/final.pkl")
 
 ### Conformal prediction intervals
 
-`build_final_model()` automatically calibrates a conformal predictor from the out-of-fold CV predictions — no held-out data required.
+`build_final_model()` automatically calibrates a conformal predictor from the out-of-fold CV predictions — no held-out data required. With `holdout_frac > 0` it uses the holdout residuals instead.
 
 ```python
 final = result.build_final_model()
@@ -208,13 +213,13 @@ sets = final.predict_set(X_new, alpha=0.10)
 
 Both methods work on any input — held-out test samples, a prediction grid, spatial rasters, etc. The `alpha` parameter controls the miscoverage level: `alpha=0.10` targets ≥ 90% coverage.
 
-**How it works:** nonconformity scores (`|y − ŷ|` for regression, `1 − p(true class)` for classification) are computed from the OOF folds and a single threshold `q` is stored. At inference time the interval is `ŷ ± q` (regression) or the set of classes with score ≤ `q` (classification).
+**How it works:** nonconformity scores (`|y − ŷ|` for regression, `1 − p(true class)` for classification) are computed from the OOF folds (or the holdout) and a threshold `q` is stored. At inference time the interval is `ŷ ± q` (regression) or the set of classes with score ≤ `q` (classification).
 
 **Limitations:**
 
-- Intervals are **constant-width** — the same `q` is added to every prediction, so regions of the input space with higher inherent variance get the same interval as low-variance regions.
+- By default intervals are **constant-width** — the same `q` is added to every prediction. With `store.coords` (and optionally `store.times`), passing `coords=`/`times=` to `predict_interval` uses per-block thresholds instead; see [spatio-temporal local calibration](https://h2ugoparra.github.io/h2ml/guides/conformal/#spatio-temporal-local-calibration).
 - Coverage is **marginal**, not conditional: the guarantee holds on average over new draws from the training distribution. Predictions on out-of-distribution inputs (e.g. spatial extrapolation beyond the training extent) may not achieve nominal coverage.
-- If `result.y_transform` is set, the interval is in the **transformed space**. Apply `INVERSE_TRANSFORMS[result.y_transform]` to the bounds if you need original-scale intervals.
+- If `result.y_transform` is set, `predict()` and `predict_interval()` both return the **original scale** — don't apply the inverse transform to their output. Intervals stay symmetric, so they can't follow the skew of a log or sqrt target.
 
 ### Delta model (presence/abundance)
 
@@ -276,8 +281,8 @@ Pass `n_folds` to override automatic fold-count inference — useful when compar
 
 ```python
 from h2ml.plots.plots import (
-    pipeline_scores,    # model scores across all three pipeline stages
-    cv_diagnostics,     # classification or regression diagnostic panel
+    pipeline_scores,    # model scores across the default, reduced and optimized stages
+    cv_diagnostics,     # classification or regression diagnostic panel (takes a CVResult)
     shap_importance,    # horizontal bar chart of SHAP feature importances
     shap_summary_plot,  # SHAP beeswarm for the final best model
     shap_dependence,    # scatter + lowess for top-N features
@@ -291,7 +296,7 @@ All functions accept an optional `save_path`; omit it to call `plt.show()` inste
 
 ## Spatial inference (h2mare integration)
 
-`h2ml.geo.geo_predict` provides functions for spatial-temporal prediction on gridded data via the `h2mare` package. Requires the `[geo]` extra (`cartopy` and `polars`).
+`h2ml.geo.geo_predict` provides functions for spatial-temporal prediction on gridded data via the `h2mare` package, which is a core dependency — no extra is required.
 
 ```python
 from h2ml.geo.geo_predict import predict_map

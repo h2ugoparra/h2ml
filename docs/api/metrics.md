@@ -16,6 +16,14 @@
 
 ::: h2ml.evaluation.metrics.select_best
 
+## ranking_robustness
+
+::: h2ml.evaluation.ranking.ranking_robustness
+
+## ranking_warnings
+
+::: h2ml.evaluation.ranking.ranking_warnings
+
 ## compare_results
 
 ::: h2ml.evaluation.compare.compare_results

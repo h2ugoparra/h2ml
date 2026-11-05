@@ -41,6 +41,8 @@ class SpatialCVConfig:
         pca_components:    Variance retained by PCA on block covariates (SPCV).
         exact_max_samples: Sample threshold for exact vs approximate AHC (SPCV).
         knn_neighbors:     k for the k-NN connectivity graph in approximate AHC.
+        use_target:        Include the target view in SPCV fold assignment. False makes
+                           folds independent of y.
     """
 
     n_blocks_per_fold: int = 5
@@ -50,3 +52,4 @@ class SpatialCVConfig:
     pca_components: float = 0.95
     exact_max_samples: int = 5_000
     knn_neighbors: int = 15
+    use_target: bool = True

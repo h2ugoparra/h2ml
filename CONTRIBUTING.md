@@ -8,11 +8,9 @@ cd h2ml
 uv sync
 ```
 
-The test suite does not require the `[geo]` optional extras. If you need spatial inference features, install the geo extra (pulls `h2mare` from PyPI):
+`uv sync` installs everything the test suite needs, including the spatial inference path: `h2mare` and `polars` are core dependencies, and `h2mare` pulls in `cartopy`.
 
-```bash
-uv sync --extra geo
-```
+There is no `[geo]` extra — it was removed in 0.4.0 because every package it listed was already a core dependency.
 
 ## Running tests
 
@@ -27,7 +25,18 @@ uv run pytest tests/pipeline/
 uv run pytest tests/pipeline/test_pipeline.py::TestFullRun::test_all_four_steps_completed
 ```
 
-There are no lint or build steps — the project is pure Python.
+## Linting
+
+CI runs `ruff` over both `h2ml/` and `tests/`. Run it before pushing:
+
+```bash
+uv run ruff check h2ml/ tests/
+uv run ruff format h2ml/ tests/
+```
+
+CI checks formatting with `ruff format --check`, which fails on unformatted files rather than fixing them — so run `ruff format` locally, not just `ruff check`.
+
+These run in the `quality` job, which is informational by default rather than a required merge gate. Treat a red `quality` check as something to fix regardless.
 
 ## Adding a new model
 
@@ -35,7 +44,7 @@ All models are registered in `h2ml/utils/registry.py`. Add a `ModelEntry` to `CL
 
 ```python
 from sklearn.linear_model import ElasticNet
-from h2ml.optimization.params import regressors as rp   # add param_fn here
+from h2ml.core.param_spaces import regressors as rp   # add param_fn here
 
 REGRESSOR_REGISTRY["ElasticNet"] = ModelEntry(
     model_cls        = ElasticNet,
@@ -46,7 +55,7 @@ REGRESSOR_REGISTRY["ElasticNet"] = ModelEntry(
 )
 ```
 
-Then add the corresponding Optuna parameter function in `h2ml/optimization/params/regressors.py` (or `classifiers.py`):
+Then add the corresponding Optuna parameter function in `h2ml/core/param_spaces/regressors.py` (or `classifiers.py`):
 
 ```python
 def elasticnet_r_params(trial) -> dict:
@@ -56,7 +65,9 @@ def elasticnet_r_params(trial) -> dict:
     }
 ```
 
-The registry is the single source of truth — no other files need changing for the model to be picked up by `build_models()`, the CV engine, and the optimizer.
+The registry is the single source of truth for `build_models()`, the CV engine, and the optimizer — those three need no other changes.
+
+**SHAP routing is the exception.** `_select_explainer` in `h2ml/features/shap_importance.py` falls through to `shap.TreeExplainer` for any model it does not recognise, so a **non-tree** model that is only added to the registry will fail in step 2. Add its class name to `_GENERIC_EXPLAINER_MODELS` under the right `TaskType` to route it through KernelSHAP (`predict` / `predict_proba` based) instead.
 
 For optional heavy dependencies (LightGBM, XGBoost, CatBoost), wrap the import in `try/except ImportError` as the existing entries do.
 
@@ -78,5 +89,5 @@ If the transform can legitimately return `None` (e.g. winsorize when there are n
 
 - Open an issue first for non-trivial changes so we can align on the approach.
 - Keep PRs focused on a single concern.
-- Include or update tests for any changed behaviour. Run `uv run pytest` before pushing.
-- The CI matrix tests Python 3.11 and 3.12 — avoid features not available on 3.11.
+- Include or update tests for any changed behaviour. Run `uv run pytest` and both `ruff` commands (see [Linting](#linting)) before pushing.
+- The CI matrix tests Python 3.11, 3.12 and 3.13 (`tox` uses the same three). The supported floor is 3.11 — avoid features not available there. Note that `.python-version` pins **3.13** locally, so a syntax or stdlib feature that works on your machine can still fail the 3.11 leg; run `uv run tox` to check all three before pushing.

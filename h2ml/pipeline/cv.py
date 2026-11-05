@@ -13,6 +13,7 @@ from typing import Any, Callable, Optional, Sequence, cast
 import numpy as np
 from joblib import Parallel, delayed
 from loguru import logger
+from sklearn.base import clone
 from sklearn.preprocessing import StandardScaler
 
 from h2ml.core.base import PredictorStep, TaskType
@@ -62,6 +63,8 @@ class CrossValidator:
         inverse_fn: Optional[Callable] = None,
         coords: Optional[np.ndarray] = None,
         spatial: Optional[SpatialCVConfig] = None,
+        train_target_fn: Optional[Callable] = None,
+        fold_columns: Optional[list[np.ndarray]] = None,
         _splitter=None,
         _scaled_folds: Optional[list] = None,
     ) -> CVResult:
@@ -81,6 +84,11 @@ class CrossValidator:
             spatial:     Spatial-CV parameters used to build the splitter when coords
                          are given and no pre-built _splitter is supplied. Defaults to
                          SpatialCVConfig() (block splitter, euclidean).
+            train_target_fn: Fitted on and applied to each training fold's targets before
+                         fit (e.g. winsorize clipping), so its statistics never see test rows.
+            fold_columns: Optional column indices into X, one array per fold — each fold
+                         fits and predicts on its own feature subset (features selected
+                         on that fold's training rows only). None uses every column.
             _splitter:   Pre-built splitter to reuse across models (internal, set by run_all).
 
         Returns:
@@ -95,6 +103,10 @@ class CrossValidator:
                 y=y,
                 coords=coords,
                 spatial=spatial,
+            )
+        if fold_columns is not None and len(fold_columns) != splitter.get_n_splits():
+            raise ValueError(
+                f"fold_columns has {len(fold_columns)} entries but the splitter yields {splitter.get_n_splits()} folds."
             )
         cv_result = CVResult(model_name=step.name, task_type=step.task_type)
 
@@ -115,11 +127,17 @@ class CrossValidator:
             y_train_true = y_true[train_idx] if y_true is not None else y_train
             y_test_true = y_true[test_idx] if y_true is not None else y_test
 
+            if train_target_fn is not None:
+                y_train = train_target_fn(y_train)
+
             # Use pre-computed scaled arrays when available; otherwise fit scaler here.
             if _scaled_folds is not None:
                 X_train, X_test = _scaled_folds[fold_id]
             else:
                 X_train, X_test = self._maybe_scale(step, X_train, X_test)
+            # Scaling is per column, so subsetting after it equals scaling the subset.
+            if fold_columns is not None:
+                X_train, X_test = X_train[:, fold_columns[fold_id]], X_test[:, fold_columns[fold_id]]
 
             # Re-instantiate with best_params if provided (optimized setting)
             fold_step = self._build_fold_model(step, best_params)
@@ -161,6 +179,8 @@ class CrossValidator:
         inverse_fn: Optional[Callable] = None,
         coords: Optional[np.ndarray] = None,
         spatial: Optional[SpatialCVConfig] = None,
+        train_target_fn: Optional[Callable] = None,
+        fold_columns: Optional[list[np.ndarray]] = None,
         _splitter: Any = None,
     ) -> list[CVResult]:
         """
@@ -174,6 +194,8 @@ class CrossValidator:
             n_jobs:      Number of parallel workers. -1 = one thread per CPU.
             y_true:      Original-scale target array for back-transformed metrics.
             inverse_fn:  Callable to back-transform predictions before metric computation.
+            train_target_fn: Per-fold training-target step forwarded to run().
+            fold_columns: Per-fold column indices forwarded to run().
             _splitter:   Pre-built splitter to reuse across pipeline steps. When provided,
                          splitter construction is skipped entirely.
         """
@@ -219,6 +241,8 @@ class CrossValidator:
                 inverse_fn=inverse_fn,
                 coords=coords,
                 spatial=spatial,
+                train_target_fn=train_target_fn,
+                fold_columns=fold_columns,
                 _splitter=prebuilt_splitter,
                 _scaled_folds=sf,
             )
@@ -294,13 +318,14 @@ class CrossValidator:
         best_params: Optional[dict],
     ) -> PredictorStep:
         """
-        If best_params provided, return a fresh instance with those params.
-        Otherwise return the step as-is (default params).
+        If best_params provided, return a fresh instance with those params applied on
+        top of the step's own estimator (clone + set_params), so constructor arguments
+        not in best_params are kept. Otherwise return the step as-is (default params).
         """
         if best_params is None:
             return step
 
-        new_estimator = step.estimator.__class__(**best_params)
+        new_estimator = clone(step.estimator).set_params(**best_params)
 
         return step.__class__(
             estimator=new_estimator,  # type: ignore

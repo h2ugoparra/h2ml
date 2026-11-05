@@ -14,12 +14,19 @@ Covers:
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from h2ml.features.feature_store import PipelineData
-from h2ml.persistence.result_io import load_result, save_result
+from h2ml.persistence.result_io import (
+    _SAVED_FIELDS,
+    _UNSAVED_FIELDS,
+    load_result,
+    save_result,
+)
 from h2ml.pipeline.pipeline import PipelineResult
 
 # ---------------------------------------------------------------------------
@@ -166,6 +173,49 @@ class TestScalarRoundTrip:
         loaded = load_result(tmp_path / "run")
         assert loaded.cv_type == "random"
 
+    def test_class_weight_balanced_preserved(self, tmp_path):
+        result = _full_result()
+        result.class_weight_balanced = True
+        save_result(result, tmp_path / "run")
+        loaded = load_result(tmp_path / "run")
+        assert loaded.class_weight_balanced is True
+
+    def test_class_weight_balanced_defaults_to_false_when_absent(self, tmp_path):
+        """Results saved before class_weight_balanced was persisted should load as False."""
+        result = _full_result()
+        result.class_weight_balanced = True
+        save_result(result, tmp_path / "run")
+        import json
+
+        meta_path = tmp_path / "run" / "metadata.json"
+        meta = json.loads(meta_path.read_text())
+        meta.pop("class_weight_balanced", None)
+        meta_path.write_text(json.dumps(meta))
+        loaded = load_result(tmp_path / "run")
+        assert loaded.class_weight_balanced is False
+
+    def test_best_base_estimator_and_scaling_preserved(self, tmp_path):
+        from sklearn.linear_model import LogisticRegression
+
+        result = _full_result()
+        result.best_base_estimator = LogisticRegression(C=0.25, max_iter=77)
+        result.best_requires_scaling = True
+        save_result(result, tmp_path / "run")
+        loaded = load_result(tmp_path / "run")
+        assert isinstance(loaded.best_base_estimator, LogisticRegression)
+        assert loaded.best_base_estimator.get_params()["C"] == 0.25
+        assert loaded.best_base_estimator.get_params()["max_iter"] == 77
+        assert loaded.best_requires_scaling is True
+
+    def test_best_base_estimator_absent_in_legacy_save(self, tmp_path):
+        """Results saved before best_base_estimator existed load with None, which makes
+        build_final_model fall back to the registry path."""
+        result = _full_result()
+        save_result(result, tmp_path / "run")
+        loaded = load_result(tmp_path / "run")
+        assert loaded.best_base_estimator is None
+        assert loaded.best_requires_scaling is False
+
     def test_cv_warnings_list_preserved(self, tmp_path):
         result = _full_result()
         result.cv_warnings = ["RF: 2/5 fold(s) failed (fold IDs: [0, 1])"]
@@ -234,6 +284,16 @@ class TestDataFrameRoundTrip:
         save_result(result, tmp_path / "run")
         loaded = load_result(tmp_path / "run")
         pd.testing.assert_frame_equal(loaded.step1_agg_df, result.step1_agg_df)
+
+    def test_deprecated_auc_pr_renamed_on_load(self, tmp_path):
+        """Results saved before the AUC_PR → AUCPR rename load under the new names."""
+        result = _full_result()
+        result.metric = "AUC_PR"
+        result.step1_agg_df = pd.DataFrame({"Model": ["LR"], "AUC_PR_Test_Mean": [0.7], "AUC_PR_Gap_Mean": [0.1]})
+        save_result(result, tmp_path / "run")
+        loaded = load_result(tmp_path / "run")
+        assert loaded.metric == "AUCPR"
+        assert list(loaded.step1_agg_df.columns) == ["Model", "AUCPR_Test_Mean", "AUCPR_Gap_Mean"]
 
 
 # ---------------------------------------------------------------------------
@@ -371,3 +431,49 @@ class TestEdgeCases:
         loaded = load_result(tmp_path / "run")
         assert loaded.best_params["n_estimators"] == 100
         assert abs(loaded.best_params["learning_rate"] - 0.1) < 1e-5
+
+
+# ---------------------------------------------------------------------------
+# Field registry drift
+# ---------------------------------------------------------------------------
+
+
+class TestFieldRegistryDrift:
+    """save_result() only warns about unclassified fields, and the warning fires
+    at runtime where nobody reads it. These assert the registries stay in sync
+    with PipelineResult at test time instead."""
+
+    def test_every_field_is_classified(self):
+        """A new PipelineResult field must be added to _SAVED_FIELDS or
+        _UNSAVED_FIELDS — otherwise it is silently dropped on reload."""
+        fields = {f.name for f in dataclasses.fields(PipelineResult)}
+        unaccounted = fields - _SAVED_FIELDS - _UNSAVED_FIELDS
+        assert not unaccounted, (
+            f"PipelineResult fields {sorted(unaccounted)} are in neither registry "
+            "and will be lost on reload — classify them in result_io.py"
+        )
+
+    def test_no_stale_registry_entries(self):
+        """The reverse direction, which the runtime guard does not cover: a
+        renamed or removed field leaves a dead entry behind."""
+        fields = {f.name for f in dataclasses.fields(PipelineResult)}
+        stale = (_SAVED_FIELDS | _UNSAVED_FIELDS) - fields
+        assert not stale, (
+            f"result_io.py registries name {sorted(stale)}, which are not "
+            "PipelineResult fields — drop them or fix the spelling"
+        )
+
+    def test_registries_are_disjoint(self):
+        """A field in both registries makes the save path ambiguous."""
+        overlap = _SAVED_FIELDS & _UNSAVED_FIELDS
+        assert not overlap, f"fields classified as both saved and unsaved: {sorted(overlap)}"
+
+    def test_unsaved_fields_are_none_after_load(self, tmp_path):
+        """The documented contract for the excluded fields: they come back None,
+        rather than carrying a stale value from the saving session."""
+        result = _full_result()
+        save_result(result, tmp_path / "run")
+        loaded = load_result(tmp_path / "run")
+
+        for name in _UNSAVED_FIELDS:
+            assert getattr(loaded, name) is None, f"{name} should be None after load"

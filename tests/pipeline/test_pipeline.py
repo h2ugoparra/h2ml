@@ -33,8 +33,10 @@ from h2ml.evaluation.metrics import RunMetadata
 from h2ml.features.feature_store import PipelineData
 from h2ml.features.selector import FeatureSelector
 from h2ml.pipeline.base import TaskType
+from h2ml.pipeline.cv import CVResult
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig, PipelineResult
 from h2ml.pipeline.step import make_classifier, make_regressor
+from h2ml.preprocessing.transforms import clip_upper_outliers
 
 # ---------------------------------------------------------------------------
 # Shared test data
@@ -69,6 +71,18 @@ def _make_positive_reg_store(seed: int = 7) -> PipelineData:
         X=rng.standard_normal((N_SAMPLES, len(FEATURE_NAMES))),
         feature_names=FEATURE_NAMES,
         y=rng.uniform(0.5, 5.0, size=N_SAMPLES),
+    )
+
+
+def _make_outlier_reg_store(seed: int = 11) -> PipelineData:
+    """Positive regression store with upper outliers — required for winsorize transforms."""
+    rng = np.random.default_rng(seed)
+    y = rng.uniform(0.5, 5.0, size=N_SAMPLES)
+    y[:10] = rng.uniform(30.0, 100.0, size=10)
+    return PipelineData(
+        X=rng.standard_normal((N_SAMPLES, len(FEATURE_NAMES))),
+        feature_names=FEATURE_NAMES,
+        y=y,
     )
 
 
@@ -220,6 +234,22 @@ class TestPipelineConfig:
         with pytest.raises(ValueError, match="opt_n_splits"):
             PipelineConfig(opt_n_splits=1)
 
+    def test_n_jobs_defaults_to_all_cores(self):
+        assert PipelineConfig().n_jobs == -1
+
+    def test_n_jobs_zero_raises(self):
+        """0 is joblib's one meaningless value — catch it at config time, not mid-run."""
+        with pytest.raises(ValueError, match="n_jobs"):
+            PipelineConfig(n_jobs=0)
+
+    def test_n_jobs_serial_matches_parallel(self, clf_store):
+        """n_jobs only changes how work is distributed, never the results."""
+        parallel = H2MLPipeline(models=_clf_steps(), config=_clf_config()).run_step1_only(clf_store)
+        serial = H2MLPipeline(models=_clf_steps(), config=_clf_config(n_jobs=1)).run_step1_only(clf_store)
+
+        assert serial.best_model_name == parallel.best_model_name
+        assert serial.best_model_value == pytest.approx(parallel.best_model_value)
+
     def test_opt_n_splits_below_half_n_splits_warns(self):
         """opt_n_splits < n_splits // 2 should emit a loguru warning."""
         from loguru import logger
@@ -231,6 +261,19 @@ class TestPipelineConfig:
         finally:
             logger.remove(handler_id)
         assert any("opt_n_splits" in str(w) for w in warned)
+
+    def test_deprecated_auc_pr_metric_mapped_with_warning(self):
+        from loguru import logger
+
+        warned = []
+        handler_id = logger.add(lambda msg: warned.append(msg), level="WARNING")
+        try:
+            cfg = PipelineConfig(metric="AUC_PR")
+        finally:
+            logger.remove(handler_id)
+        assert cfg.metric == "AUCPR"
+        assert cfg.metric_col == "AUCPR_Test_Mean"
+        assert any("deprecated" in str(w) for w in warned)
 
     def test_opt_n_splits_at_half_n_splits_no_warn(self):
         """opt_n_splits == n_splits // 2 should NOT warn."""
@@ -275,6 +318,13 @@ class TestPipelineConfig:
         config = PipelineConfig(handle_imbalance=True)
         assert config.handle_imbalance is True
 
+    def test_handle_imbalance_auto(self):
+        assert PipelineConfig(handle_imbalance="auto").handle_imbalance == "auto"
+
+    def test_handle_imbalance_invalid_raises(self):
+        with pytest.raises(ValueError, match="handle_imbalance"):
+            PipelineConfig(handle_imbalance="yes")
+
 
 # ---------------------------------------------------------------------------
 # handle_imbalance — class weight injection
@@ -296,6 +346,13 @@ class TestHandleImbalance:
         rf = next(m for m in pipeline.models if m.name == "RandomForestClassifier")
         assert rf.estimator.get_params()["class_weight"] == "balanced"
 
+    def test_class_weight_set_on_custom_named_model(self):
+        """Injection keys on the estimator class, not the display name — otherwise a
+        custom-named model would CV unweighted while step 4 adds class_weight."""
+        pipeline = H2MLPipeline(models=_lr_only(), config=PipelineConfig(handle_imbalance=True))
+        assert pipeline.models[0].name == "LR"
+        assert pipeline.models[0].estimator.get_params()["class_weight"] == "balanced"
+
     def test_class_weight_not_set_on_unsupported_models(self):
         """GaussianNB does not accept class_weight — it must not be modified."""
         config = PipelineConfig(handle_imbalance=True)
@@ -310,6 +367,73 @@ class TestHandleImbalance:
         pipeline = H2MLPipeline(config=config)
         rf = next(m for m in pipeline.models if m.name == "RandomForestClassifier")
         assert rf.estimator.get_params().get("class_weight") is None
+
+    def test_auto_defers_injection_until_run(self):
+        """'auto' must not touch model params at construction — the target is unknown."""
+        pipeline = H2MLPipeline(config=PipelineConfig(handle_imbalance="auto"))
+        rf = next(m for m in pipeline.models if m.name == "RandomForestClassifier")
+        assert rf.estimator.get_params().get("class_weight") is None
+        assert pipeline._class_weight_active is False
+
+    def test_auto_applies_weights_on_imbalanced_target(self):
+        pipeline = H2MLPipeline(config=PipelineConfig(handle_imbalance="auto"))
+        pipeline._resolve_class_weights(self._make_imbalanced_store(minority_n=5, majority_n=95).y)
+        rf = next(m for m in pipeline.models if m.name == "RandomForestClassifier")
+        assert rf.estimator.get_params()["class_weight"] == "balanced"
+        assert pipeline._class_weight_active is True
+
+    def test_auto_skips_weights_on_balanced_target(self):
+        pipeline = H2MLPipeline(config=PipelineConfig(handle_imbalance="auto"))
+        pipeline._resolve_class_weights(np.array([0] * 50 + [1] * 50))
+        rf = next(m for m in pipeline.models if m.name == "RandomForestClassifier")
+        assert rf.estimator.get_params().get("class_weight") is None
+        assert pipeline._class_weight_active is False
+
+    def test_auto_resets_weights_when_reused_on_balanced_target(self):
+        """A pipeline reused on a balanced target must drop weights injected by an earlier imbalanced run."""
+        pipeline = H2MLPipeline(config=PipelineConfig(handle_imbalance="auto"))
+        pipeline._resolve_class_weights(self._make_imbalanced_store().y)
+        pipeline._resolve_class_weights(np.array([0] * 50 + [1] * 50))
+        rf = next(m for m in pipeline.models if m.name == "RandomForestClassifier")
+        assert rf.estimator.get_params().get("class_weight") is None
+        assert pipeline._class_weight_active is False
+
+    def test_auto_keeps_class_weight_in_step4_best_params(self):
+        """'auto' resolved to active must carry class_weight='balanced' into step 4,
+        including when resuming via run_step4_only on a fresh pipeline."""
+        rng = np.random.default_rng(0)
+        store = PipelineData(
+            X=rng.standard_normal((200, 5)),
+            feature_names=[f"feat_{i}" for i in range(5)],
+            y=np.array([1] * 15 + [0] * 185),
+        )
+        config = _clf_config(handle_imbalance="auto")
+        with _mock_selector():
+            result = H2MLPipeline(models=_lr_only(), config=config).run_step1_to_step3(store)
+            result = H2MLPipeline(models=_lr_only(), config=config).run_step4_only(result)
+        assert result.best_params["class_weight"] == "balanced"
+
+    def test_final_model_keeps_class_weight_without_step4(self, clf_store):
+        """With no step 4 there are no best_params; build_final_model must still
+        re-apply the class_weight CV ran with, or the deployed model would differ."""
+        # Registry-keyed name: build_final_model looks the winner up in CLASSIFIER_REGISTRY.
+        models = [make_classifier(LogisticRegression(max_iter=200, random_state=42))]
+        pipeline = H2MLPipeline(models=models, config=_clf_config(handle_imbalance=True))
+        with _mock_selector():
+            result = pipeline.run_step1_to_step3(clf_store)
+        assert result.best_params is None
+        assert result.class_weight_balanced is True
+        final = result.build_final_model()
+        assert final.estimator.get_params()["class_weight"] == "balanced"
+
+    def test_final_model_no_class_weight_when_inactive(self, clf_store):
+        models = [make_classifier(LogisticRegression(max_iter=200, random_state=42))]
+        pipeline = H2MLPipeline(models=models, config=_clf_config(handle_imbalance=False))
+        with _mock_selector():
+            result = pipeline.run_step1_to_step3(clf_store)
+        assert result.class_weight_balanced is False
+        final = result.build_final_model()
+        assert final.estimator.get_params()["class_weight"] is None
 
     def test_imbalance_warning_fires(self):
         """minority ratio < 0.1 should emit a loguru warning."""
@@ -385,6 +509,204 @@ class TestHandleImbalance:
         # Must be a copy — assigning the registry's default_kwargs dict itself would
         # let callers mutate the registry through result.best_params.
         assert result.best_params is not CLASSIFIER_REGISTRY["LogisticRegression"].default_kwargs
+
+
+# ---------------------------------------------------------------------------
+# Metric suitability
+# ---------------------------------------------------------------------------
+
+
+def _folds(n: int, n_splits: int = 5) -> list:
+    """Contiguous (unshuffled) folds, so tests can place classes/values in specific folds."""
+    from sklearn.model_selection import KFold
+
+    return list(KFold(n_splits=n_splits).split(np.zeros(n)))
+
+
+class TestMetricSuitability:
+    def _check(self, config: PipelineConfig, y: np.ndarray, models=None) -> list[str]:
+        pipeline = H2MLPipeline(models=models or _lr_only(), config=config)
+        return pipeline._check_metric_suitability(y, _folds(len(y)))
+
+    def test_balanced_auc_no_warning(self):
+        y = np.tile([0, 1], 50)
+        assert self._check(_clf_config(metric="AUC"), y) == []
+
+    def test_auc_warns_on_imbalance(self):
+        y = np.tile([1] + [0] * 19, 5)  # 5% positives, spread across folds
+        msgs = self._check(_clf_config(metric="AUC"), y)
+        assert any("optimistic" in m for m in msgs)
+
+    def test_imbalance_not_flagged_for_brier(self):
+        y = np.tile([1] + [0] * 19, 5)
+        assert self._check(_clf_config(metric="Brier"), y) == []
+
+    def test_auc_warns_on_single_class_fold(self):
+        y = np.concatenate([np.ones(20, dtype=int), np.tile([0, 1], 40)])  # fold 0 is all positives
+        msgs = self._check(_clf_config(metric="AUC"), y)
+        assert any("1/5 test fold(s) hold a single class" in m for m in msgs)
+
+    def test_aucpr_warns_on_prevalence_spread(self):
+        # Positive share per fold: 0.05, 0.5, 0.5, 0.5, 0.5
+        y = np.concatenate([[1] + [0] * 19] + [np.tile([0, 1], 10)] * 4)
+        msgs = self._check(_clf_config(metric="AUCPR"), y)
+        assert any("varies across test folds" in m for m in msgs)
+
+    def test_f1_warns_with_class_weight(self):
+        y = np.tile([0, 1], 50)
+        msgs = self._check(_clf_config(metric="F1", handle_imbalance=True), y)
+        assert any("class_weight" in m for m in msgs)
+
+    def test_f1_no_warning_without_class_weight(self):
+        y = np.tile([0, 1], 50)
+        assert self._check(_clf_config(metric="F1"), y) == []
+
+    def test_r2_warns_on_low_variance_fold(self):
+        rng = np.random.default_rng(0)
+        y = np.concatenate([np.full(20, 3.0), rng.normal(0, 5, 80)])  # fold 0 is constant
+        msgs = self._check(_reg_config(metric="R2"), y, models=_reg_steps())
+        assert any("variance" in m for m in msgs)
+
+    def test_rmse_warns_on_heavy_tail(self):
+        y = np.ones(100)
+        y[::2] = 0.0
+        y[0] = 1000.0
+        msgs = self._check(_reg_config(metric="RMSE"), y, models=_reg_steps())
+        assert any("dominate RMSE" in m for m in msgs)
+
+    def test_rmse_no_warning_on_normal_target(self):
+        y = np.random.default_rng(0).normal(size=200)
+        assert self._check(_reg_config(metric="RMSE"), y, models=_reg_steps()) == []
+
+    def test_mae_warns_on_zero_inflation(self):
+        y = np.tile([0.0, 0.0, 0.0, 2.0], 25)
+        msgs = self._check(_reg_config(metric="MAE"), y, models=_reg_steps())
+        assert any("zeros" in m for m in msgs)
+
+    def test_warnings_land_in_cv_warnings(self):
+        rng = np.random.default_rng(0)
+        store = PipelineData(
+            X=rng.standard_normal((200, 5)),
+            feature_names=[f"feat_{i}" for i in range(5)],
+            y=np.array([1] * 10 + [0] * 190),
+        )
+        result = H2MLPipeline(models=_lr_only(), config=_clf_config(metric="AUC")).run_step1_only(store)
+        assert any("optimistic" in w for w in result.cv_warnings)
+
+
+def _separable_store() -> PipelineData:
+    """feat_0 alone separates y; the other features are noise."""
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((N_SAMPLES, len(FEATURE_NAMES)))
+    return PipelineData(X=X, feature_names=FEATURE_NAMES, y=(X[:, 0] > 0).astype(int))
+
+
+def _stump() -> list:
+    """A depth-1 tree always splits on feat_0 here, so it scores identically on any
+    feature set containing feat_0 — a deterministic default-vs-reduced tie."""
+    from sklearn.tree import DecisionTreeClassifier
+
+    return [make_classifier(DecisionTreeClassifier(max_depth=1, random_state=0), name="Stump")]
+
+
+class TestPreferReducedOnTie:
+    def _run(self, selected: list[str], **config_kwargs) -> PipelineResult:
+        config = _clf_config(**config_kwargs)
+        with _mock_selector(selected):
+            return H2MLPipeline(models=_stump(), config=config).run_step1_to_step3(_separable_store())
+
+    def test_default_off(self):
+        assert PipelineConfig().prefer_reduced_on_tie is False
+
+    def test_non_bool_raises(self):
+        with pytest.raises(ValueError, match="prefer_reduced_on_tie"):
+            PipelineConfig(prefer_reduced_on_tie="yes")
+
+    def test_flag_off_keeps_default_winner_on_tie(self):
+        result = self._run(FEATURE_NAMES[:5])
+        assert result.best_stage == "default"
+        assert not any("prefer_reduced_on_tie" in w for w in result.cv_warnings)
+
+    def test_tie_switches_to_reduced(self):
+        result = self._run(FEATURE_NAMES[:5], prefer_reduced_on_tie=True)
+        assert result.best_stage == result.best_feature_stage == "reduced"
+        assert result.best_model_name == "Stump"
+        assert any(w.startswith("step 3: prefer_reduced_on_tie → Stump | reduced") for w in result.cv_warnings)
+
+    def test_clear_default_win_is_kept(self):
+        """Reduced set without feat_0 loses clearly — no tie, no switch."""
+        result = self._run(FEATURE_NAMES[1:6], prefer_reduced_on_tie=True)
+        assert result.best_stage == "default"
+        assert not any("prefer_reduced_on_tie" in w for w in result.cv_warnings)
+
+    def test_skipped_when_reduced_keeps_every_feature(self):
+        result = self._run(FEATURE_NAMES, prefer_reduced_on_tie=True)
+        assert result.best_stage == "default"
+        assert not any("prefer_reduced_on_tie" in w for w in result.cv_warnings)
+
+    def test_switch_sets_reduced_baseline_for_step4(self):
+        """best_model_value must be the reduced row's score (step 4's "improved" baseline)
+        and step 4 must optimise on the reduced store."""
+        config = _clf_config(prefer_reduced_on_tie=True)
+        pipeline = H2MLPipeline(models=_stump(), config=config)
+        with _mock_selector(FEATURE_NAMES[:5]):
+            result = pipeline.run_step1_to_step3(_separable_store())
+        reduced_value = result.step3_agg_df.iloc[0][config.metric_col]
+        assert result.best_model_value == pytest.approx(reduced_value)
+        assert pipeline._resolve_opt_store(result, None).n_features == 5
+
+    def test_already_reduced_winner_unchanged(self):
+        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(prefer_reduced_on_tie=True))
+        row = pd.Series({"Model": "LR", "Stage": "reduced"})
+        assert pipeline._prefer_reduced_on_tie(PipelineResult(), pd.DataFrame(), pd.DataFrame(), row) is row
+
+
+class TestRankingRobustness:
+    def _twin_lr(self) -> list:
+        """Two identical models — a guaranteed paired-fold tie."""
+        return [
+            make_classifier(LogisticRegression(max_iter=200, random_state=42), name="LR_a"),
+            make_classifier(LogisticRegression(max_iter=200, random_state=42), name="LR_b"),
+        ]
+
+    def test_step1_tie_lands_in_cv_warnings(self, clf_store):
+        result = H2MLPipeline(models=self._twin_lr(), config=_clf_config()).run_step1_only(clf_store)
+        assert any(w.startswith("step 1:") and "within one corrected SE" in w for w in result.cv_warnings)
+
+    def test_step3_checks_both_stages(self, clf_store):
+        with _mock_selector():
+            result = H2MLPipeline(models=self._twin_lr(), config=_clf_config()).run_step1_to_step3(clf_store)
+        assert any(w.startswith("step 3:") for w in result.cv_warnings)
+
+    def test_result_method_defaults_to_latest_step(self, clf_store):
+        pipeline = H2MLPipeline(models=_clf_steps(), config=_clf_config())
+        result = pipeline.run_step1_only(clf_store)
+        assert set(result.ranking_robustness()["Model"]) == {"LR", "RF"}
+        with _mock_selector():
+            result = pipeline.run_step1_to_step3(clf_store)
+        assert set(result.ranking_robustness()["Stage"]) == {"default", "reduced"}
+        assert result.ranking_robustness(step=1)["Stage"].unique().tolist() == ["default"]
+
+    def test_result_method_winner_matches_pipeline(self, clf_store):
+        with _mock_selector():
+            result = H2MLPipeline(models=_clf_steps(), config=_clf_config()).run_step1_to_step3(clf_store)
+        winner = result.ranking_robustness().query("Is_Winner").iloc[0]
+        assert (winner["Model"], winner["Stage"]) == (result.best_model_name, result.best_stage)
+
+    def test_is_winner_marks_pre_tie_break_winner(self):
+        """Is_Winner is the confidence-bound winner even when prefer_reduced_on_tie switched."""
+        config = _clf_config(prefer_reduced_on_tie=True)
+        with _mock_selector(FEATURE_NAMES[:5]):
+            result = H2MLPipeline(models=_stump(), config=config).run_step1_to_step3(_separable_store())
+        assert result.best_stage == "reduced"
+        assert result.ranking_robustness().query("Is_Winner").iloc[0]["Stage"] == "default"
+
+    def test_result_method_rejects_missing_or_invalid_step(self, clf_store):
+        result = H2MLPipeline(models=_clf_steps(), config=_clf_config()).run_step1_only(clf_store)
+        with pytest.raises(ValueError, match="Step 3 has not run"):
+            result.ranking_robustness(step=3)
+        with pytest.raises(ValueError, match="step must be 1 or 3"):
+            result.ranking_robustness(step=4)
 
 
 # ---------------------------------------------------------------------------
@@ -508,6 +830,23 @@ class TestConstruction:
     def test_empty_models_raises(self):
         with pytest.raises(ValueError, match="empty"):
             H2MLPipeline(models=[], config=_clf_config())
+
+    def test_duplicate_model_names_raise(self):
+        """Models are looked up by name, so a repeated name would silently select,
+        tune and refit only the last model with it."""
+        models = [
+            make_classifier(RandomForestClassifier(n_estimators=5)),
+            make_classifier(RandomForestClassifier(n_estimators=50)),
+        ]
+        with pytest.raises(ValueError, match=r"\['RandomForestClassifier'\].*name="):
+            H2MLPipeline(models=models, config=_clf_config())
+
+    def test_distinct_names_for_the_same_class_are_accepted(self):
+        models = [
+            make_classifier(RandomForestClassifier(n_estimators=5), name="RF5"),
+            make_classifier(RandomForestClassifier(n_estimators=50), name="RF50"),
+        ]
+        assert [m.name for m in H2MLPipeline(models=models, config=_clf_config()).models] == ["RF5", "RF50"]
 
     def test_repr_contains_task_type(self, clf_pipeline):
         assert "classification" in repr(clf_pipeline)
@@ -669,6 +1008,59 @@ class TestStep1WithTransforms:
 
         np.testing.assert_allclose(captured["y"], np.log1p(pos_reg_store.y))
         np.testing.assert_allclose(captured["y_true"], pos_reg_store.y)
+
+    def test_winsorize_limit_fitted_per_training_fold(self):
+        """Steps 1 and 3 must clip each training fold with its own IQR limit, and step 2's
+        selector must receive the per-fold clip step — a limit fitted on the full y would
+        leak test-fold targets into training."""
+        store = _make_outlier_reg_store()
+        fitted_targets = []
+
+        class RecordingRidge(Ridge):
+            def fit(self, X, y, **kw):
+                fitted_targets.append(np.asarray(y).copy())
+                return super().fit(X, y, **kw)
+
+        # n_jobs=1 keeps CV in-process so the recording closure sees every fit
+        pipeline = H2MLPipeline(models=[make_regressor(RecordingRidge(), name="Ridge")], config=_reg_config(n_jobs=1))
+        with _mock_selector() as selector_cls:
+            result = pipeline.run_step1_to_step3(store, transforms=["wincount"])
+
+        assert selector_cls.call_args.kwargs["train_target_fn"] is clip_upper_outliers
+        folds = list(result.splitter.split(store.X, store.y))
+        per_fold = [clip_upper_outliers(store.y[tr]) for tr, _ in folds]
+        # Guard: per-fold and full-data limits must differ here, or the test proves nothing
+        assert any(
+            not np.array_equal(clipped, clip_upper_outliers(store.y)[tr])
+            for clipped, (tr, _) in zip(per_fold, folds, strict=True)
+        )
+        assert len(fitted_targets) == 2 * len(folds)  # step 1 + step 3
+        for i, fitted in enumerate(fitted_targets):
+            np.testing.assert_array_equal(fitted, per_fold[i % len(folds)])
+
+    def test_step4_optimises_pre_clip_y_with_per_fold_winsorize(self):
+        """Step 4 must hand Optuna the pre-clip y plus the per-fold clip step."""
+        store = _make_outlier_reg_store()
+        pipeline = H2MLPipeline(
+            models=[make_regressor(RandomForestRegressor(n_estimators=10, random_state=42))],
+            config=_reg_config(),
+        )
+        with _mock_selector():
+            result = pipeline.run_step1_to_step3(store, transforms=["wincount"])
+
+        captured = {}
+
+        def fake_run_study(**kwargs):
+            captured.update(kwargs)
+            study = MagicMock()
+            study.best_params = {"n_estimators": 10, "max_depth": 3}
+            return study
+
+        with patch("h2ml.pipeline.pipeline.run_study", side_effect=fake_run_study):
+            pipeline.run_step4_only(result)
+
+        assert captured["train_target_fn"] is clip_upper_outliers
+        np.testing.assert_array_equal(captured["y"], store.y)
 
 
 # ---------------------------------------------------------------------------
@@ -1068,7 +1460,9 @@ class TestCVWarnings:
         call_count = [0]
 
         def patched_run_all(steps, X, y, **kwargs):
-            results = original_run_all(steps, X, y, n_jobs=1, **kwargs)
+            # Force serial regardless of what config.n_jobs the pipeline passed.
+            kwargs["n_jobs"] = 1
+            results = original_run_all(steps, X, y, **kwargs)
             # Inject a fake failed fold into the first result
             if call_count[0] == 0:
                 results[0].failed_folds = [0, 1]
@@ -1135,7 +1529,9 @@ class TestSpatialCVPipeline:
 
         def spy_run_all(steps, X, y, **kwargs):
             coords_seen.append(kwargs.get("coords"))
-            return original_run_all(steps, X, y, n_jobs=1, **kwargs)
+            # Force serial regardless of what config.n_jobs the pipeline passed.
+            kwargs["n_jobs"] = 1
+            return original_run_all(steps, X, y, **kwargs)
 
         with (
             _mock_selector(),
@@ -1195,3 +1591,155 @@ class TestSpatialCVPipeline:
         for name, ts in stores.items():
             assert ts.coords is not None, f"Transform store '{name}' lost coords"
             np.testing.assert_array_equal(ts.coords, store.coords)
+
+
+# ---------------------------------------------------------------------------
+# Final model / step 4 rebuild from the winning estimator, not the registry
+# ---------------------------------------------------------------------------
+
+
+class TestWinnerEstimatorReuse:
+    def test_custom_name_and_constructor_args_reach_final_model(self, clf_store):
+        """A custom display name used to fail the registry lookup, and constructor
+        args (C, max_iter) and the wrapper's requires_scaling were replaced by registry
+        defaults. The final model must be the estimator CV validated."""
+        lr = LogisticRegression(C=0.5, max_iter=123, random_state=42)
+        pipeline = H2MLPipeline(models=[make_classifier(lr, name="LR")], config=_clf_config())
+        with _mock_selector():
+            result = pipeline.run(clf_store)
+
+        assert result.best_model_name == "LR"
+        final = result.build_final_model()
+        params = final.estimator.get_params()
+        assert params["C"] == 0.5
+        assert params["max_iter"] == 123
+        # make_classifier defaults to requires_scaling=False; the registry says True for LR.
+        assert final.requires_scaling is False
+        assert final.scaler is None
+
+    def test_step4_tunes_and_deploys_on_top_of_winner(self, clf_store):
+        """Trials, the step-4 CV and the final model all keep unsearched constructor
+        args; best_params holds only the overrides."""
+        rf = RandomForestClassifier(n_estimators=10, ccp_alpha=0.01, random_state=42)
+        pipeline = H2MLPipeline(models=[make_classifier(rf)], config=_clf_config())
+        with _mock_selector():
+            result = pipeline.run_step1_to_step3(clf_store)
+
+        captured = {}
+        orig_run = pipeline._cv.run
+
+        def spy_run(*args, **kwargs):
+            fold_step = pipeline._cv._build_fold_model(args[0], kwargs["best_params"])
+            captured["fold_params"] = fold_step.estimator.get_params()
+            return orig_run(*args, **kwargs)
+
+        with (
+            _mock_optimizer({"n_estimators": 10, "max_depth": 3}) as mock_run_study,
+            patch.object(pipeline._cv, "run", side_effect=spy_run),
+        ):
+            result = pipeline.run_step4_only(result)
+
+        assert mock_run_study.call_args.kwargs["estimator"] is pipeline.models[0].estimator
+        assert mock_run_study.call_args.kwargs["requires_scaling"] is False
+        assert captured["fold_params"]["ccp_alpha"] == 0.01
+        assert captured["fold_params"]["max_depth"] == 3
+        assert set(result.best_params) <= {"n_estimators", "max_depth"}
+
+        final = result.build_final_model()
+        assert final.estimator.get_params()["ccp_alpha"] == 0.01
+
+    def test_non_registry_estimator_runs_end_to_end(self, clf_store):
+        """An estimator outside the registry has no search space: step 4 must skip it
+        (it used to raise KeyError in run_study) and the final model must refit it."""
+        from sklearn.tree import DecisionTreeClassifier
+
+        tree = DecisionTreeClassifier(max_depth=2, random_state=0)
+        pipeline = H2MLPipeline(models=[make_classifier(tree)], config=_clf_config())
+        with _mock_selector():
+            result = pipeline.run(clf_store)
+
+        assert result.best_params == {}
+        final = result.build_final_model()
+        assert isinstance(final.estimator, DecisionTreeClassifier)
+        assert final.estimator.get_params()["max_depth"] == 2
+
+    def test_is_opt_enabled_false_for_unregistered_estimator(self):
+        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config())
+        assert pipeline._is_opt_enabled("DecisionTreeClassifier") is False
+        assert pipeline._is_opt_enabled("LogisticRegression") is False  # opt_enabled=False
+        assert pipeline._is_opt_enabled("RandomForestClassifier") is True
+
+    def test_best_base_estimator_is_unfitted_clone(self, clf_store):
+        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config())
+        with _mock_selector():
+            result = pipeline.run_step1_only(clf_store)
+        assert result.best_base_estimator is not pipeline.models[0].estimator
+        assert not hasattr(result.best_base_estimator, "coef_")
+
+
+class TestBestCvResult:
+    """best_cv_result must be the CV of the selected configuration, not the latest step run."""
+
+    @staticmethod
+    def _cv(name: str, y_transform: str = None) -> CVResult:
+        return CVResult(model_name=name, task_type=TaskType.REGRESSION, y_transform=y_transform)
+
+    def _result(self, **kwargs) -> PipelineResult:
+        self.s1_log, self.s1_sqrt = self._cv("RF", "log"), self._cv("RF", "sqrt")
+        self.s3, self.s4 = self._cv("RF", "sqrt"), self._cv("RF", "sqrt")
+        return PipelineResult(
+            step1_cv_result=[self.s1_log, self._cv("SVR", "sqrt"), self.s1_sqrt],
+            step3_cv_result=[self._cv("SVR", "sqrt"), self.s3],
+            step4_cv_result=self.s4,
+            best_model_name="RF",
+            y_transform="sqrt",
+            **kwargs,
+        )
+
+    def test_optimized_returns_tuned_cv(self):
+        result = self._result(best_stage="optimized", best_feature_stage="reduced")
+        assert result.best_cv_result is self.s4
+
+    def test_rejected_tuning_returns_reduced_cv(self):
+        result = self._result(best_stage="reduced", best_feature_stage="reduced")
+        assert result.best_cv_result is self.s3
+
+    def test_rejected_tuning_returns_default_cv_of_selected_transform(self):
+        result = self._result(best_stage="default", best_feature_stage="default")
+        assert result.best_cv_result is self.s1_sqrt
+
+    def test_no_transform(self):
+        cv = self._cv("RF")
+        result = PipelineResult(step1_cv_result=[cv], best_model_name="RF", best_stage="default")
+        assert result.best_cv_result is cv
+
+    def test_saved_before_y_transform_field_falls_back_to_model_name(self):
+        cv = self._cv("RF")
+        result = PipelineResult(step3_cv_result=[cv], best_model_name="RF", best_stage="reduced", y_transform="log")
+        assert result.best_cv_result is cv
+
+    def test_cv_results_record_their_transform(self):
+        """End to end: the transform sweep labels step-1 and step-3 CV results."""
+        pipeline = H2MLPipeline(models=_reg_steps(), config=_reg_config())
+        with patch.object(H2MLPipeline, "_is_opt_enabled", return_value=False), _mock_selector():
+            result = pipeline.run(_make_positive_reg_store(), transforms=["log", "sqrt"])
+        assert {cv.y_transform for cv in result.step1_cv_result} == {"log", "sqrt"}
+        assert {cv.y_transform for cv in result.step3_cv_result} == {result.y_transform}
+        selected = result.best_cv_result
+        assert selected.model_name == result.best_model_name
+        assert selected.y_transform == result.y_transform
+
+
+class TestStep4RejectsTunedWithFailedFolds:
+    def test_tuned_model_with_failed_fold_is_rejected(self):
+        """A tuned mean over fewer folds isn't comparable with the untuned score."""
+        pipeline = H2MLPipeline(models=_reg_steps(), config=_reg_config(metric="RMSE"))
+        result = PipelineResult(
+            best_model_value=5.0,
+            best_stage="reduced",
+            step4_agg_df=pd.DataFrame({"RMSE_Test_Mean": [1.0], "RMSE_Test_Std": [0.1]}),
+            step4_cv_result=CVResult(model_name="RF", task_type=TaskType.REGRESSION, failed_folds=[3]),
+        )
+        pipeline._select_step4(result, {"n_estimators": 10}, {})
+        assert result.best_stage == "reduced"
+        assert result.best_params == {}

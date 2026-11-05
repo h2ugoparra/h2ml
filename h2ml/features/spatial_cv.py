@@ -8,8 +8,8 @@ SpatialBlockSplitter — quantile-grid blocks, fast, geography-only.
 SPCVSplitter — two-stage method:
   Stage 1: Agglomerative Hierarchical Clustering (AHC) on coordinates
            produces spatially coherent blocks that respect autocorrelation.
-  Stage 2: Cluster Ensembles (CE) with HBGF consensus assigns blocks to
-           folds by balancing location, covariates, and target variable.
+  Stage 2: Cluster Ensembles (CE) with HBGF consensus groups blocks that
+           are similar in location, covariates, and target into the same fold.
 """
 
 from __future__ import annotations
@@ -232,8 +232,11 @@ class SPCVSplitter:
         a co-occurrence affinity matrix is built from the stacked membership
         matrices and SpectralClustering produces the final k folds.
 
-    The result is folds that are geographically separated *and* representative
-    of the full covariate and label space.
+    Blocks that co-cluster across the three views get high affinity and end up
+    in the same fold, so each test fold is a distinct region of geographic,
+    covariate, and target space. The resulting folds are deliberately *not*
+    representative of the full data: CV scores estimate extrapolation to unseen
+    conditions and are typically more pessimistic than block or random CV.
 
     Args:
         coords:       (n_samples, 2) spatial coordinates (lat/lon or projected).
@@ -249,11 +252,15 @@ class SPCVSplitter:
         metric:       "euclidean" (projected coords) or "haversine" (lat/lon in
                       decimal degrees). See the Note on linkage interaction.
         pca_components: Variance fraction retained by PCA applied to block
-                      covariates before clustering. Default 0.95.
+                      covariates in stage 2 (after AHC, before the cluster
+                      ensemble). Default 0.95.
         exact_max_samples: Sample count below which exact scipy AHC is used; above
                       it an approximate sklearn AHC (k-NN graph) is used. Default 5000.
         knn_neighbors: k for the k-NN connectivity graph in approximate AHC.
                       Default 15.
+        use_target:   Include the target view in stage 2. False assigns folds from
+                      location and covariates alone, so they do not depend on y.
+                      Default True.
 
     Note:
         'ward' linkage operates on Euclidean distances. When metric='haversine',
@@ -281,6 +288,7 @@ class SPCVSplitter:
         pca_components: float = 0.95,
         exact_max_samples: int = 5_000,
         knn_neighbors: int = 15,
+        use_target: bool = True,
     ) -> None:
         coords = np.asarray(coords, dtype=float)
         X = np.asarray(X, dtype=float)
@@ -308,6 +316,7 @@ class SPCVSplitter:
         self.pca_components = pca_components
         self.exact_max_samples = exact_max_samples
         self.knn_neighbors = knn_neighbors
+        self.use_target = use_target
 
         block_labels = self._stage1_blocks()
         self._fold_of_sample = self._stage2_folds(block_labels)
@@ -382,6 +391,7 @@ class SPCVSplitter:
         clone.pca_components = self.pca_components
         clone.exact_max_samples = self.exact_max_samples
         clone.knn_neighbors = self.knn_neighbors
+        clone.use_target = self.use_target
         clone.block_id_ = self.block_id_
         clone._fold_of_sample = clone._stage2_folds(self.block_id_)
         return clone
@@ -583,7 +593,6 @@ class SPCVSplitter:
 
         block_coords = np.column_stack([_block_mean(self.coords[:, j]) for j in range(2)])
         block_X = np.column_stack([_block_mean(self.X[:, j]) for j in range(self.X.shape[1])])
-        block_y = _block_mean(self.y)[:, None]
 
         # --- PCA on block covariates to remove redundancy before clustering ---
         from sklearn.decomposition import PCA
@@ -603,17 +612,17 @@ class SPCVSplitter:
         else:
             block_X_proj = block_X
 
-        # --- three independent KMeans clusterings ---
+        # --- independent KMeans clusterings, one per view ---
         def _km(data: np.ndarray) -> np.ndarray:
             return KMeans(n_clusters=k, random_state=rs, n_init=10).fit_predict(data)
 
-        labels_L = _km(block_coords)
-        labels_C = _km(block_X_proj)
-        labels_T = _km(block_y)
+        views = [block_coords, block_X_proj]
+        if self.use_target:
+            views.append(_block_mean(self.y)[:, None])
 
         # --- HBGF: build co-occurrence affinity ---
         eye = np.eye(k)
-        H = np.hstack([eye[labels_L], eye[labels_C], eye[labels_T]])  # (n_blocks, 3k)
+        H = np.hstack([eye[_km(view)] for view in views])  # (n_blocks, n_views × k)
         S = H @ H.T  # (n_blocks, n_blocks)
 
         # Regularise: two blocks that share no KMeans cluster in any view have
@@ -644,6 +653,52 @@ class SPCVSplitter:
 # ---------------------------------------------------------------------------
 # Splitter factory — shared by the CV engine and the optimizer
 # ---------------------------------------------------------------------------
+
+
+class BlockGroupSplitter:
+    """
+    K-fold over precomputed spatial block ids: each test fold holds whole blocks.
+
+    Splits a subset of rows (e.g. an outer CV training fold) along the blocks a fitted
+    SpatialBlockSplitter / SPCVSplitter already assigned (its block_id_), so inner folds
+    stay spatially separated without re-running block construction. Blocks are shuffled
+    with random_state and dealt to folds round-robin.
+
+    Args:
+        block_ids:    (n_rows,) block id per row of the subset.
+        n_splits:     Number of folds; must not exceed the number of distinct blocks.
+        random_state: Seed for the block shuffle.
+
+    Raises:
+        ValueError: If n_splits < 2 or exceeds the number of distinct blocks.
+    """
+
+    def __init__(self, block_ids: np.ndarray, n_splits: int, random_state: Optional[int] = None):
+        self.block_ids = np.asarray(block_ids)
+        n_blocks = np.unique(self.block_ids).size
+        if not 2 <= n_splits <= n_blocks:
+            raise ValueError(f"n_splits must be in [2, {n_blocks}] (distinct blocks), got {n_splits}")
+        self.n_splits = n_splits
+        self.random_state = random_state
+
+    def get_n_splits(self, X=None, y=None, groups=None) -> int:
+        return self.n_splits
+
+    def split(
+        self,
+        X: np.ndarray,
+        y: Optional[np.ndarray] = None,
+        groups: Optional[np.ndarray] = None,
+    ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+        """Yield (train_idx, test_idx) per fold; indices are positions within the subset."""
+        if len(X) != len(self.block_ids):
+            raise ValueError(f"X has {len(X)} rows but block_ids has {len(self.block_ids)} rows.")
+        blocks = np.random.default_rng(self.random_state).permutation(np.unique(self.block_ids))
+        fold_of_block = {b: i % self.n_splits for i, b in enumerate(blocks)}
+        fold_of_row = np.array([fold_of_block[b] for b in self.block_ids])
+        all_idx = np.arange(len(self.block_ids))
+        for k in range(self.n_splits):
+            yield all_idx[fold_of_row != k], all_idx[fold_of_row == k]
 
 
 def build_splitter(
@@ -696,6 +751,7 @@ def build_splitter(
                 pca_components=spatial.pca_components,
                 exact_max_samples=spatial.exact_max_samples,
                 knn_neighbors=spatial.knn_neighbors,
+                use_target=spatial.use_target,
             )
         return SpatialBlockSplitter(
             coords=coords,

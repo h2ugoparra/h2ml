@@ -28,9 +28,12 @@ if TYPE_CHECKING:
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
 from sklearn.preprocessing import StandardScaler
 
 from h2ml.core.base import TaskType
+from h2ml.core.feature_store import PipelineData
+from h2ml.evaluation.applicability import ApplicabilityDomain, build_applicability_domain
 
 # Calibration types live in evaluation/conformal.py. They are imported here both for use
 # by the factory helpers below and so that joblib pickles written before the move — which
@@ -41,7 +44,19 @@ from h2ml.evaluation.conformal import (
     _build_context,
     _time_bin,
 )
-from h2ml.preprocessing.transforms import INVERSE_TRANSFORMS, Y_TRANSFORMS
+from h2ml.pipeline.holdout import concat_stores, stage_store
+from h2ml.preprocessing.transforms import (
+    INVERSE_TRANSFORMS,
+    MEAN_CORRECTABLE_TRANSFORMS,
+    PRE_CLIP_TRANSFORMS,
+    Y_TRANSFORMS,
+    get_train_target_fn,
+    total_ratio,
+)
+
+# Limits on the mean_correction="ratio" factor: beyond them the OOF totals say more about
+# a broken model than about back-transform bias.
+MEAN_RATIO_BOUNDS = (0.1, 10.0)
 
 
 @dataclass
@@ -55,15 +70,17 @@ class FinalModel:
         task_type:        TaskType.CLASSIFICATION or TaskType.REGRESSION.
         requires_scaling: Whether StandardScaler was applied before fitting.
         scaler:           Fitted StandardScaler (None when requires_scaling is False).
-        best_model_name:  Name of the model as registered in the h2ml registry.
-        best_params:      Hyperparameters used for the final fit (None = defaults).
+        best_model_name:  Display name of the winning model (registry name or custom).
+        best_params:      Step-4 overrides set on top of the winning estimator for the
+                          final fit; {} or None when there were none. The full
+                          configuration is estimator.get_params().
         conformal:        Global conformal calibrator built from out-of-fold residuals;
                           powers predict_interval / predict_set. None when no calibration
                           was available (e.g. partial pipeline run).
         y_transform:      Name of the y-transform applied during training (e.g. "log"),
-                          or None. predict() returns the transformed space and the
-                          caller inverts it; predict_interval() bounds are already in
-                          the original scale. See preprocessing/transforms.py.
+                          or None. predict() and predict_interval() invert it, so both
+                          return the original scale; estimator.predict() stays in the
+                          transformed space. See preprocessing/transforms.py.
         local_conformal:  Space-time block-local conformal calibrator. Used instead of
                           `conformal` when coords/times are passed to predict_interval/
                           predict_set, giving per-sample thresholds. None unless the run
@@ -71,6 +88,13 @@ class FinalModel:
         variogram:        Fitted VariogramResult describing the spatial autocorrelation
                           range of the model's residuals (diagnostic only; not used in
                           prediction). None when coords were absent or fitting failed.
+        applicability:    Area of applicability (Meyer & Pebesma 2021) fitted on the CV rows;
+                          powers area_of_applicability(). None when no CV folds were
+                          available or fitting failed.
+        mean_ratio:       Factor predict() multiplies back-transformed predictions by, from
+                          PipelineConfig.mean_correction="ratio". 1.0 applies no correction.
+                          Conformal scores are built on the corrected predictions, so
+                          predict_interval() matches predict().
 
     Example:
         >>> final = result.build_final_model()
@@ -90,6 +114,8 @@ class FinalModel:
     y_transform: Optional[str] = None
     local_conformal: Optional[LocalConformalCalibration] = field(default=None)
     variogram: Optional[Any] = field(default=None)  # VariogramResult — imported lazily
+    applicability: Optional[ApplicabilityDomain] = field(default=None)
+    mean_ratio: float = 1.0
 
     # ------------------------------------------------------------------
     # Inference
@@ -104,9 +130,12 @@ class FinalModel:
                 (columns must match feature_names order).
 
         Returns:
-            1-D array of predictions.
+            1-D array of predictions, in the original y scale when the pipeline
+            used a y-transform, multiplied by mean_ratio.
         """
-        return self.estimator.predict(self._prepare(X))
+        y_hat = self.estimator.predict(self._prepare(X))
+        inverse_fn = INVERSE_TRANSFORMS.get(self.y_transform) if self.y_transform else None
+        return inverse_fn(y_hat) * self.mean_ratio if inverse_fn is not None else y_hat
 
     def predict_proba(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
         """
@@ -149,10 +178,9 @@ class FinalModel:
         spatial block's residual distribution, giving wider intervals in
         high-error regions and narrower ones where the model is well calibrated.
 
-        Note: bounds are always in the original y scale. q is calibrated on
-        original-scale OOF residuals, so when the pipeline used a y-transform the
-        point estimate is inverted internally before the interval is applied —
-        do not apply the inverse transform to the returned bounds.
+        Note: bounds are always in the original y scale, like predict(). q is
+        calibrated on original-scale OOF residuals, so do not apply the inverse
+        transform to the returned bounds.
 
         Args:
             X:      Input features (DataFrame or ndarray).
@@ -176,14 +204,9 @@ class FinalModel:
                 "No conformal calibration available. "
                 "Rebuild FinalModel via result.build_final_model() after a full pipeline run."
             )
+        # q is calibrated on original-scale residuals of the corrected predictions
+        # (CV inverse-transforms before storing them), so it applies to predict()'s output.
         y_hat = self.predict(X)
-        # q is calibrated on original-scale OOF residuals (CV inverse-transforms
-        # predictions before storing them), so the interval must be applied in the
-        # original scale — invert the point estimate first when a transform is set.
-        if self.y_transform is not None:
-            inverse_fn = INVERSE_TRANSFORMS.get(self.y_transform)
-            if inverse_fn is not None:
-                y_hat = inverse_fn(y_hat)
         if (coords is not None or times is not None) and self.local_conformal is not None:
             q = self.local_conformal.threshold(alpha, coords=coords, times=times)
         else:
@@ -261,6 +284,34 @@ class FinalModel:
     # Persistence
     # ------------------------------------------------------------------
 
+    def area_of_applicability(self, X: pd.DataFrame | np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Dissimilarity index and area-of-applicability mask for new rows.
+
+        DI is the distance to the nearest training row in importance-weighted,
+        standardised feature space, relative to the mean distance between training
+        rows. Rows with DI above the threshold calibrated on the CV folds lie in
+        feature combinations the model never learned from: their predictions and
+        conformal intervals are not backed by the CV estimate.
+
+        Args:
+            X: DataFrame (columns aligned by name) or ndarray in feature_names order.
+
+        Returns:
+            (di, inside) — float DI per row and a boolean mask, True inside the AOA.
+
+        Raises:
+            ValueError: If the model has no applicability domain.
+        """
+        if self.applicability is None:
+            raise ValueError(
+                "No area of applicability available. Rebuild the FinalModel via result.build_final_model()."
+            )
+        if isinstance(X, pd.DataFrame):
+            X = X[self.feature_names].to_numpy()
+        di = self.applicability.dissimilarity(np.asarray(X))
+        return di, di <= self.applicability.threshold
+
     def save(self, path: str | Path) -> None:
         """Persist to *path* (single .pkl file via joblib). Parent directory is created if needed."""
         path = Path(path)
@@ -304,11 +355,13 @@ class FinalModel:
 # ---------------------------------------------------------------------------
 
 
-def _build_conformal_calibration(result, classes=None) -> Optional[ConformalCalibration]:
+def _build_conformal_calibration(result, classes=None, mean_ratio: float = 1.0) -> Optional[ConformalCalibration]:
     """
-    Build a ConformalCalibration from the out-of-fold predictions in best_cv_result.
+    Build a ConformalCalibration from the holdout residuals when a holdout was scored
+    (split conformal — no selection step saw those rows), otherwise from the
+    out-of-fold predictions in best_cv_result.
 
-    Regression:          nonconformity score = |y_test - y_pred_test|
+    Regression:          nonconformity score = |y_test - mean_ratio * y_pred_test|
     Binary classification:   nonconformity score = 1 - p(true_class)
     Multiclass classification: nonconformity score = 1 - p(true_class),
         looked up via the classes array from estimator.classes_.
@@ -316,14 +369,14 @@ def _build_conformal_calibration(result, classes=None) -> Optional[ConformalCali
     Returns None when no CV result is available or when the class mapping
     cannot be resolved for multiclass folds.
     """
-    cv = result.best_cv_result
+    cv = getattr(result, "holdout_cv_result", None) or result.best_cv_result
     if cv is None or not cv.folds:
         return None
 
     task_type = cv.task_type
 
     if task_type == TaskType.REGRESSION:
-        scores = np.concatenate([np.abs(f.y_test - f.y_pred_test) for f in cv.folds])
+        scores = np.concatenate([np.abs(f.y_test - mean_ratio * f.y_pred_test) for f in cv.folds])
     else:
         sample_scores = []
         for f in cv.folds:
@@ -383,6 +436,7 @@ def _build_local_conformal(
     classes: Optional[Any] = None,
     time_bin_resolution: str = "month",
     oof_scores: Optional[np.ndarray] = None,
+    mean_ratio: float = 1.0,
 ) -> Optional[LocalConformalCalibration]:
     """
     Build a LocalConformalCalibration from OOF residuals.
@@ -415,6 +469,8 @@ def _build_local_conformal(
         classes:             estimator.classes_ for multiclass classification scoring.
         time_bin_resolution: "month" (1–12) or "season" (0–3). Only used when
                              times is not None.
+        mean_ratio:          FinalModel.mean_ratio; regression residuals are taken from
+                             the corrected predictions. Ignored with oof_scores.
 
     Block assignment at inference uses nearest-OOF-sample lookup in a jointly
     normalised context space [lat, lon, sin_doy, cos_doy, year], so the
@@ -449,7 +505,7 @@ def _build_local_conformal(
         score_parts: list[np.ndarray] = []
         for f in cv.folds:
             if task_type == TaskType.REGRESSION:
-                fold_scores: Optional[np.ndarray] = np.abs(f.y_test - f.y_pred_test)
+                fold_scores: Optional[np.ndarray] = np.abs(f.y_test - mean_ratio * f.y_pred_test)
             else:
                 fold_scores = _classification_scores(f, classes)
                 if fold_scores is None:
@@ -520,14 +576,41 @@ def _build_local_conformal(
     )
 
 
+def _mean_ratio(result: "PipelineResult", task_type: TaskType) -> float:
+    """
+    Factor for result.mean_correction: observed over predicted total on the selected
+    configuration's out-of-fold rows, clamped to MEAN_RATIO_BOUNDS. 1.0 when the option is
+    off, or for a task or transform it doesn't apply to.
+    """
+    from loguru import logger
+
+    if (
+        getattr(result, "mean_correction", None) != "ratio"
+        or task_type != TaskType.REGRESSION
+        or result.y_transform not in MEAN_CORRECTABLE_TRANSFORMS
+    ):
+        return 1.0
+    oof_preds, oof_labels = result.oof_predictions, result.oof_labels
+    ratio = None if oof_preds is None or oof_labels is None else total_ratio(oof_labels, oof_preds)
+    if ratio is None:
+        logger.warning("mean_correction skipped: the out-of-fold totals aren't available or aren't positive.")
+        return 1.0
+    clamped = float(np.clip(ratio, *MEAN_RATIO_BOUNDS))
+    if clamped != ratio:
+        logger.warning(f"mean_correction: ratio {ratio:.3g} clamped to {clamped:.3g}; check the model's predictions.")
+    return clamped
+
+
 def build_final_model(result: "PipelineResult") -> FinalModel:
     """
     Fit the overall best model on the full training dataset and return a
     FinalModel ready for inference.
 
     Picks the correct feature store (reduced or full) via best_feature_stage,
-    applies StandardScaler when the model requires it, and fits with
-    best_params when step 4 ran.
+    applies StandardScaler when the model requires it, and fits
+    clone(result.best_base_estimator) with best_params set on top — the same
+    estimator CV validated. Results saved before best_base_estimator existed are
+    rebuilt from the model registry instead.
 
     Args:
         result: PipelineResult from H2MLPipeline.run().
@@ -537,9 +620,9 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
 
     Raises:
         ValueError: If the result is incomplete (no step-1 CV result, no
-            best_model_name, or the chosen feature store is missing), or if
-            best_model_name is no longer present in the registry (e.g. the model
-            was removed after the pipeline ran).
+            best_model_name, or the chosen feature store is missing), or, for a
+            legacy result without best_base_estimator, if best_model_name is not
+            present in the registry.
     """
     from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
 
@@ -556,46 +639,76 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
     store = result.features_reduced if feature_stage == "reduced" else result.features
     if store is None:
         raise ValueError(f"Cannot build final model: the '{feature_stage}' feature store is missing from the result.")
+    cv_store = store  # rows the CV (and so the OOF predictions) ran on
+    holdout_store = getattr(result, "holdout_store", None)
+    if holdout_store is not None and getattr(result, "holdout_refit", "dev") == "all" and result.features is not None:
+        # Refit on dev + holdout rows, in the winner's y-space and feature set.
+        store = stage_store(concat_stores(result.features, holdout_store), result.y_transform, store.feature_names)
 
-    registry = CLASSIFIER_REGISTRY if task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
-    entry = registry.get(result.best_model_name)
-    if entry is None:
-        raise ValueError(
-            f"Model '{result.best_model_name}' not found in registry. Was it removed after the pipeline ran?"
-        )
-
-    # Instantiate with best_params when available, otherwise default
-    if result.best_params:
-        estimator = entry.model_cls(**result.best_params)
+    if result.best_base_estimator is not None:
+        # The estimator CV ran (constructor args and injected class_weight included);
+        # best_params are step-4 overrides on top of it.
+        estimator = clone(result.best_base_estimator)
+        if result.best_params:
+            estimator.set_params(**result.best_params)
+        requires_scaling = result.best_requires_scaling
     else:
-        estimator = entry.model_cls(**entry.default_kwargs)
+        # Legacy results: rebuild from the registry, where best_params hold full kwargs.
+        registry = CLASSIFIER_REGISTRY if task_type == TaskType.CLASSIFICATION else REGRESSOR_REGISTRY
+        entry = registry.get(result.best_model_name)
+        if entry is None:
+            raise ValueError(
+                f"Model '{result.best_model_name}' not found in registry. Was it removed after the pipeline ran?"
+            )
+        # Without best_params, re-apply the weights CV ran with, or the deployed
+        # model would differ from the validated one.
+        if result.best_params:
+            estimator = entry.model_cls(**result.best_params)
+        else:
+            kwargs = dict(entry.default_kwargs)
+            if result.class_weight_balanced and entry.supports_class_weight:
+                kwargs["class_weight"] = "balanced"
+            estimator = entry.model_cls(**kwargs)
+        requires_scaling = entry.requires_scaling
 
     X = store.X
     scaler = None
-    if entry.requires_scaling:
+    if requires_scaling:
         scaler = StandardScaler()
         X = scaler.fit_transform(X)
 
     # The refit target must be in the same y-space the winning model was validated
     # in. The "default" feature stage keeps the raw input store, so when a
     # y-transform won the sweep the transform is re-applied here — otherwise the
-    # deployed model would differ from the CV winner and callers that invert
-    # predictions (DeltaFinalModel, geo_predict) would invert an already
-    # original-scale output.
+    # deployed model would differ from the CV winner and predict() would invert
+    # an already original-scale output.
     y_fit = store.y
     if result.y_transform and store.y_transform is None:
         transformed = Y_TRANSFORMS[result.y_transform](store.y)
-        # win* transforms return None when y has no outliers — identity in that case
-        if transformed is not None:
-            y_fit = transformed
+        # win* transforms return None when there is nothing to clip — only the clipping
+        # is skipped: predictions are still inverted with the log/sqrt step underneath
+        y_fit = PRE_CLIP_TRANSFORMS[result.y_transform](store.y) if transformed is None else transformed
+    else:
+        # Winsorize-based transform stores hold y before clipping (the limit is fitted
+        # per CV fold) — clip here with the limit fitted on the full training set.
+        fit_target = get_train_target_fn(store.y_transform)
+        if fit_target is not None:
+            y_fit = fit_target(store.y)
 
     estimator.fit(X, y_fit)
 
     classes = getattr(estimator, "classes_", None)
+    mean_ratio = _mean_ratio(result, task_type)
 
     local_conformal: Optional[LocalConformalCalibration] = None
     variogram = None
-    if result.splitter is not None and (store.coords is not None or store.times is not None):
+    if holdout_store is not None:
+        # Block-local thresholds need residuals spread over every spatial block; the holdout
+        # covers only a few, and the dev OOF residuals carry the selection bias it removes.
+        from loguru import logger
+
+        logger.info("Local conformal calibration skipped: a holdout was used — global holdout calibration applies.")
+    elif result.splitter is not None and (store.coords is not None or store.times is not None):
         local_conformal = _build_local_conformal(
             result,
             coords=store.coords,
@@ -603,38 +716,74 @@ def build_final_model(result: "PipelineResult") -> FinalModel:
             metric=result.spatial_cv_metric,
             time_bin_resolution=result.time_bin_resolution,
             classes=classes,
+            mean_ratio=mean_ratio,
         )
-    if store.coords is not None:
+    if cv_store.coords is not None:
         oof_preds = result.oof_predictions
         oof_labels = result.oof_labels
         if oof_preds is not None and oof_labels is not None and oof_preds.ndim == 1:
-            valid = np.isfinite(oof_preds) & np.isfinite(oof_labels)
-            if valid.sum() >= 10:
-                from h2ml.utils.variogram import autocorrelation_range
-
-                try:
-                    variogram = autocorrelation_range(
-                        store.coords[valid],
-                        np.abs(oof_preds[valid] - oof_labels[valid]),
-                    )
-                except Exception as e:
-                    from loguru import logger
-
-                    logger.debug(f"Variogram fit skipped (diagnostic only): {e}")
+            variogram = _fit_variogram(
+                cv_store.coords, mean_ratio * oof_preds - oof_labels, metric=result.spatial_cv_metric
+            )
 
     return FinalModel(
         estimator=estimator,
         feature_names=store.feature_names,
         task_type=task_type,
-        requires_scaling=entry.requires_scaling,
+        requires_scaling=requires_scaling,
         scaler=scaler,
         best_model_name=result.best_model_name,
         best_params=result.best_params,
-        conformal=_build_conformal_calibration(result, classes=classes),
+        conformal=_build_conformal_calibration(result, classes=classes, mean_ratio=mean_ratio),
         y_transform=result.y_transform,
         local_conformal=local_conformal,
         variogram=variogram,
+        applicability=_build_applicability(result, cv_store),
+        mean_ratio=mean_ratio,
     )
+
+
+def _fit_variogram(coords: np.ndarray, residuals: np.ndarray, metric: str) -> Optional[Any]:
+    """Fit the diagnostic variogram on the finite signed residuals; None when under 10 remain or the fit fails."""
+    valid = np.isfinite(residuals)
+    if valid.sum() < 10:
+        return None
+    from h2ml.utils.variogram import autocorrelation_range
+
+    try:
+        return autocorrelation_range(coords[valid], residuals[valid], metric=metric)
+    except Exception as e:
+        from loguru import logger
+
+        logger.debug(f"Variogram fit skipped (diagnostic only): {e}")
+        return None
+
+
+def _build_applicability(result: "PipelineResult", store: PipelineData) -> Optional[ApplicabilityDomain]:
+    """
+    Fit the area of applicability on the CV rows of the deployed feature set.
+
+    Fold ids come from the winning CV result (so a spatial run calibrates the
+    threshold on spatial folds) and feature weights from step 2's SHAP importance
+    when available. Returns None — with a warning — when it cannot be fitted.
+    """
+    from loguru import logger
+
+    cv = result.best_cv_result
+    if cv is None or not cv.folds:
+        return None
+    fold_ids = np.full(store.n_samples, -1)
+    for k, fold in enumerate(cv.folds):
+        fold_ids[fold.test_idx] = k
+    importance = getattr(result.selector, "feature_importance_", None)
+    weights = None
+    if isinstance(importance, pd.Series) and not importance.empty:
+        weights = importance.reindex(store.feature_names).fillna(0.0).to_numpy()
+    try:
+        return build_applicability_domain(store.X, store.feature_names, fold_ids, weights)
+    except ValueError as e:
+        logger.warning(f"Area of applicability skipped: {e}")
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -649,9 +798,13 @@ def _delta_oof_residuals(
     X_full: "pd.DataFrame | np.ndarray",
     y_full: np.ndarray,
     positive_indices: np.ndarray,
+    signed: bool = False,
 ) -> Optional[np.ndarray]:
     """
     Sample-indexed combined delta OOF residuals: |y_full - (P_oof × count_hat)|.
+
+    With ``signed=True`` it returns ``P_oof × count_hat - y_full`` instead (the
+    variogram's input); the warnings and NaN positions are the same.
 
     The returned array has length len(y_full) and is indexed by original sample
     position, with NaN where a residual is unavailable (e.g. a failed CV fold). It is
@@ -662,7 +815,7 @@ def _delta_oof_residuals(
     P_oof (all N samples) comes from clf_result.best_cv_result.
     count_oof_pos (positive samples, already inverse-transformed by CV) comes from
     reg_result.best_cv_result. For zero-count samples the regressor is called as a
-    regular predictor (not OOF) and the inverse transform is applied manually.
+    regular predictor (not OOF).
 
     Pass X_full as a DataFrame (with all feature column names) when the clf and reg
     were trained on different feature sets — reg_final.predict selects its own columns.
@@ -728,10 +881,11 @@ def _delta_oof_residuals(
     if len(count_oof_pos) < n_pos:
         count_oof_pos = np.concatenate([count_oof_pos, np.full(n_pos - len(count_oof_pos), np.nan)])
 
+    # reg_final.predict below carries the mean correction; the stored OOF predictions don't.
     count_hat_full = np.full(n_full, np.nan)
-    count_hat_full[positive_indices] = count_oof_pos
+    count_hat_full[positive_indices] = count_oof_pos * reg_final.mean_ratio
 
-    # For zero-count samples, call the final regressor (not OOF) and inverse-transform manually
+    # For zero-count samples, call the final regressor (not OOF)
     zero_mask = np.ones(n_full, dtype=bool)
     zero_mask[positive_indices] = False
     zero_indices = np.where(zero_mask)[0]
@@ -739,21 +893,16 @@ def _delta_oof_residuals(
         # Slice preserving type: DataFrame slicing keeps column names so _prepare
         # can select the reg's feature subset when clf and reg have different features.
         X_zero = X_full.iloc[zero_indices] if isinstance(X_full, pd.DataFrame) else X_full[zero_indices]
-        zero_preds = reg_final.predict(X_zero)  # transform space
-        if reg_final.y_transform is not None:
-            inverse_fn = INVERSE_TRANSFORMS.get(reg_final.y_transform)
-            if inverse_fn is not None:
-                zero_preds = inverse_fn(zero_preds)
-        count_hat_full[zero_indices] = zero_preds
+        count_hat_full[zero_indices] = reg_final.predict(X_zero)
 
     delta_oof = P_oof * count_hat_full
-    delta_resid = np.abs(y_full - delta_oof)
+    delta_resid = delta_oof - y_full
     n_excluded = int((~np.isfinite(delta_resid)).sum())
     if n_excluded:
         logger.warning(
             f"Delta conformal calibration: {n_excluded} samples excluded due to NaN (likely from failed CV folds)."
         )
-    return delta_resid
+    return delta_resid if signed else np.abs(delta_resid)
 
 
 def _build_delta_conformal(
@@ -797,9 +946,8 @@ class DeltaFinalModel:
     Conformal interval: [max(0, delta − q), delta + q]
     where q is calibrated from combined out-of-fold residuals on the full delta output.
 
-    The regressor's y-transform (if any) is inverted inside predict() so the output is
-    always in the original count scale. This differs from FinalModel, where the caller
-    handles inversion — the multiplication P × count requires the original scale.
+    The regressor's predict() inverts its y-transform (if any), so the output is always
+    in the original count scale — the multiplication P × count requires that scale.
 
     Attributes:
         clf:             Presence/absence classifier — supplies P(present).
@@ -835,10 +983,9 @@ class DeltaFinalModel:
         """
         Delta prediction: P(present) × E(count | present).
 
-        The regressor's y-transform is inverted here so the result is in the
-        original count scale. Pass a DataFrame to let each sub-model select its own
-        features by name; pass an ndarray only when both models share the same
-        feature set and column order.
+        The result is in the original count scale. Pass a DataFrame to let each
+        sub-model select its own features by name; pass an ndarray only when both
+        models share the same feature set and column order.
 
         Args:
             X: Input features (DataFrame preferred; ndarray only when clf and reg
@@ -847,13 +994,7 @@ class DeltaFinalModel:
         Returns:
             1-D array of expected counts in the original scale.
         """
-        p = self.clf.predict_proba(X)
-        count = self.reg.predict(X)
-        if self.reg.y_transform is not None:
-            inverse_fn = INVERSE_TRANSFORMS.get(self.reg.y_transform)
-            if inverse_fn is not None:
-                count = inverse_fn(count)
-        return p * count
+        return self.clf.predict_proba(X) * self.reg.predict(X)
 
     def predict_interval(
         self,
@@ -985,7 +1126,10 @@ def build_delta_final_model(
     # unavailable. Shared by the global and local calibrators so both are calibrated
     # on the same residuals — the local one must NOT fall back to the classifier's
     # probability-scale scores, which would miscalibrate count-scale intervals.
-    delta_resid = _delta_oof_residuals(clf_result, reg_result, reg_final, X_full, y_full, positive_indices)
+    signed_resid = _delta_oof_residuals(
+        clf_result, reg_result, reg_final, X_full, y_full, positive_indices, signed=True
+    )
+    delta_resid = None if signed_resid is None else np.abs(signed_resid)
 
     conformal: Optional[ConformalCalibration] = None
     if delta_resid is not None:
@@ -1013,7 +1157,12 @@ def build_delta_final_model(
                 oof_scores=delta_resid,
             )
 
-    variogram = clf_final.variogram  # reuse — same spatial residual structure
+    # The classifier's own variogram describes probability-scale residuals; this one is
+    # fitted on the count-scale delta residuals the intervals are calibrated on.
+    variogram = None
+    if signed_resid is not None and clf_store is not None and clf_store.coords is not None:
+        if len(clf_store.coords) == len(signed_resid):
+            variogram = _fit_variogram(clf_store.coords, signed_resid, metric=clf_result.spatial_cv_metric)
 
     return DeltaFinalModel(
         clf=clf_final,

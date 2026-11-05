@@ -13,7 +13,13 @@ INVERSE_TRANSFORMS: dict[name → callable(y_pred) -> ndarray]
                     log/sqrt step is inverted.
 
 Available names: count, log, sqrt, wincount, winlog, winsqrt.
-Winsorize-based transforms replace upper outliers with the IQR upper limit.
+Winsorize-based transforms cap y at a high quantile of its non-zero values.
+
+PRE_CLIP_TRANSFORMS: dict[win* name → stateless part of the transform]
+                    The limit is fitted on the data, so in CV it must come from
+                    the training rows only. Transform stores for win* names hold y
+                    before clipping; get_train_target_fn() returns the clipping step
+                    that each training fold (and the final refit) applies to itself.
 """
 
 from __future__ import annotations
@@ -21,6 +27,15 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 import numpy as np
+
+# Quantile of the non-zero values that winsorizing caps y at. Zeros are left out so the
+# cap stays in the tail on zero-heavy targets: over all rows, a target with 97% zeros
+# would be capped inside its ordinary catches.
+WINSOR_QUANTILE = 0.99
+
+# Transforms whose inverse doesn't recover the mean: a model fitted on log1p(y) or sqrt(y)
+# estimates the mean of that scale, and inverting it underestimates the mean of y.
+MEAN_CORRECTABLE_TRANSFORMS = ("log", "sqrt", "winlog", "winsqrt")
 
 
 def log_transform(y: np.ndarray) -> np.ndarray:
@@ -35,16 +50,26 @@ def sqrt_transform(y: np.ndarray) -> np.ndarray:
 
 def winsorize(y: np.ndarray) -> Optional[np.ndarray]:
     """
-    Replaces upper outliers with IQR upper limit.
-    Returns None if no outliers found — caller should skip this transform.
+    Caps y at the WINSOR_QUANTILE of its non-zero values.
+    Returns None if nothing lies above the limit, or y has no non-zero values — caller
+    should skip this transform. Also None when the limit sits at the minimum: clipping
+    would flatten y to a constant.
     """
-    Q1, Q3 = np.percentile(y, [25, 75])
-    upper_limit = Q3 + 1.5 * (Q3 - Q1)
+    nonzero = y[y != 0]
+    if nonzero.size == 0:
+        return None
+    upper_limit = np.quantile(nonzero, WINSOR_QUANTILE)
 
-    if (y > upper_limit).sum() == 0:
+    if upper_limit <= np.min(y) or (y > upper_limit).sum() == 0:
         return None
 
     return np.where(y > upper_limit, upper_limit, y)
+
+
+def clip_upper_outliers(y: np.ndarray) -> np.ndarray:
+    """Winsorize y with a limit fitted on y itself; y is returned unchanged when it has no outliers."""
+    clipped = winsorize(y)
+    return y if clipped is None else clipped
 
 
 # Transform registry — extend freely
@@ -67,3 +92,23 @@ INVERSE_TRANSFORMS: dict[str, Callable] = {
     "winlog": np.expm1,
     "winsqrt": np.square,
 }
+
+# Stateless part of each winsorize-based transform — safe to apply before splitting.
+# Y_TRANSFORMS[name](y) == clip_upper_outliers(PRE_CLIP_TRANSFORMS[name](y)) when y has outliers.
+PRE_CLIP_TRANSFORMS: dict[str, Callable] = {
+    "wincount": lambda y: y,
+    "winlog": log_transform,
+    "winsqrt": sqrt_transform,
+}
+
+
+def total_ratio(y_true: np.ndarray, y_pred: np.ndarray) -> Optional[float]:
+    """Observed total over predicted total on the finite rows, or None unless both are positive."""
+    valid = np.isfinite(y_true) & np.isfinite(y_pred)
+    observed, predicted = float(y_true[valid].sum()), float(y_pred[valid].sum())
+    return observed / predicted if observed > 0 and predicted > 0 else None
+
+
+def get_train_target_fn(y_transform: Optional[str]) -> Optional[Callable[[np.ndarray], np.ndarray]]:
+    """Return the step fitted on and applied to training targets for y_transform, or None if stateless."""
+    return clip_upper_outliers if y_transform in PRE_CLIP_TRANSFORMS else None

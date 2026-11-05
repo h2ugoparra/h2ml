@@ -6,7 +6,7 @@ A 4-step AutoML pipeline wrapping sklearn-compatible estimators.
 
 ## Tech Stack
 
-Python 3.11+ (pinned to 3.13 locally via `.python-version`). Key libraries: `scikit-learn`, `optuna` (HPO), `shap` (feature selection), `joblib` (parallel CV), `lightgbm`/`xgboost`/`catboost` (`[boosting]` extra), `h2mare` (core dep; `polars` is also core; `[geo]` extra adds `cartopy` for `predict_map`). Dev: `uv`, `ruff`, `pytest`, `tox`, `mkdocs`.
+Python 3.11+ (pinned to 3.13 locally via `.python-version`). Key libraries: `scikit-learn`, `optuna` (HPO), `shap` (feature selection), `joblib` (parallel CV), `lightgbm`/`xgboost`/`catboost` (`[boosting]` extra), `h2mare[viz]` (core dep, brings in `cartopy` and `polars`; there is no `[geo]` extra — removed in 0.4.0). Dev: `uv`, `ruff`, `pytest`, `tox`, `mkdocs`.
 
 ## Commands
 
@@ -15,8 +15,8 @@ uv run pytest                    # all tests
 uv run pytest tests/feature/     # module tests
 uv run pytest path::Class::test  # single test
 uv run tox                       # across Python versions
-uv run ruff check h2ml/          # lint
-uv run ruff format h2ml/         # format
+uv run ruff check h2ml/ tests/   # lint (same scope as CI)
+uv run ruff format h2ml/ tests/  # format (CI uses --check and fails on drift)
 uv run mkdocs serve              # docs preview
 uv run mkdocs build              # docs build
 ```
@@ -28,17 +28,29 @@ H2MLPipeline (pipeline/pipeline.py)
   ├── Step 1: CV all models × transforms  →  best_model_name, step1_agg_df
   ├── Step 2: OOF SHAP + correlation filter  →  features_reduced, selector
   ├── Step 3: CV on reduced features  →  best_stage ("default" or "reduced")
-  └── Step 4: Optuna HPO  →  best_params  [skipped if opt_enabled=False]
+  └── Step 4: Optuna HPO  →  best_params  [skipped if no enabled search space]
 
 CrossValidator (pipeline/cv.py)              → joblib.Parallel over models; scaling inside folds
 FeatureSelector (features/selector.py)       → shap_importance.py + correlation.py
 SpatialBlockSplitter / SPCVSplitter          → activated when store.coords is set; built once in step 1
   (features/spatial_cv.py)
 FinalModel (pipeline/final_model.py)         → predict/predict_proba + optional ConformalCalibration
-                                               or LocalConformalCalibration (space-time block-local)
+                                               or LocalConformalCalibration (space-time block-local);
+                                               area_of_applicability() via ApplicabilityDomain
+                                               (evaluation/applicability.py, Meyer & Pebesma DI fitted on CV rows/folds)
 DeltaFinalModel (pipeline/final_model.py)    → P(present) × E(count|present); built via build_delta_final_model()
 model registry (utils/registry.py)           → CLASSIFIER_REGISTRY / REGRESSOR_REGISTRY dicts of ModelEntry; build_models(task)
 optimizer (optimization/optimizer.py)        → run_study(); optimize_all() for batch use  [module functions, no class]
+nested_cv (pipeline/nested.py)              → full pipeline per outer fold, scored via _score_holdout → NestedCVResult
+                                               (folds_df, summary() optimism, selection_counts(), feature_frequency())
+seed_stability (pipeline/stability.py)       → rerun with random_state per seed (through step 1/3/4) → SeedStabilityResult
+                                               (runs_df, summary() score spread + top-selection share)
+multi_metric (pipeline/multi_metric.py)      → pipeline per selection metric (classification + regression); shares step-1 CV
+                                               per class weighting and steps 2–3 per step-1 winner via the split
+                                               _cv_step*/_select_step*/_tune_step4 halves → MultiMetricResult
+                                               (runs_df, results, save/load); models deep-copied per metric
+ranking (evaluation/ranking.py)              → ranking_robustness() / ranking_warnings(): paired-fold + cross-metric
+                                               robustness of a selection; drives prefer_reduced_on_tie
 
 core/ (foundational, dependency-free leaf layer; nothing in core imports other h2ml packages)
   base.py         → TaskType, BaseStep/PredictorMixin, BaseClassifier/Regressor/Preprocessor
@@ -67,31 +79,47 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 
 | Parameter | Default | Effect |
 |-----------|---------|--------|
-| `metric` | `"AUC"` | Model selection and HPO metric. Classification: `"AUC"`, `"AUC_PR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. |
+| `metric` | `"AUC"` | Model selection and HPO metric. Classification: `"AUC"`, `"AUCPR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`, `"PoissonDev"` (non-negative targets; opt-in in `multi_metric`). |
 | `n_splits` | `5` | CV folds for model screening (steps 1 and 3) |
+| `n_jobs` | `-1` | Worker processes for parallel CV in steps 1 and 3 and for chunked model-agnostic SHAP in step 2; must be non-zero |
 | `corr_threshold` | `0.7` | Drop feature if it exceeds this in any of Pearson, Spearman, or Kendall with a retained feature |
+| `max_vif` | `None` | Step 2: after the correlation filter, iteratively drop the lowest-SHAP-ranked feature with VIF > max_vif (catches multicollinearity pairwise correlation misses); None skips |
 | `min_features` | `1` | Minimum features retained after correlation filter |
 | `n_trials` | `50` | Optuna trials in step 4 |
-| `opt_n_splits` | `3` | Folds used during Optuna |
+| `opt_n_splits` | `3` | Folds used during Optuna (trials train on smaller folds than step-4 acceptance CV; set = `n_splits` to match, at higher cost) |
 | `n_hpo_repeats` | `1` | Independent HPO repeats; trials divided evenly, best repeat kept |
-| `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers with `supports_class_weight=True` |
+| `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers with `supports_class_weight=True`; `"auto"` only when minority-class ratio < 0.1, resolved per run |
+| `prefer_reduced_on_tie` | `False` | Step 3 1-SE rule: if the winner is `"default"` stage and a reduced candidate is `Indistinguishable` from it (paired folds, Nadeau–Bengio SE), select the best-ranked such reduced candidate; switch recorded in `cv_warnings` |
+| `select_features_in_folds` | `False` | Step 3 re-runs the step-2 selector per CV fold on its training rows (`result.step3_fold_features`) and scores reduced candidates on those sets (`CrossValidator` `fold_columns`); step 4's acceptance CV reuses them when reduced won. Deployed set unchanged. ~`n_splits`× step-2 cost |
+| `selection_scoring` | `"pooled"` | Regression selection in steps 1, 3 and 4 (including Optuna): one score over all OOF rows (`<metric>_Test_Pooled`). `"fold_mean"` uses the mean with a fold-spread penalty. Classification always uses the fold mean. Kept on the result, so older saved results resume on `"fold_mean"` |
+| `mean_correction` | `None` | `"ratio"`: `build_final_model` rescales log/sqrt-family predictions so their total matches the observed OOF total (clamped to 0.1–10, `FinalModel.mean_ratio`); conformal scores follow, delta corrects the count part only. CV scores, selection and `holdout_df` stay uncorrected |
+| `holdout_frac` | `0.0` | Rows set aside before step 1, scored once on the final config (`result.holdout_df`); steps run on the rest. Conformal then uses holdout residuals and local conformal is skipped |
+| `holdout_strategy` | `"auto"` | `"auto"` (whole spatial blocks drawn at random up to `holdout_frac` if coords, else random/stratified), `"random"`, `"time"` (latest rows by `store.times`) |
+| `holdout_refit` | `"dev"` | `build_final_model` fits on `"dev"` rows only, or `"all"` (dev + holdout) |
+| `holdout_min_minority` | `None` | Drop the holdout (as `holdout_frac=0`) when the drawn split holds fewer rarest-class (classification) or non-zero (regression) rows; `[holdout] Holdout dropped` in `cv_warnings` |
 | `spatial_cv_method` | `"spcv"` | Spatial CV strategy: `"block"` or `"spcv"` (ignored when `store.coords` is `None`) |
 | `spatial_cv_metric` | `"euclidean"` | Distance metric: `"euclidean"` or `"haversine"` |
-| `time_bin_resolution` | `"month"` | Temporal bin granularity for spatial CV and local conformal calibration: `"month"` or `"season"` |
+| `time_bin_resolution` | `"month"` | Temporal bin granularity for local conformal calibration (not used by CV): `"month"` or `"season"` |
 | `n_blocks_per_fold` | `5` | Blocks per test fold for the block splitter |
 | `ahc_threshold` | `None` | AHC distance threshold for SPCVSplitter (auto-derived when `None`) |
 | `pca_components` | `0.95` | Variance retained by PCA on block covariates |
 | `exact_max_samples` | `5_000` | Sample threshold for exact vs. approximate AHC |
 | `knn_neighbors` | `15` | k for k-NN connectivity graph in approximate AHC |
+| `spcv_use_target` | `True` | Include the target view in SPCV CV fold assignment; holdouts and `nested_cv` outer folds never use it |
 
 ## PipelineResult
 
-Key fields: `best_model_name`, `best_stage`, `best_feature_stage`, `best_params`, `y_transform`, `metric`, `cv_type`, `cv_warnings`, `splitter`, `step3_reduced_stores`. Note: `splitter` and `step3_reduced_stores` are not persisted — both are `None` after `PipelineResult.load()`.
+Key fields: `best_model_name`, `best_stage`, `best_feature_stage`, `best_base_estimator` (unfitted winner as CV ran it), `best_params` (overrides set on top of it), `y_transform`, `metric`, `cv_type`, `cv_warnings`, `splitter`, `step3_reduced_stores`, `holdout_store`/`holdout_idx`/`holdout_df` (with a holdout, `features` holds only the dev rows). Note: `splitter` and `step3_reduced_stores` are not persisted — both are `None` after `PipelineResult.load()`.
 
 ```python
 result.summary(metric=None, ascending=False)   # combined agg DataFrame across all stages
 result.build_final_model()                      # refit on full training set → FinalModel
 result.save(path) / PipelineResult.load(path)  # serialise/reload
+result.ranking_robustness(step=None)            # paired-fold gaps/ties + per-metric ranks (step 3 if run, else 1)
+# cv_warnings also carries advisory [metric] (step 1) and [ranking] (steps 1 & 3) flags;
+# Is_Winner in ranking_robustness is the selection's winner before prefer_reduced_on_tie;
+# [selection] flags constant-prediction candidates, which selection excludes unless all are flat;
+# [transform] flags a log/sqrt winner whose OOF total is more than 20% from the observed total
 
 # FinalModel conformal prediction
 model.predict_interval(X, alpha)  # regression; alpha=0.10 → 90% coverage
@@ -105,14 +133,14 @@ compare_results(results, labels, metric, n_folds)  # sort direction auto-derived
 
 - **Logging** — use `loguru` (`from loguru import logger`), not stdlib `logging`
 - **CatBoost** uses `random_seed` (not `random_state`) and `thread_count` (not `n_jobs`)
-- **SHAP routing**: tree models → `TreeExplainer`; linear SVM (`kernel="linear"`, `probability=False`) → `LinearExplainer`; all others → KernelSHAP with `shap.kmeans` background (capped at `max_background=100`)
-- **y-transform names**: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`, `"winlog"`, `"winsqrt"`; winsorize variants silently skipped when no outliers
+- **SHAP routing**: tree models → `TreeExplainer`; linear SVM (`kernel="linear"`, `probability=False`) → `LinearExplainer`; all others → model-agnostic `shap.Explainer` (Exact for ≤10 features, Permutation above; seeded from `random_state`) with `shap.kmeans` background (capped at `max_background=100`). That path is the expensive one (seconds/row for RBF SVC/SVR): folds are fitted serially, then test rows are explained in fixed 16-row chunks in parallel (`n_jobs`); results don't depend on `n_jobs`
+- **y-transform names**: `"count"` (identity), `"log"`, `"sqrt"`, `"wincount"`, `"winlog"`, `"winsqrt"`; winsorize variants cap at the 99th percentile of non-zero values (zeros excluded so zero-heavy targets keep their catches) and are silently skipped when nothing lies above it; their stores hold pre-clip y and the limit is fitted per training fold via `get_train_target_fn()` (never on the full y before splitting)
 - **`n_jobs=1`** in optimizer always — parallel Optuna trials cause resource-tracker warnings on Windows
 - **Boosting extras** require `uv sync --extra boosting`
 
 ## h2mare dependency
 
-`h2mare` (PyPI, core dependency) — geospatial storage (`ParquetIndexer`), aggregation, map plotting. Import paths in `h2ml/geo/geo_predict.py` use `h2mare.*`. The `[geo]` extra adds `cartopy`, required only for `predict_map` (`polars` is a core dependency).
+`h2mare` (PyPI, core dependency) — geospatial storage (`ParquetIndexer`), aggregation, map plotting. Import paths in `h2ml/geo/geo_predict.py` use `h2mare.*`. Since 0.9.0 it declares `cartopy` only under its `viz` extra, so h2ml depends on `h2mare[viz]` to bring `cartopy` (like `polars`) with the base install; there is no `[geo]` extra.
 
 ## Git workflow
 

@@ -20,6 +20,10 @@ Layout
     step1_cv_result.pkl    — list[CVResult]  (joblib)
     step3_cv_result.pkl    — list[CVResult]
     step4_cv_result.pkl     — CVResult
+    holdout_agg.parquet     — holdout metrics (when a holdout was scored)
+    holdout/                — raw holdout PipelineData
+    holdout_idx.npy         — holdout row indices into the store passed to run()
+    holdout_cv_result.pkl   — one-fold CVResult on the holdout
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ import pandas as pd
 from loguru import logger
 
 from h2ml.core.feature_store import PipelineData
+from h2ml.evaluation.metrics import rename_deprecated_columns, resolve_metric
 
 # ---------------------------------------------------------------------------
 # Field registry — keep in sync with PipelineResult
@@ -64,7 +69,14 @@ _SAVED_FIELDS = frozenset(
         "spatial_cv_metric",
         "time_bin_resolution",
         "cv_warnings",
+        "class_weight_balanced",
+        "best_requires_scaling",
         "metric",
+        "holdout_strategy",
+        "holdout_refit",
+        "selection_scoring",
+        "mean_correction",
+        "step3_fold_features",
         # parquet
         "step1_fold_df",
         "step1_agg_df",
@@ -72,14 +84,20 @@ _SAVED_FIELDS = frozenset(
         "step3_agg_df",
         "step4_fold_df",
         "step4_agg_df",
+        "holdout_df",
         # feature stores
         "features",
         "features_reduced",
+        "holdout_store",
+        # npy
+        "holdout_idx",
         # pickles
         "selector",
+        "best_base_estimator",
         "step1_cv_result",
         "step3_cv_result",
         "step4_cv_result",
+        "holdout_cv_result",
     }
 )
 
@@ -132,7 +150,14 @@ def save_result(result, path: str | Path) -> None:
             "spatial_cv_metric": result.spatial_cv_metric,
             "time_bin_resolution": result.time_bin_resolution,
             "cv_warnings": result.cv_warnings,
+            "class_weight_balanced": result.class_weight_balanced,
+            "best_requires_scaling": result.best_requires_scaling,
             "metric": result.metric,
+            "holdout_strategy": result.holdout_strategy,
+            "holdout_refit": result.holdout_refit,
+            "selection_scoring": result.selection_scoring,
+            "mean_correction": result.mean_correction,
+            "step3_fold_features": result.step3_fold_features,
         },
         root / "metadata.json",
     )
@@ -145,6 +170,7 @@ def save_result(result, path: str | Path) -> None:
         "step3_agg": result.step3_agg_df,
         "step4_fold": result.step4_fold_df,
         "step4_agg": result.step4_agg_df,
+        "holdout_agg": result.holdout_df,
     }
     for name, df in _df_map.items():
         if df is not None:
@@ -155,16 +181,24 @@ def save_result(result, path: str | Path) -> None:
         _save_feature_store(result.features, root / "features")
     if result.features_reduced is not None:
         _save_feature_store(result.features_reduced, root / "features_reduced")
+    if result.holdout_store is not None:
+        _save_feature_store(result.holdout_store, root / "holdout")
+    if result.holdout_idx is not None:
+        np.save(root / "holdout_idx.npy", result.holdout_idx)
 
     # FeatureSelector + CV results
     if result.selector is not None:
         joblib.dump(result.selector, root / "selector.pkl")
+    if result.best_base_estimator is not None:
+        joblib.dump(result.best_base_estimator, root / "best_base_estimator.pkl")
     if result.step1_cv_result:
         joblib.dump(result.step1_cv_result, root / "step1_cv_result.pkl")
     if result.step3_cv_result:
         joblib.dump(result.step3_cv_result, root / "step3_cv_result.pkl")
     if result.step4_cv_result is not None:
         joblib.dump(result.step4_cv_result, root / "step4_cv_result.pkl")
+    if result.holdout_cv_result is not None:
+        joblib.dump(result.holdout_cv_result, root / "holdout_cv_result.pkl")
 
     # Guard: warn if PipelineResult has fields that aren't in _SAVED_FIELDS or
     # _UNSAVED_FIELDS — catches new fields added without updating this module.
@@ -207,15 +241,29 @@ def load_result(path: str | Path):
         "step3_agg_df": _load_parquet(root / "step3_agg.parquet"),
         "step4_fold_df": _load_parquet(root / "step4_fold.parquet"),
         "step4_agg_df": _load_parquet(root / "step4_agg.parquet"),
+        "holdout_df": _load_parquet(root / "holdout_agg.parquet"),
     }
+    # Results saved before a metric rename keep the old column names on disk.
+    dfs = {k: None if df is None else rename_deprecated_columns(df) for k, df in dfs.items()}
+    metric = meta.get("metric")
+    holdout_idx_path = root / "holdout_idx.npy"
 
     return PipelineResult(
         features=_load_feature_store(root / "features"),
         features_reduced=_load_feature_store(root / "features_reduced"),
         selector=_load_pkl(root / "selector.pkl"),
+        best_base_estimator=_load_pkl(root / "best_base_estimator.pkl"),
         step1_cv_result=_load_pkl(root / "step1_cv_result.pkl"),
         step3_cv_result=_load_pkl(root / "step3_cv_result.pkl"),
         step4_cv_result=_load_pkl(root / "step4_cv_result.pkl"),
+        holdout_store=_load_feature_store(root / "holdout"),
+        holdout_idx=np.load(holdout_idx_path) if holdout_idx_path.exists() else None,
+        holdout_cv_result=_load_pkl(root / "holdout_cv_result.pkl"),
+        holdout_strategy=meta.get("holdout_strategy"),
+        holdout_refit=meta.get("holdout_refit", "dev"),
+        selection_scoring=meta.get("selection_scoring", "fold_mean"),
+        mean_correction=meta.get("mean_correction"),
+        step3_fold_features=meta.get("step3_fold_features"),
         best_model_name=meta.get("best_model_name"),
         best_model_value=meta.get("best_model_value"),
         best_model_std=meta.get("best_model_std"),
@@ -227,7 +275,9 @@ def load_result(path: str | Path):
         spatial_cv_metric=meta.get("spatial_cv_metric", "euclidean"),
         time_bin_resolution=meta.get("time_bin_resolution", "month"),
         cv_warnings=meta.get("cv_warnings", []),
-        metric=meta.get("metric"),
+        class_weight_balanced=meta.get("class_weight_balanced", False),
+        best_requires_scaling=meta.get("best_requires_scaling", False),
+        metric=None if metric is None else resolve_metric(metric),
         step3_reduced_stores=None,
         **dfs,
     )

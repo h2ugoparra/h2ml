@@ -25,6 +25,7 @@ from h2ml.optimization.optimizer import (
     optimize_all,
     run_study,
 )
+from h2ml.preprocessing.transforms import clip_upper_outliers
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -335,6 +336,119 @@ class TestBuildObjective:
         )
         assert callable(obj)
 
+    def test_base_estimator_keeps_unsearched_constructor_args(self, clf_data):
+        """With base_estimator, each trial clones it and sets only the sampled params,
+        so constructor args outside the search space (ccp_alpha) survive."""
+        from sklearn.ensemble import RandomForestClassifier
+
+        X, y = clf_data
+        seen = []
+
+        def score_fn(model, X_train, X_test, y_train, y_test):
+            seen.append((model.get_params()["ccp_alpha"], model.get_params()["max_depth"]))
+            return 0.5
+
+        study = optuna.create_study(direction="maximize")
+        study.optimize(
+            _build_objective(
+                _fast_clf_entry(),
+                X,
+                y,
+                "classification",
+                n_splits=2,
+                random_state=42,
+                score_fn=score_fn,
+                base_estimator=RandomForestClassifier(ccp_alpha=0.01),
+            ),
+            n_trials=1,
+        )
+        assert seen
+        assert all(ccp_alpha == 0.01 for ccp_alpha, _ in seen)
+        assert all(max_depth in (2, 3) for _, max_depth in seen)  # sampled value applied
+
+    def test_trials_keep_the_base_estimators_seed(self, clf_data):
+        """Search spaces no longer pin random_state, so a seed set on the estimator
+        is the one trials use — as the tuned and final models do."""
+        from sklearn.ensemble import RandomForestClassifier
+
+        from h2ml.utils.registry import CLASSIFIER_REGISTRY
+
+        X, y = clf_data
+        seeds = []
+
+        def score_fn(model, X_train, X_test, y_train, y_test):
+            seeds.append(model.get_params()["random_state"])
+            return 0.5
+
+        study = optuna.create_study(direction="maximize")
+        study.optimize(
+            _build_objective(
+                CLASSIFIER_REGISTRY["RandomForestClassifier"],
+                X,
+                y,
+                "classification",
+                n_splits=2,
+                random_state=42,
+                score_fn=score_fn,
+                base_estimator=RandomForestClassifier(n_estimators=5, random_state=7),
+            ),
+            n_trials=1,
+        )
+        assert seeds and set(seeds) == {7}
+
+    def test_without_base_estimator_trials_start_from_registry_defaults(self, clf_data):
+        """run_study/optimize_all pass no estimator: the trial model must still get the
+        registry defaults the search space no longer repeats (SVC probability=True)."""
+        from h2ml.utils.registry import CLASSIFIER_REGISTRY
+
+        X, y = clf_data
+        seen = []
+
+        def score_fn(model, X_train, X_test, y_train, y_test):
+            seen.append((model.get_params()["probability"], model.get_params()["max_iter"]))
+            return 0.5
+
+        study = optuna.create_study(direction="maximize")
+        study.optimize(
+            _build_objective(
+                CLASSIFIER_REGISTRY["SVC"],
+                X,
+                y,
+                "classification",
+                n_splits=2,
+                random_state=42,
+                score_fn=score_fn,
+            ),
+            n_trials=1,
+        )
+        assert seen and set(seen) == {(True, 1_000_000)}
+
+    def test_requires_scaling_overrides_entry(self, clf_data):
+        """requires_scaling=True scales folds even though the entry says False."""
+        X, y = clf_data
+        X = X * 100 + 50
+        train_means = []
+
+        def score_fn(model, X_train, X_test, y_train, y_test):
+            train_means.append(float(np.abs(X_train.mean(axis=0)).max()))
+            return 0.5
+
+        study = optuna.create_study(direction="maximize")
+        study.optimize(
+            _build_objective(
+                _fast_clf_entry(),
+                X,
+                y,
+                "classification",
+                n_splits=2,
+                random_state=42,
+                score_fn=score_fn,
+                requires_scaling=True,
+            ),
+            n_trials=1,
+        )
+        assert train_means and max(train_means) < 1e-6
+
     def test_objective_returns_float(self, clf_data):
         X, y = clf_data
         study = optuna.create_study(direction="maximize")
@@ -462,6 +576,46 @@ class TestBuildObjective:
             n_trials=n_trials,
         )
         assert sum(fit_calls) == n_splits * n_trials
+
+    def test_train_target_fn_fitted_per_training_fold(self, reg_data):
+        """Each trial fold must fit on targets clipped with that training fold's own limit."""
+        from sklearn.ensemble import RandomForestRegressor
+        from sklearn.model_selection import KFold
+
+        X, y = reg_data
+        y = y.copy()
+        y[:6] = [20.0, 30.0, 40.0, 50.0, 60.0, 70.0]
+        fitted_targets = []
+
+        class RecordingRF(RandomForestRegressor):
+            def fit(self, X, y, **kw):
+                fitted_targets.append(np.asarray(y).copy())
+                return super().fit(X, y, **kw)
+
+        entry = ModelEntry(
+            model_cls=RecordingRF,
+            requires_scaling=False,
+            param_fn=lambda trial: {"n_estimators": 5, "max_depth": 2, "random_state": 42},
+            opt_enabled=True,
+        )
+        splitter = KFold(n_splits=3, shuffle=True, random_state=0)
+        objective = _build_objective(
+            entry,
+            X,
+            y,
+            "regression",
+            n_splits=3,
+            random_state=42,
+            score_fn=_score_r2,
+            train_target_fn=clip_upper_outliers,
+            _splitter=splitter,
+        )
+        optuna.create_study(direction="maximize").optimize(objective, n_trials=1)
+
+        folds = list(splitter.split(X, y))
+        assert len(fitted_targets) == len(folds)
+        for (train_idx, _), fitted in zip(folds, fitted_targets, strict=True):
+            np.testing.assert_array_equal(fitted, clip_upper_outliers(y[train_idx]))
 
     def test_scaling_applied_to_x_train_when_required(self, clf_data):
         """When requires_scaling=True, the X_train seen by the model should be standardised."""
@@ -695,10 +849,10 @@ class TestScoreF1:
 
 class TestMetricSelection:
     def test_clf_metrics_registry_contains_expected_keys(self):
-        assert set(CLF_METRICS) == {"AUC", "AUC_PR", "LogLoss", "F1", "Brier"}
+        assert set(CLF_METRICS) == {"AUC", "AUCPR", "LogLoss", "F1", "Brier"}
 
     def test_reg_metrics_registry_contains_expected_keys(self):
-        assert set(REG_METRICS) == {"R2", "MAE", "RMSE"}
+        assert set(REG_METRICS) == {"R2", "MAE", "RMSE", "PoissonDev"}
 
     def test_invalid_clf_metric_raises_value_error(self, clf_data):
         X, y = clf_data
@@ -743,11 +897,24 @@ class TestMetricSelection:
             X,
             y,
             task="classification",
-            metric="AUC_PR",
+            metric="AUCPR",
             n_trials=3,
             n_splits=2,
         )
         assert isinstance(study, optuna.Study)
+        assert 0.0 <= study.best_value <= 1.0
+
+    def test_clf_deprecated_auc_pr_alias_accepted(self, clf_data):
+        X, y = clf_data
+        study = run_study(
+            "RandomForestClassifier",
+            X,
+            y,
+            task="classification",
+            metric="AUC_PR",
+            n_trials=1,
+            n_splits=2,
+        )
         assert 0.0 <= study.best_value <= 1.0
 
     def test_clf_f1_returns_study(self, clf_data):

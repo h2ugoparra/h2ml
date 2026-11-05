@@ -271,7 +271,7 @@ class TestOOFBrier:
         from h2ml.pipeline.base import TaskType
         from h2ml.pipeline.cv import CVResult, FoldResult
 
-        result = _make_result()
+        result = _make_result(stage="optimized")
         cv = CVResult(model_name="RFC", task_type=TaskType.CLASSIFICATION)
         cv.folds.append(
             FoldResult(

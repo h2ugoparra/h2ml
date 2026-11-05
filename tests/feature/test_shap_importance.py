@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import KFold
 from sklearn.svm import SVC, SVR
 
 from h2ml.features.feature_store import PipelineData
@@ -25,6 +26,7 @@ from h2ml.features.shap_importance import (
 )
 from h2ml.pipeline.base import TaskType
 from h2ml.pipeline.step import make_classifier, make_regressor
+from h2ml.preprocessing.transforms import clip_upper_outliers
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -331,6 +333,28 @@ class TestGetOofShapValues:
         shap_arr, _ = get_oof_shap_values(reg_step, reg_store, TaskType.REGRESSION, n_splits=3)
         assert shap_arr.shape == (N, len(FEATURE_NAMES))
 
+    def test_train_target_fn_fitted_per_training_fold(self, reg_store):
+        """Each OOF SHAP model must fit on targets clipped with its training fold's own limit."""
+        fitted_targets = []
+
+        class RecordingRF(RandomForestRegressor):
+            def fit(self, X, y, **kw):
+                fitted_targets.append(np.asarray(y).copy())
+                return super().fit(X, y, **kw)
+
+        y = reg_store.y.copy()
+        y[:5] = [20.0, 30.0, 40.0, 50.0, 60.0]
+        store = PipelineData(X=reg_store.X, feature_names=FEATURE_NAMES, y=y)
+        splitter = KFold(n_splits=3, shuffle=True, random_state=0)
+        step = make_regressor(RecordingRF(n_estimators=5, random_state=42))
+
+        get_oof_shap_values(step, store, TaskType.REGRESSION, train_target_fn=clip_upper_outliers, _splitter=splitter)
+
+        folds = list(splitter.split(store.X, y))
+        assert len(fitted_targets) == len(folds)
+        for (train_idx, _), fitted in zip(folds, fitted_targets, strict=True):
+            np.testing.assert_array_equal(fitted, clip_upper_outliers(y[train_idx]))
+
     def test_save_path_creates_file(self, clf_step, clf_store, tmp_path):
         out = tmp_path / "oof_shap.npy"
         get_oof_shap_values(clf_step, clf_store, TaskType.CLASSIFICATION, n_splits=3, save_path=out)
@@ -441,3 +465,127 @@ class TestSvcShapValues:
         )
         assert shap_arr.shape == (N, len(FEATURE_NAMES))
         assert set(importance.index) == set(FEATURE_NAMES)
+
+
+# ---------------------------------------------------------------------------
+# Model-agnostic path — parallel row chunks
+# ---------------------------------------------------------------------------
+
+WIDE_FEATURES = [f"w{i}" for i in range(12)]  # > 10 features → PermutationExplainer
+
+
+@pytest.fixture
+def wide_reg_store() -> PipelineData:
+    rng = np.random.default_rng(3)
+    return PipelineData(
+        X=rng.standard_normal((40, len(WIDE_FEATURES))),
+        feature_names=WIDE_FEATURES,
+        y=rng.standard_normal(40),
+    )
+
+
+def _svc_rbf_step():
+    return make_classifier(SVC(kernel="rbf", probability=True, random_state=42), requires_scaling=True)
+
+
+class TestParallelModelAgnosticShap:
+    """Chunked/parallel explanation must not change SHAP values."""
+
+    def test_chunked_matches_single_explainer_call(self, clf_store):
+        # Exact path (<= 10 features) is deterministic: chunking must be bit-identical
+        # to explaining all rows with one explainer call (the previous behaviour).
+        model = SVC(kernel="rbf", probability=True, random_state=42).fit(clf_store.X, clf_store.y)
+        X_frame = clf_store.to_frame()
+        explainer = _select_explainer(model, TaskType.CLASSIFICATION, X_frame, max_background=20)
+        expected = _extract_shap_array(explainer(X_frame, silent=True))
+
+        shap_arr, _ = get_shap_values(model, clf_store, TaskType.CLASSIFICATION, max_background=20, n_jobs=2)
+        assert np.array_equal(shap_arr, expected)
+
+    def test_oof_exact_path_n_jobs_independent(self, clf_store):
+        def run(n_jobs: int) -> np.ndarray:
+            arr, _ = get_oof_shap_values(
+                _svc_rbf_step(), clf_store, TaskType.CLASSIFICATION, n_splits=3, max_background=20, n_jobs=n_jobs
+            )
+            return arr
+
+        assert np.array_equal(run(1), run(2))
+
+    def test_oof_permutation_path_reproducible_and_n_jobs_independent(self, wide_reg_store):
+        step = make_regressor(SVR(kernel="rbf"), requires_scaling=True)
+
+        def run(n_jobs: int) -> np.ndarray:
+            arr, _ = get_oof_shap_values(
+                step, wide_reg_store, TaskType.REGRESSION, n_splits=3, max_background=10, n_jobs=n_jobs
+            )
+            return arr
+
+        a = run(1)
+        assert np.array_equal(a, run(1))
+        assert np.array_equal(a, run(2))
+
+    def test_permutation_path_leaves_global_rng_untouched(self, wide_reg_store):
+        # Pre-fitted model: SVR.fit itself draws a libsvm seed from the global RNG.
+        model = SVR(kernel="rbf").fit(wide_reg_store.X, wide_reg_store.y)
+        np.random.seed(123)
+        expected_next = np.random.random()
+        np.random.seed(123)
+        get_shap_values(model, wide_reg_store, TaskType.REGRESSION, max_background=10, n_jobs=1)
+        assert np.random.random() == expected_next
+
+    def test_tree_path_ignores_n_jobs(self, clf_store):
+        step = make_classifier(RandomForestClassifier(n_estimators=10, random_state=42))
+        serial, _ = get_oof_shap_values(step, clf_store, TaskType.CLASSIFICATION, n_splits=3, n_jobs=1)
+        parallel, _ = get_oof_shap_values(step, clf_store, TaskType.CLASSIFICATION, n_splits=3, n_jobs=2)
+        assert np.array_equal(serial, parallel)
+
+
+class TestOofShapFailedFolds:
+    """A fold that can't be fitted must not lose the whole selection step."""
+
+    def test_failed_fold_skipped_and_excluded_from_importance(self, reg_store):
+        marker = reg_store.X[0]
+
+        class FailsWithoutRowZero(RandomForestRegressor):
+            def fit(self, X, y, **kw):
+                if not (X == marker).all(axis=1).any():
+                    raise ValueError("All train targets are equal")
+                return super().fit(X, y, **kw)
+
+        splitter = KFold(n_splits=3, shuffle=True, random_state=0)
+        step = make_regressor(FailsWithoutRowZero(n_estimators=5, random_state=42))
+        oof, importance = get_oof_shap_values(step, reg_store, TaskType.REGRESSION, _splitter=splitter)
+
+        failed_test = next(te for _, te in splitter.split(reg_store.X) if 0 in te)
+        explained = np.setdiff1d(np.arange(reg_store.n_samples), failed_test)
+        assert np.all(oof[failed_test] == 0)
+        expected = np.abs(oof[explained]).mean(axis=0)
+        np.testing.assert_allclose(importance.reindex(FEATURE_NAMES).to_numpy(), expected)
+
+    def test_failed_fold_skipped_for_model_agnostic_explainer(self, reg_store, monkeypatch):
+        # The explainer is routed by class name, so this patches SVR rather than subclassing it
+        original_fit, fits = SVR.fit, []
+
+        def fails_on_first_fold(self, X, y, **kw):
+            fits.append(1)
+            if len(fits) == 1:
+                raise ValueError("boom")
+            return original_fit(self, X, y, **kw)
+
+        monkeypatch.setattr(SVR, "fit", fails_on_first_fold)
+        splitter = KFold(n_splits=3, shuffle=True, random_state=0)
+        step = make_regressor(SVR(kernel="rbf"), requires_scaling=True)
+        oof, _ = get_oof_shap_values(step, reg_store, TaskType.REGRESSION, _splitter=splitter)
+
+        _, failed_test = next(splitter.split(reg_store.X))
+        assert np.all(oof[failed_test] == 0)
+        assert np.abs(oof).sum() > 0
+
+    def test_all_folds_failing_raises(self, reg_store):
+        class AlwaysFails(RandomForestRegressor):
+            def fit(self, X, y, **kw):
+                raise ValueError("boom")
+
+        step = make_regressor(AlwaysFails(n_estimators=5))
+        with pytest.raises(RuntimeError, match="every fold failed"):
+            get_oof_shap_values(step, reg_store, TaskType.REGRESSION, n_splits=3)

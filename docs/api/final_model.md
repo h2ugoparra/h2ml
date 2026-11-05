@@ -12,6 +12,12 @@
 
 ::: h2ml.evaluation.conformal.LocalConformalCalibration
 
+## ApplicabilityDomain
+
+::: h2ml.evaluation.applicability.ApplicabilityDomain
+
+::: h2ml.evaluation.applicability.build_applicability_domain
+
 ## DeltaFinalModel
 
 ::: h2ml.pipeline.final_model.DeltaFinalModel

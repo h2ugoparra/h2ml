@@ -35,6 +35,7 @@ from h2ml.pipeline.final_model import (
 )
 from h2ml.pipeline.pipeline import H2MLPipeline, PipelineConfig, PipelineResult
 from h2ml.pipeline.step import make_classifier
+from h2ml.preprocessing.transforms import clip_upper_outliers
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -305,13 +306,64 @@ class TestTransformScale:
         winner and callers invert an already original-scale output."""
         result, X, y = self._result_with_log_transform("default")
         final = result.build_final_model()
-        np.testing.assert_allclose(final.predict(X), np.log1p(y), rtol=1e-6)
+        np.testing.assert_allclose(final.estimator.predict(final._prepare(X)), np.log1p(y), rtol=1e-6)
 
     def test_reduced_stage_does_not_double_transform(self):
         """features_reduced already carries transformed y — it must be used as-is."""
         result, X, y = self._result_with_log_transform("reduced")
         final = result.build_final_model()
-        np.testing.assert_allclose(final.predict(X), np.log1p(y), rtol=1e-6)
+        np.testing.assert_allclose(final.estimator.predict(final._prepare(X)), np.log1p(y), rtol=1e-6)
+
+    @pytest.mark.parametrize("stage", ["default", "reduced"])
+    def test_predict_returns_original_scale(self, stage):
+        """predict() inverts the y-transform, whichever feature stage won."""
+        result, X, y = self._result_with_log_transform(stage)
+        final = result.build_final_model()
+        np.testing.assert_allclose(final.predict(X), y, rtol=1e-6)
+
+    @pytest.mark.parametrize("stage", ["default", "reduced"])
+    def test_winsorize_refit_clips_with_full_training_limit(self, stage):
+        """Winsorize-based transform stores hold y before clipping (the limit is fitted
+        per CV fold) — the refit must clip with the limit fitted on the full training
+        set, whichever feature stage won."""
+        rng = np.random.default_rng(5)
+        X = rng.standard_normal((60, 3))
+        y = rng.uniform(0.5, 5.0, size=60)
+        y[:4] = [40.0, 60.0, 80.0, 100.0]
+        result = PipelineResult(
+            features=PipelineData(X=X, feature_names=["a", "b", "c"], y=y),
+            step1_cv_result=[CVResult(model_name="KNeighborsRegressor", task_type=TaskType.REGRESSION)],
+            best_model_name="KNeighborsRegressor",
+            best_stage=stage,
+            best_feature_stage=stage,
+            y_transform="winlog",
+        )
+        if stage == "reduced":
+            result.features_reduced = PipelineData(
+                X=X, feature_names=["a", "b", "c"], y=np.log1p(y), y_true=y, y_transform="winlog"
+            )
+        final = result.build_final_model()
+        np.testing.assert_allclose(
+            final.estimator.predict(final._prepare(X)), clip_upper_outliers(np.log1p(y)), rtol=1e-6
+        )
+
+    def test_default_stage_refit_keeps_log_scale_without_outliers_to_clip(self):
+        """When the refit rows leave winsorize nothing to clip, only the clipping is
+        skipped. Fitting raw y would then be inverted with expm1 on the wrong scale."""
+        rng = np.random.default_rng(5)
+        X = rng.standard_normal((60, 3))
+        y = np.zeros(60)
+        y[:6] = [1.0, 2.0, 3.0, 4.0, 6.0, 6.0]  # tied at the top: nothing above the cap
+        result = PipelineResult(
+            features=PipelineData(X=X, feature_names=["a", "b", "c"], y=y),
+            step1_cv_result=[CVResult(model_name="KNeighborsRegressor", task_type=TaskType.REGRESSION)],
+            best_model_name="KNeighborsRegressor",
+            best_stage="default",
+            best_feature_stage="default",
+            y_transform="winlog",
+        )
+        final = result.build_final_model()
+        np.testing.assert_allclose(final.estimator.predict(final._prepare(X)), np.log1p(y), rtol=1e-6)
 
     def test_predict_interval_bounds_in_original_scale(self):
         """q is calibrated on original-scale OOF residuals, so the bounds must be
@@ -335,6 +387,61 @@ class TestTransformScale:
         q = fm.conformal.threshold(0.10)
         np.testing.assert_allclose(lower, y - q, rtol=1e-6, atol=1e-8)
         np.testing.assert_allclose(upper, y + q, rtol=1e-6, atol=1e-8)
+        np.testing.assert_allclose((lower + upper) / 2, fm.predict(X), rtol=1e-6, atol=1e-8)
+
+    def test_delta_inverts_regressor_transform_once(self):
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.neighbors import KNeighborsRegressor
+
+        rng = np.random.default_rng(6)
+        X = rng.standard_normal((40, 3))
+        y = rng.uniform(1.0, 30.0, size=40)
+        names = ["a", "b", "c"]
+        reg = FinalModel(
+            estimator=KNeighborsRegressor(weights="distance").fit(X, np.log1p(y)),
+            feature_names=names,
+            task_type=TaskType.REGRESSION,
+            y_transform="log",
+        )
+        clf = FinalModel(
+            estimator=LogisticRegression().fit(X, rng.integers(0, 2, size=40)),
+            feature_names=names,
+            task_type=TaskType.CLASSIFICATION,
+        )
+        delta = DeltaFinalModel(clf=clf, reg=reg)
+        np.testing.assert_allclose(delta.predict(X), clf.predict_proba(X) * y, rtol=1e-6)
+
+
+class TestVariogramInputs:
+    def test_fitted_on_signed_residuals_with_the_run_metric(self):
+        from sklearn.linear_model import LinearRegression
+
+        rng = np.random.default_rng(0)
+        X = rng.standard_normal((40, 2))
+        y = rng.uniform(1.0, 5.0, 40)
+        coords = rng.uniform(0, 5, (40, 2))
+        pred = y + rng.normal(0, 1, 40)
+        fold = FoldResult(
+            fold_id=0,
+            model_name="LinearRegression",
+            y_train=y,
+            y_test=y,
+            y_pred_train=y,
+            y_pred_test=pred,
+            test_idx=np.arange(40),
+        )
+        result = PipelineResult(
+            features=PipelineData(X=X, feature_names=["a", "b"], y=y, coords=coords),
+            step1_cv_result=[CVResult("LinearRegression", TaskType.REGRESSION, folds=[fold])],
+            best_model_name="LinearRegression",
+            best_stage="default",
+            best_base_estimator=LinearRegression(),
+            spatial_cv_metric="haversine",
+        )
+        with patch("h2ml.utils.variogram.autocorrelation_range") as fit:
+            result.build_final_model()
+        np.testing.assert_allclose(fit.call_args.args[1], pred - y)
+        assert fit.call_args.kwargs["metric"] == "haversine"
 
 
 # ---------------------------------------------------------------------------
@@ -790,6 +897,20 @@ class TestBuildDeltaConformal:
         assert cal is not None
         assert isinstance(cal, ConformalCalibration)
 
+    def test_zero_count_residuals_invert_transform_once(self):
+        """A transformed regressor must give the same residuals as the equivalent
+        untransformed one: zero-count samples go through reg_final.predict()."""
+        clf_r, reg_r, reg_f, X, y, pos = self._setup()
+        expected = _build_delta_conformal(clf_r, reg_r, reg_f, X, y, pos)
+        # expm1(log1p(p)) == p, so this estimator's inverted output equals reg_f's.
+        log_est = MagicMock()
+        log_est.predict.side_effect = lambda A: np.log1p(reg_f.estimator.predict(A))
+        log_reg = FinalModel(
+            estimator=log_est, feature_names=DELTA_FEATURES, task_type=TaskType.REGRESSION, y_transform="log"
+        )
+        cal = _build_delta_conformal(clf_r, reg_r, log_reg, X, y, pos)
+        np.testing.assert_allclose(cal.scores, expected.scores)
+
     def test_scores_non_negative(self):
         clf_r, reg_r, reg_f, X, y, pos = self._setup()
         cal = _build_delta_conformal(clf_r, reg_r, reg_f, X, y, pos)
@@ -843,8 +964,63 @@ class TestBuildDeltaConformal:
         reg_r = MockResult(cv=oversized_cv)
         assert _delta_oof_residuals(clf_r, reg_r, reg_f, X, y, pos) is None
 
+    def test_signed_residuals_are_prediction_minus_observed(self):
+        clf_r, reg_r, reg_f, X, y, pos = self._setup()
+        signed = _delta_oof_residuals(clf_r, reg_r, reg_f, X, y, pos, signed=True)
+        np.testing.assert_allclose(np.abs(signed), _delta_oof_residuals(clf_r, reg_r, reg_f, X, y, pos))
+        assert (signed < 0).any() and (signed > 0).any()
+
 
 class TestBuildDeltaFinalModel:
+    def test_variogram_fitted_on_delta_residuals(self):
+        """The delta variogram must describe the count-scale delta residuals the
+        intervals use, not the classifier's probability-scale ones."""
+        from sklearn.ensemble import RandomForestRegressor as RFR
+        from sklearn.linear_model import LogisticRegression
+
+        from h2ml.pipeline.step import make_classifier, make_regressor
+
+        rng = np.random.default_rng(0)
+        n = 60
+        X_full = rng.standard_normal((n, len(DELTA_FEATURES))).astype(np.float32)
+        y_full = rng.integers(0, 8, n).astype(float)
+        coords = rng.uniform(0, 10, (n, 2))
+        positive_indices = np.where(y_full > 0)[0]
+        mock_sel = MagicMock(spec=FeatureSelector)
+        mock_sel.fit_transform.side_effect = lambda s, y=None: s
+        mock_sel.transform.side_effect = lambda s: s
+        spatial = dict(n_splits=3, n_trials=1, spatial_cv_method="block", n_blocks_per_fold=2)
+
+        clf_store = PipelineData(
+            X=X_full, feature_names=DELTA_FEATURES, y=(y_full > 0).astype(np.float32), coords=coords
+        )
+        clf_pipeline = H2MLPipeline(
+            models=[make_classifier(LogisticRegression(max_iter=200, random_state=42))],
+            config=PipelineConfig(task_type=TaskType.CLASSIFICATION, spatial_cv_metric="haversine", **spatial),
+        )
+        reg_store = PipelineData(
+            X=X_full[positive_indices],
+            feature_names=DELTA_FEATURES,
+            y=y_full[positive_indices].astype(np.float32),
+            coords=coords[positive_indices],
+        )
+        reg_pipeline = H2MLPipeline(
+            models=[make_regressor(RFR(n_estimators=10, random_state=42))],
+            config=PipelineConfig(task_type=TaskType.REGRESSION, metric="R2", **spatial),
+        )
+        with patch("h2ml.pipeline.pipeline.FeatureSelector", return_value=mock_sel):
+            clf_result = clf_pipeline.run_step1_only(clf_store)
+            reg_result = reg_pipeline.run_step1_only(reg_store)
+
+        with patch("h2ml.utils.variogram.autocorrelation_range") as fit:
+            delta = build_delta_final_model(clf_result, reg_result, X_full, y_full, positive_indices)
+
+        delta_call = fit.call_args_list[-1]
+        assert delta.variogram is fit.return_value
+        assert delta_call.kwargs["metric"] == "haversine"
+        np.testing.assert_allclose(np.sort(np.abs(delta_call.args[1])), delta.conformal.scores)
+        assert (delta_call.args[1] < 0).any() and (delta_call.args[1] > 0).any()
+
     def test_returns_delta_final_model(self):
         from sklearn.ensemble import RandomForestRegressor as RFR
         from sklearn.linear_model import LogisticRegression

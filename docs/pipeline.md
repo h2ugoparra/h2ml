@@ -9,97 +9,24 @@
 | 3 | K-fold CV all models on reduced features; compare vs step 1 | `best_stage`, `step3_agg_df` |
 | 4 | Optuna HPO on winning (model, stage, transform) | `best_params`, `step4_agg_df` |
 
-Step 4 is skipped when the winning model has `opt_enabled=False` (LogisticRegression, GaussianNB, KNeighborsClassifier, AdaBoost, Bagging — and their regressor equivalents). `best_params` is set to registry defaults in that case.
+Regression candidates are ranked by a **pooled** score: R2, MAE, RMSE or Poisson deviance computed once over all out-of-fold rows, in steps 1 and 3, in Optuna trials and in step 4's acceptance check. Each row counts equally, so a small or near-constant fold can't dominate, as it can in a mean of fold scores. `selection_scoring="fold_mean"` uses the classification rule below instead. Candidates with no prediction spread in any fold are excluded from selection unless every candidate is flat; both cases add a `[selection]` warning. When every candidate is flat, step 2 keeps all features, because all-zero SHAP values can't rank them.
 
-If step 4 runs but does not improve on the step 3 baseline, `best_stage` stays at `"default"` or `"reduced"` and `best_params` is set to defaults — no HPO benefit was found.
+Classification candidates are ranked by a confidence-bound score (mean − std/√k for maximised metrics, mean + std/√k for minimised ones). The std is **fold-centred**: each fold's scores minus that fold's median across candidates. Fold difficulty that every model shares, such as Brier's floor moving with each spatial fold's prevalence, therefore does not count as instability. With the raw fold std, a model that hedges every prediction towards the middle scores uniformly across uneven folds and would beat a model that is better on average but has one bad fold. With `prefer_reduced_on_tie=True`, step 3 then applies a 1-SE rule: if the winner uses all features but a reduced-feature candidate is statistically tied with it on paired folds, the reduced candidate is selected instead — see [Preferring reduced features on ties](configuration.md#preferring-reduced-features-on-ties).
 
----
+Step 4 is skipped when the winning model has no enabled search space: `opt_enabled=False` (LogisticRegression, GaussianNB, KNeighborsClassifier, AdaBoost, Bagging — and their regressor equivalents), or an estimator that is not in the registry at all. `best_params` then holds only fixed overrides (e.g. `class_weight`), usually `{}`.
 
-## `PipelineConfig`
+If step 4 runs but does not improve on the step 3 baseline, `best_stage` stays at `"default"` or `"reduced"` and `best_params` holds only fixed overrides — no HPO benefit was found.
 
-Full parameter reference:
+With `holdout_frac > 0`, rows are set aside before step 1, all four steps run on the remaining rows, and the final configuration is scored once on the held-out rows — see [Outer holdout](validation.md#outer-holdout).
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `task_type` | `"classification"` | `"classification"` or `"regression"` (case-insensitive); a `TaskType` member is also accepted |
-| `metric` | `"AUC"` | Optimisation target. Classification: `"AUC"`, `"AUC_PR"`, `"F1"`, `"LogLoss"`, `"Brier"`. Regression: `"R2"`, `"MAE"`, `"RMSE"`. Minimisation direction is derived automatically. |
-| `n_splits` | `5` | CV folds for steps 1 and 3 |
-| `opt_n_splits` | `3` | CV folds inside each Optuna trial (fewer = faster) |
-| `corr_threshold` | `0.7` | Feature drop threshold. A feature is removed if it exceeds this value in **any** of Pearson, Spearman, or Kendall correlation with a higher-ranked feature. |
-| `min_features` | `1` | Hard lower bound on retained features after the correlation filter |
-| `n_trials` | `50` | Optuna trial budget in step 4 |
-| `n_hpo_repeats` | `1` | Independent HPO runs with different fold seeds; the best repeat is kept |
-| `handle_imbalance` | `False` | Inject `class_weight="balanced"` for classifiers that support it |
-| `random_state` | `42` | Global seed for folds, models, and Optuna |
-| `verbose` | `False` | Log step-by-step progress |
-| `time_bin_resolution` | `"month"` | Time bin granularity for compound (spatial block × time) conformal cells: `"month"` (bins 1–12) or `"season"` (0=DJF, 1=MAM, 2=JJA, 3=SON). Only used when `store.times` is provided. |
+`best_params` are overrides on top of the winning model's own estimator, not full constructor kwargs. Optuna trials, the step-4 CV and `build_final_model()` all build the model as `clone(winner_estimator).set_params(**best_params)`, so arguments you passed to the estimator (and custom model names or estimators outside the registry) carry through to the deployed model. The unfitted winner is stored as `result.best_base_estimator`.
 
-Spatial CV parameters are documented in [Spatial CV](spatial_cv.md).
+The rest of this section covers:
 
----
-
-## `PipelineResult`
-
-All artifacts produced by a run. Fields are populated progressively — check `completed_steps` to see which steps have finished.
-
-### Inspection
-
-```python
-result.completed_steps        # e.g. [1, 2, 3, 4]
-result.summary()              # combined agg DataFrame across all stages
-result.summary("AUC_Test_Mean", ascending=False)
-
-result.best_model_name        # winning model class name
-result.best_model_value       # best CV score (maximised internally)
-result.best_model_std         # std of that score across folds
-result.best_stage             # "default" | "reduced" | "optimized"
-result.best_feature_stage     # "default" | "reduced" (never "optimized")
-result.best_params            # dict of HPO params (or registry defaults if step 4 skipped)
-result.y_transform            # winning y-transform (regression only, or None)
-result.cv_type                # "spatial" | "random"
-result.spatial_cv_metric      # "euclidean" | "haversine" — forwarded from config
-result.time_bin_resolution    # "month" | "season" — forwarded from config
-result.cv_warnings            # list[str] — models with failed CV folds
-result.metric                 # short metric name, e.g. "AUC"
-```
-
-### Per-step data
-
-```python
-result.step1_fold_df          # per-fold metrics, all models, step 1
-result.step1_agg_df           # mean/std per model, step 1
-result.step3_fold_df          # per-fold metrics, all models, step 3
-result.step3_agg_df           # mean/std per model, step 3
-result.step4_fold_df          # per-fold metrics, winning model, step 4
-result.step4_agg_df           # mean/std, winning model, step 4
-```
-
-### Feature selection
-
-```python
-result.features               # PipelineData — full feature set
-result.features_reduced       # PipelineData — after step 2 selection
-result.selector               # FeatureSelector (fitted)
-result.selector.importance_summary()   # SHAP importances as DataFrame
-result.selector.selected_features_    # list[str]
-result.selector.removed_features      # list[str]
-```
-
-### OOF predictions
-
-```python
-result.oof_predictions        # assembled OOF probabilities or values
-result.oof_labels             # matching true labels
-result.best_cv_result         # CVResult for the final winning model
-```
-
-### Building the final model
-
-```python
-final = result.build_final_model()
-```
-
-See [Persistence](guides/persistence.md) and [Conformal Prediction](guides/conformal.md).
+- [Configuration](configuration.md) — every `PipelineConfig` option, and the selection options that change how step 3 chooses between all and reduced features
+- [Results](results.md) — what a `PipelineResult` holds, how to read its warnings and selection robustness, and how to build the final model
+- [Validation & robustness](validation.md) — outer holdout, nested CV, seed stability and comparing selection metrics
+- [Spatial CV](spatial_cv.md) — the spatial splitters used when `store.coords` is set
 
 ---
 
@@ -109,4 +36,4 @@ See [Persistence](guides/persistence.md) and [Conformal Prediction](guides/confo
 
 **Regressors** — PoissonRegressor, KNeighborsRegressor, RandomForestRegressor, GradientBoostingRegressor, HistGradientBoostingRegressor, SVR, ExtraTreesRegressor, BaggingRegressor, AdaBoostRegressor, LGBMRegressor\*, CatBoostRegressor\*, XGBRegressor\*
 
-\* Registered only when the package is installed (`uv sync --extra boosting`). Custom models can be injected via the `models` argument to `H2MLPipeline`.
+\* Registered only when the package is installed (`uv sync --extra boosting`). Custom models can be injected via the `models` argument to `H2MLPipeline`; see [Custom Models and Search Spaces](guides/models.md).

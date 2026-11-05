@@ -13,7 +13,7 @@ step 4 (CV on reduced features):
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -21,7 +21,7 @@ from loguru import logger
 
 from h2ml.core.base import BasePreprocessor, TaskType
 from h2ml.core.feature_store import PipelineData
-from h2ml.features.correlation import remove_correlated_features
+from h2ml.features.correlation import remove_correlated_features, remove_high_vif_features
 from h2ml.features.shap_importance import get_oof_shap_values, get_shap_values
 
 
@@ -35,7 +35,8 @@ class FeatureSelector(BasePreprocessor):
            SHAP computation. Set use_oof=False to revert to full-dataset SHAP.
         2. Ranks features by mean absolute SHAP importance
         3. Removes features correlated above threshold with higher-ranked features
-        4. Stores selected_features_ for use in transform
+        4. Optionally (max_vif) removes multicollinear features, lowest-ranked first
+        5. Stores selected_features_ for use in transform
 
     Transform phase:
         - Returns a reduced PipelineData containing only selected features
@@ -52,13 +53,26 @@ class FeatureSelector(BasePreprocessor):
                         information leakage into feature selection. If False, fit on
                         the full training set (faster, mildly optimistic step 3 scores).
         n_splits:       Folds for the OOF CV pass (used only when use_oof=True).
-        random_state:   Seed for OOF fold shuffle (used only when use_oof=True).
+        random_state:   Seed for OOF fold shuffle and the PermutationExplainer.
         shap_save_path: Optional path to save SHAP array as .npy.
-        max_background: Max background samples for KernelSHAP (affects non-tree,
-                        non-linear models such as SVC/SVR with rbf kernel). Larger
+        max_background: Max background samples for the model-agnostic explainer (affects
+                        non-tree, non-linear models such as SVC/SVR with rbf kernel). Larger
                         training folds are summarised with shap.kmeans to this size.
                         Default 100 — increase for more accurate SHAP at cost of speed.
         verbose:        Log selected/removed feature counts.
+        train_target_fn: Step fitted on and applied to the targets each SHAP model is
+                        trained on (e.g. winsorize clipping) — per training fold in OOF
+                        mode, so its statistics never see held-out rows.
+        n_jobs:         Worker processes for the model-agnostic explainer (row chunks are
+                        explained in parallel; results do not depend on n_jobs). Default 1.
+        max_vif:        When set, after the correlation filter drop the lowest-ranked
+                        feature with a variance inflation factor above this value until
+                        none is — catches features that are linear combinations of
+                        several retained ones. None (default) skips the check.
+        keep_all:       Skip SHAP and keep every feature, for a model whose predictions
+                        don't vary: it gives no ranking, so any reduction would follow
+                        column order. feature_importance_ is then all zeros and
+                        shap_values_ stays empty. Default False.
         _splitter:      Internal — a pre-built spatial splitter reused for the OOF
                         SHAP pass so it matches the pipeline's CV folds. Leave None
                         for non-spatial use; the pipeline injects it when relevant.
@@ -81,10 +95,16 @@ class FeatureSelector(BasePreprocessor):
         shap_save_path: Optional[Path] = None,
         max_background: int = 100,
         verbose: bool = False,
+        train_target_fn: Optional[Callable] = None,
+        n_jobs: int = 1,
+        max_vif: Optional[float] = None,
+        keep_all: bool = False,
         _splitter: Any = None,
     ):
         if min_features < 1:
             raise ValueError(f"min_features must be >= 1, got {min_features}")
+        if max_vif is not None and max_vif <= 1:
+            raise ValueError(f"max_vif must be > 1, got {max_vif}")
         super().__init__(name="FeatureSelector", verbose=verbose)
         self.step = step
         self.task_type = task_type
@@ -95,6 +115,10 @@ class FeatureSelector(BasePreprocessor):
         self.random_state = random_state
         self.shap_save_path = shap_save_path
         self.max_background = max_background
+        self.train_target_fn = train_target_fn
+        self.n_jobs = n_jobs
+        self.max_vif = max_vif
+        self.keep_all = keep_all
         self._splitter = _splitter
 
         # Set after fit
@@ -121,6 +145,12 @@ class FeatureSelector(BasePreprocessor):
         Returns:
             self, with shap_values_, feature_importance_ and selected_features_ set.
         """
+        if self.keep_all:
+            self.feature_importance_ = pd.Series(0.0, index=store.feature_names)
+            self.selected_features_ = list(store.feature_names)
+            self._fitted = True
+            return self
+
         if self.use_oof:
             self.shap_values_, self.feature_importance_ = get_oof_shap_values(
                 step=self.step,
@@ -130,6 +160,8 @@ class FeatureSelector(BasePreprocessor):
                 random_state=self.random_state,
                 save_path=self.shap_save_path,
                 max_background=self.max_background,
+                train_target_fn=self.train_target_fn,
+                n_jobs=self.n_jobs,
                 _splitter=self._splitter,
             )
         else:
@@ -143,14 +175,17 @@ class FeatureSelector(BasePreprocessor):
             X_train = store.X
             if getattr(self.step, "requires_scaling", False):
                 X_train = StandardScaler().fit_transform(X_train)
+            y_train = store.y if self.train_target_fn is None else self.train_target_fn(store.y)
             model = estimator_cls(**estimator_params)
-            model.fit(X_train, store.y)
+            model.fit(X_train, y_train)
             self.shap_values_, self.feature_importance_ = get_shap_values(
                 model=model,
                 store=store,
                 task_type=self.task_type,
                 save_path=self.shap_save_path,
                 max_background=self.max_background,
+                n_jobs=self.n_jobs,
+                random_state=self.random_state,
             )
 
         # Remove correlated features in importance order
@@ -159,6 +194,10 @@ class FeatureSelector(BasePreprocessor):
             feature_importance=self.feature_importance_,
             corr_threshold=self.corr_threshold,
         )
+        if self.max_vif is not None:
+            self.selected_features_ = remove_high_vif_features(
+                store.to_frame(), self.selected_features_, max_vif=self.max_vif
+            )
 
         # Enforce minimum — restore top SHAP-ranked features when threshold is too aggressive
         if len(self.selected_features_) < self.min_features:

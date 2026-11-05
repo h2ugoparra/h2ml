@@ -11,6 +11,7 @@ refit uses the real key from study.best_params.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from h2ml.utils.registry import CLASSIFIER_REGISTRY, REGRESSOR_REGISTRY
@@ -36,6 +37,10 @@ class _StubTrial:
         return choices[0]
 
 
+# Constants a search space may fix: they make trials faster or quieter only.
+RUNTIME_ONLY = {"n_jobs", "thread_count", "verbose", "silent"}
+
+
 def _optimizable_entries(registry):
     return [(name, entry) for name, entry in registry.items() if entry.param_fn is not None]
 
@@ -53,9 +58,29 @@ class TestParamSpaceConsistency:
         missing = [s for s in trial.suggested if s not in params]
         assert not missing, f"{name}: suggested params {missing} are not keys of the returned dict"
 
+    def test_constants_are_runtime_settings_only(self, name, entry):
+        """study.best_params keeps only sampled values, so a constant that changes the
+        model (random_state, max_iter, objective, ...) would apply during trials but
+        not to the tuned or final model. Only settings that don't change predictions
+        may be fixed here; the rest belong in default_kwargs."""
+        trial = _StubTrial()
+        params = entry.param_fn(trial)
+        constants = set(params) - set(trial.suggested)
+        assert constants <= RUNTIME_ONLY, f"{name}: constants {sorted(constants - RUNTIME_ONLY)} change the model"
+
     def test_estimator_accepts_returned_params(self, name, entry):
         """Sklearn estimators reject unknown constructor kwargs — instantiating
         with the emitted params catches misspelled keys for strict estimators."""
         trial = _StubTrial()
         params = entry.param_fn(trial)
         entry.model_cls(**params)
+
+    def test_params_fit_on_top_of_default_estimator(self, name, entry):
+        """Step 4 does clone(base_estimator).set_params(**params), so the emitted
+        params must coexist with default_kwargs at fit time (e.g. CatBoost rejects
+        'silent' from the defaults alongside 'verbose' from the search space)."""
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(40, 3))
+        y = np.tile([0, 1], 20) if name in CLASSIFIER_REGISTRY else rng.poisson(3, size=40).astype(float)
+        params = entry.param_fn(_StubTrial())
+        entry.model_cls(**entry.default_kwargs).set_params(**params).fit(X, y)
