@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-05
+
+### Documentation
+
+- API reference: docstring examples now render as code blocks. `Example:` sections
+  were parsed as admonitions, so `>>>` lines showed as nested quotes run together.
+- API reference: column and step lists (`Partial runs`, the `summary()` columns of
+  `nested_cv`, `seed_stability` and `multi_metric`, `FeatureSelector`'s phases,
+  `LocalConformalCalibration`, `compare_results`) render as lists, with `<metric>`
+  placeholders kept. `Partial runs` now includes `run_step4_only()`, and
+  `compare_results`' `Score_Mean` description matches the user docs.
+
 ## [0.4.0] - 2026-11-05
 
 ### Added
