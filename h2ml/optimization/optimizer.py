@@ -470,7 +470,7 @@ def run_study(
         KeyError:   If the model is not registered.
         ValueError: If the model is registered but disabled, or metric is invalid.
 
-    Example:
+    Examples:
         >>> study = run_study("RandomForestClassifier", X, y, task="classification")
         >>> study.best_params
         {'n_estimators': 300, 'max_depth': 8, ...}
@@ -620,7 +620,7 @@ def optimize_all(
     Returns:
         Dict[model_name, optuna.Study]
 
-    Example:
+    Examples:
         >>> studies = optimize_all(
         ...     ["RandomForestClassifier", "LGBMClassifier"],
         ...     X, y, task="classification", n_trials=30

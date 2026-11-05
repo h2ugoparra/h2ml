@@ -30,29 +30,26 @@ def compare_results(
     """
     Summarise multiple PipelineResult objects as a single comparison DataFrame.
 
-    One row per result. Columns:
+    One row per result, with columns:
 
-        Run                — label (from labels, or Run_0 / Run_1 / …)
-        Metric             — short metric name used for Score_Mean (e.g. "AUC", "R2")
-        Best_Model         — winning model class name
-        Best_Stage         — default | reduced | optimized
-        Y_Transform        — winning y-transform, or None
-        Score_Mean         — mean CV score for the selected metric
-        Score_Std          — fold std for the selected metric
-        Conservative_Bound — variance-penalised score used for ranking. Direction is
-                             derived automatically from the metric name via METRIC_MINIMIZE:
-                               higher-is-better: Score_Mean - Score_Std / sqrt(n_folds)
-                               lower-is-better:  Score_Mean + Score_Std / sqrt(n_folds)
-                             A model with high mean but high variance is pulled toward
-                             a worse value, so stable models are preferred over
-                             optimistically-estimated ones.
-        Brier_Mean         — Brier_Test_Mean from the winning stage's agg_df
-                             (classification only; NaN otherwise)
-        OOF_Brier          — Brier score computed on the assembled OOF predictions
-                             (more robust than the fold-averaged Brier_Mean;
-                             classification only; NaN otherwise)
-        N_Features         — feature count in the winning feature stage
-        Completed_Steps    — list of pipeline steps that finished
+    - `Run`: label (from `labels`, or `Run_0`, `Run_1`, …).
+    - `Metric`: short metric name used for `Score_Mean` (e.g. `"AUC"`, `"R2"`).
+    - `Best_Model`: winning model class name.
+    - `Best_Stage`: `"default"`, `"reduced"` or `"optimized"`.
+    - `Y_Transform`: winning y-transform, or `None`.
+    - `Score_Mean`: with `metric`, the winning stage's `<metric>_Test_Mean`; without
+      it, each result's `best_model_value` (the pooled score for regression by default).
+    - `Score_Std`: fold std for that metric.
+    - `Conservative_Bound`: variance-penalised score used for ranking —
+      `Score_Mean - Score_Std / sqrt(n_folds)` when higher is better,
+      `Score_Mean + Score_Std / sqrt(n_folds)` when lower is better (direction from
+      `METRIC_MINIMIZE`). Stable models are preferred over high-variance ones.
+    - `Brier_Mean`: `Brier_Test_Mean` from the winning stage (classification only;
+      NaN otherwise).
+    - `OOF_Brier`: Brier score on the assembled OOF predictions, more robust than
+      `Brier_Mean` (classification only; NaN otherwise).
+    - `N_Features`: feature count in the winning feature stage.
+    - `Completed_Steps`: pipeline steps that finished.
 
     Args:
         results: List of PipelineResult objects to compare.
@@ -82,7 +79,7 @@ def compare_results(
         ValueError: If labels length does not match results, or if metric is None
             while the results were scored on more than one metric.
 
-    Example:
+    Examples:
         >>> r1 = pipeline_a.run(store)
         >>> r2 = pipeline_b.run(store)
         >>> compare_results([r1, r2], labels=["baseline", "spatial_cv"], metric="AUC")

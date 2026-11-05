@@ -65,7 +65,7 @@ class SpatialBlockSplitter:
         metric:           "euclidean" (projected coords) or "haversine"
                           (lat/lon in decimal degrees).
 
-    Example:
+    Examples:
         >>> coords = np.column_stack([lats, lons])
         >>> splitter = SpatialBlockSplitter(coords, n_splits=5, n_blocks_per_fold=5)
         >>> for train_idx, test_idx in splitter.split(X):
@@ -268,7 +268,7 @@ class SPCVSplitter:
         AHC paths) because ward is undefined for non-Euclidean distances. For
         projected coords (km, m) use metric='euclidean' and ward linkage is valid.
 
-    Example:
+    Examples:
         >>> splitter = SPCVSplitter(coords, X, y, n_splits=5)
         >>> for train_idx, test_idx in splitter.split(X):
         ...     model.fit(X[train_idx], y[train_idx])
