@@ -58,6 +58,11 @@ def _to_display(value: float, metric: str) -> float:
     return -value if metric in _NEGATED_METRICS else value
 
 
+def has_completed_trial(study: optuna.Study) -> bool:
+    """False when every trial was pruned or failed: best_value and best_params then raise."""
+    return any(t.state == optuna.trial.TrialState.COMPLETE for t in study.trials)
+
+
 def _make_trial_callback(metric: str, n_trials: int) -> "tuple[Callable, Any]":
     """
     Return (callback, pbar) for study.optimize.
@@ -72,7 +77,7 @@ def _make_trial_callback(metric: str, n_trials: int) -> "tuple[Callable, Any]":
 
     def _cb(study: optuna.Study, trial: optuna.trial.FrozenTrial) -> None:
         pbar.update(1)
-        if study.best_trial is not None:
+        if has_completed_trial(study):
             pbar.set_postfix({f"best_{metric}": f"{_to_display(study.best_value, metric):.4f}"})
 
     return _cb, pbar
@@ -465,6 +470,8 @@ def run_study(
     Returns:
         optuna.Study with best_params, best_value, and full trial history.
         When n_hpo_repeats > 1, this is the repeat whose best_value was highest.
+        If every trial was pruned or failed, a warning is logged and the returned
+        study's best_params and best_value raise ValueError.
 
     Raises:
         KeyError:   If the model is not registered.
@@ -569,13 +576,19 @@ def run_study(
             if pbar is not None:
                 pbar.close()
 
-        if best_study is None or study.best_value > best_study.best_value:
+        # A repeat with no completed trial has no best_value; it only stands in until one does.
+        if best_study is None or (
+            has_completed_trial(study)
+            and (not has_completed_trial(best_study) or study.best_value > best_study.best_value)
+        ):
             best_study = study
             best_repeat = repeat
 
     assert best_study is not None  # loop always runs at least once (n_hpo_repeats >= 1)
 
-    if verbose:
+    if not has_completed_trial(best_study):
+        logger.warning(f"No Optuna trial completed for {name}: every trial was pruned or failed.")
+    elif verbose:
         best_display = _to_display(best_study.best_value, resolved_metric)
         if n_hpo_repeats > 1:
             logger.info(

@@ -55,7 +55,8 @@ are flat. `Is_Winner` marks the selection's winner — the candidate *before* an
 ## Warnings in `cv_warnings`
 
 All are advisory except the `prefer_reduced_on_tie` line, which records a selection
-change you opted into, and `[selection]`, which reports candidates the guard removed.
+change you opted into, and `[selection]`, which reports candidates the guard removed or a step 4 that
+kept the untuned parameters.
 Each is also logged when it is raised.
 
 | `cv_warnings` entry starts with | Log prefix | Raised in | Meaning |
@@ -64,7 +65,7 @@ Each is also logged when it is raised.
 | the metric name, e.g. `AUC with minority…`, `R2: …` | `[metric]` | step 1 | The data makes the configured metric unreliable — AUC under class imbalance, single-class test folds for AUC/AUCPR, uneven fold prevalence for AUCPR, F1 with class weights, low-variance folds for R2, heavy tails for RMSE, zero inflation for MAE. The metric is never changed. |
 | `step 1:` / `step 3:` | `[ranking]` | steps 1, 3 | Candidates tied with the winner on paired folds, or the winner ranking below 1st on the counterpart-family metric (AUC/AUCPR ↔ Brier, LogLoss/Brier ↔ AUC, F1 → AUC, R2/RMSE/PoissonDev → MAE, MAE → RMSE) |
 | `step 3: prefer_reduced_on_tie →` | *(info log)* | step 3 | The tie-break switched the selection to a reduced-feature candidate |
-| `[selection]` | `[CV]` (end of `run()`) | steps 1, 3, 4 | Constant-prediction candidates were excluded (noting if one would have won), every candidate is constant, or tuning produced a constant model and was rejected |
+| `[selection]` | `[CV]` (end of `run()`) | steps 1, 3, 4 | Constant-prediction candidates were excluded (noting if one would have won), every candidate is constant, tuning produced a constant model and was rejected, or no Optuna trial completed (all pruned or failed) so the untuned parameters were kept |
 | `[transform]` | `[CV]` (end of `run()`) | after step 3 or 4 | A log or sqrt-family winner's out-of-fold total is more than 20% from the observed total. See [`mean_correction`](guides/transforms.md#predicted-totals-and-mean_correction) |
 | `[holdout]` | `[CV]` (end of `run()`) | run start; after step 3 or 4 | At the start: the holdout was dropped by `holdout_min_minority`, too few rows, a size far from `holdout_frac`, and for regression too few non-zero rows or a distribution far from the dev rows. After scoring: the holdout score is worse than the CV score by more than 2 fold SDs — the CV estimate is likely optimistic, or the holdout rows differ from the dev rows. Classification: also when the holdout holds fewer than 20 rows of its rarest class, so its score and conformal calibration are unreliable |
 
