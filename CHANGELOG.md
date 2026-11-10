@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- A run with `n_jobs=1` no longer silences warnings for the rest of the session. The
+  CV's "ignore" filter was installed in the caller's process and never removed.
+- Step 2 no longer fails with `OOF SHAP: every fold failed` for estimators with nested
+  parameters, such as `BaggingClassifier(estimator=DecisionTreeClassifier(...))`. Fold
+  models are now cloned instead of rebuilt from `get_params()`.
+
 ## [0.4.1] - 2026-11-05
 
 ### Documentation
