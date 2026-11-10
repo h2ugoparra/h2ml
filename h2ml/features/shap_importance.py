@@ -396,6 +396,7 @@ def get_oof_shap_values(
         oof_shap:           np.ndarray of shape (n_samples, n_features).
         feature_importance: pd.Series indexed by feature name, sorted descending.
     """
+    from sklearn.base import clone
     from sklearn.model_selection import KFold, StratifiedKFold
     from sklearn.preprocessing import StandardScaler
 
@@ -415,7 +416,6 @@ def get_oof_shap_values(
         )
 
     estimator_cls = step.estimator.__class__
-    estimator_params = step.estimator.get_params()
     requires_scaling = getattr(step, "requires_scaling", False)
 
     logger.info(f"Computing OOF SHAP values for {estimator_cls.__name__} ({n_splits}-fold, n_samples={n_samples})")
@@ -434,7 +434,8 @@ def get_oof_shap_values(
             X_train = scaler.fit_transform(X_train)
             X_test = scaler.transform(X_test)
 
-        model = estimator_cls(**estimator_params)
+        # clone, not cls(**get_params()): deep params (estimator__max_depth) aren't constructor arguments
+        model = clone(step.estimator)
         model.fit(X_train, y_train)
         return model, pd.DataFrame(X_train, columns=feature_names), pd.DataFrame(X_test, columns=feature_names)
 

@@ -1730,6 +1730,72 @@ class TestBestCvResult:
         assert selected.y_transform == result.y_transform
 
 
+class TestRedoStep4:
+    """run_step4_only on a result that already went through step 4."""
+
+    def _tuned_result(self, clf_store, selected=None):
+        rf = RandomForestClassifier(n_estimators=10, random_state=42)
+        pipeline = H2MLPipeline(models=[make_classifier(rf)], config=_clf_config())
+        with _mock_selector(selected):
+            result = pipeline.run_step1_to_step3(clf_store)
+        return pipeline, result
+
+    def test_redo_compares_with_step3_winner_not_old_tuned_score(self, clf_store):
+        """A rejected second tuning used to leave best_stage="optimized" with the first
+        tuning's score but no tuned params."""
+        pipeline, result = self._tuned_result(clf_store)
+        step3_stage, step3_value = result.best_stage, result.best_model_value
+        # First tuning accepted with an unbeatable score
+        result.best_stage, result.best_model_value, result.best_params = "optimized", 2.0, {"max_depth": 3}
+
+        with _mock_optimizer({"n_estimators": 10, "max_depth": 3}):
+            result = pipeline.run_step4_only(result)
+
+        tuned_value = float(result.step4_agg_df.iloc[0]["AUC_Test_Mean"])
+        if tuned_value > step3_value:
+            assert result.best_stage == "optimized"
+            assert result.best_model_value == pytest.approx(tuned_value)
+            assert result.best_params == {"n_estimators": 10, "max_depth": 3}
+        else:
+            assert result.best_stage == step3_stage
+            assert result.best_model_value == pytest.approx(step3_value)
+            assert result.best_params == {}
+
+    def test_redo_tunes_on_the_reduced_features(self, clf_store):
+        pipeline, result = self._tuned_result(clf_store, selected=FEATURE_NAMES[:3])
+        result.best_stage, result.best_feature_stage = "optimized", "reduced"
+
+        with _mock_optimizer() as mock_run_study:
+            pipeline.run_step4_only(result)
+
+        assert mock_run_study.call_args.kwargs["X"].shape[1] == 3
+
+    def test_redo_without_step3_selection_raises(self, clf_store):
+        pipeline, result = self._tuned_result(clf_store)
+        result.best_stage, result.best_feature_stage = "optimized", None
+        with pytest.raises(ValueError, match="redo step 4"):
+            pipeline.run_step4_only(result)
+
+
+class TestStep4NoCompletedTrial:
+    def test_untuned_params_kept_and_warned(self, clf_store):
+        """study.best_params raises when every trial was pruned or failed; that used
+        to abort the run after steps 1-3 had finished."""
+        import optuna
+
+        rf = RandomForestClassifier(n_estimators=10, random_state=42)
+        pipeline = H2MLPipeline(models=[make_classifier(rf)], config=_clf_config())
+        empty_study = optuna.create_study(direction="maximize")
+        with _mock_selector(), patch("h2ml.pipeline.pipeline.run_study", return_value=empty_study):
+            result = pipeline.run(clf_store)
+
+        assert result.best_stage in ("default", "reduced")
+        assert result.best_params == {}
+        assert result.step4_agg_df is None
+        assert any("No Optuna trial completed" in w for w in result.cv_warnings)
+        result.build_final_model()
+
+
 class TestStep4RejectsTunedWithFailedFolds:
     def test_tuned_model_with_failed_fold_is_rejected(self):
         """A tuned mean over fewer folds isn't comparable with the untuned score."""
@@ -1789,3 +1855,14 @@ class TestResumeKeepsStep1Folds:
 
         resumed = pipeline.run_from_step3(loaded)
         assert self._test_folds(resumed.step3_cv_result[0]) == self._test_folds(resumed.step1_cv_result[0])
+
+
+class TestWarningFilters:
+    def test_step1_in_process_leaves_warning_filters_alone(self, clf_store):
+        """With n_jobs=1 step 1 runs in the caller's process; its "ignore" filter must not outlive it."""
+        import warnings
+
+        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(n_jobs=1))
+        before = list(warnings.filters)
+        pipeline.run_step1_only(clf_store)
+        assert warnings.filters == before

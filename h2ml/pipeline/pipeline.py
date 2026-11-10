@@ -880,6 +880,7 @@ class H2MLPipeline:
         assert result.features is not None  # validated above
         self._resolve_class_weights(result.features.y)
         result.class_weight_balanced = self._class_weight_active
+        self._reset_to_step3_winner(result)
         transform_stores = self._rebuild_transform_stores(result, transform_stores)
         result = self._run_step4(result, transform_stores)
         return self._finish(result)
@@ -954,21 +955,23 @@ class H2MLPipeline:
         def _run_one(transform_name, store, model):
             import warnings
 
-            warnings.filterwarnings("ignore")
             inv = self._get_inverse_fn(store)
             sf = precomputed_scaled_folds if getattr(model, "requires_scaling", False) else None
-            return transform_name, self._cv.run(
-                model,
-                store.X,
-                store.y,
-                y_true=store.y_true,
-                inverse_fn=inv,
-                coords=store.coords,
-                spatial=self.config.spatial_cv,
-                train_target_fn=get_train_target_fn(store.y_transform),
-                _splitter=splitter,
-                _scaled_folds=sf,
-            )
+            # Scoped: with n_jobs=1 this runs in the caller's process, not a worker
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return transform_name, self._cv.run(
+                    model,
+                    store.X,
+                    store.y,
+                    y_true=store.y_true,
+                    inverse_fn=inv,
+                    coords=store.coords,
+                    spatial=self.config.spatial_cv,
+                    train_target_fn=get_train_target_fn(store.y_transform),
+                    _splitter=splitter,
+                    _scaled_folds=sf,
+                )
 
         raw = cast(
             list[tuple[str, CVResult]],
@@ -1240,6 +1243,16 @@ class H2MLPipeline:
             requires_scaling=best_model.requires_scaling,
             selection_scoring=result.selection_scoring,
         )
+        try:
+            tuned_params = study.best_params
+        except ValueError:  # Optuna raises when every trial was pruned or failed
+            msg = (
+                f"[selection] No Optuna trial completed for {result.best_model_name}, "
+                "so the untuned parameters were kept."
+            )
+            logger.warning(msg)
+            result.cv_warnings.append(msg)
+            return None, fixed_params
 
         # best_params are overrides on top of the winner's own estimator — trials,
         # the final CV (_build_fold_model) and build_final_model all apply them via
@@ -1249,7 +1262,7 @@ class H2MLPipeline:
         # overriding sampled values (see _build_objective), so the final model must
         # match — otherwise a sampled class_weight=None from the search space would
         # silently undo handle_imbalance in the deployed params.
-        merged_params = {**study.best_params, **fixed_params}
+        merged_params = {**tuned_params, **fixed_params}
 
         metadata = self._metadata_with(stage="optimized")
         if result.y_transform:
@@ -1379,6 +1392,28 @@ class H2MLPipeline:
             return transform_stores
         assert result.features is not None  # validated by the callers
         return self._build_transform_stores(result.features, [result.y_transform])
+
+    def _reset_to_step3_winner(self, result: PipelineResult) -> None:
+        """
+        Undo an earlier step 4 before tuning again: best_stage and the score go back to
+        the step-3 winner's. Otherwise the new tuning would be compared with the old
+        tuned score and run on all features even when the reduced stage won.
+        """
+        if result.best_stage != "optimized":
+            return
+        feature_stage = result.best_feature_stage
+        agg = result.step3_agg_df if feature_stage == "reduced" else result.step1_agg_df
+        if feature_stage is None or agg is None:
+            raise ValueError("Cannot redo step 4: the result does not hold the step-3 selection it was tuned from.")
+        rows = agg[agg["Model"] == result.best_model_name]
+        if result.y_transform and "Y_transform" in rows.columns:
+            rows = rows[rows["Y_transform"] == result.y_transform]
+        if rows.empty:
+            raise ValueError(f"Cannot redo step 4: {result.best_model_name} is not in the '{feature_stage}' results.")
+        row = rows.iloc[0]
+        result.best_stage = feature_stage
+        result.best_model_value = float(row[selection_col(self.config.metric, result.selection_scoring)])
+        result.best_model_std = float(row.get(self.config.metric_col.replace("_Mean", "_Std"), float("nan")))
 
     def _resolve_opt_store(
         self,
