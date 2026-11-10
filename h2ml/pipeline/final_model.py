@@ -453,7 +453,7 @@ def _build_local_conformal(
 
     Requires result.splitter to have a block_id_ attribute — set by both
     SpatialBlockSplitter and SPCVSplitter. Returns None when the splitter is
-    absent (e.g. after PipelineResult.load()), is a plain KFold, or when fewer
+    absent (e.g. a result saved before the splitter was persisted), is a plain KFold, or when fewer
     than 2 spatial blocks are represented in the OOF data.
 
     Args:
