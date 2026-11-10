@@ -109,7 +109,7 @@ result = pipeline.run_step4_only(result)    # re-run HPO only (needs above + bes
 
 ## PipelineResult
 
-Key fields: `best_model_name`, `best_stage`, `best_feature_stage`, `best_base_estimator` (unfitted winner as CV ran it), `best_params` (overrides set on top of it), `y_transform`, `metric`, `cv_type`, `cv_warnings`, `splitter`, `step3_reduced_stores`, `holdout_store`/`holdout_idx`/`holdout_df` (with a holdout, `features` holds only the dev rows). Note: `splitter` and `step3_reduced_stores` are not persisted — both are `None` after `PipelineResult.load()`.
+Key fields: `best_model_name`, `best_stage`, `best_feature_stage`, `best_base_estimator` (unfitted winner as CV ran it), `best_params` (overrides set on top of it), `y_transform`, `metric`, `cv_type`, `cv_warnings`, `splitter`, `step3_reduced_stores`, `holdout_store`/`holdout_idx`/`holdout_df` (with a holdout, `features` holds only the dev rows). Note: `step3_reduced_stores` is not persisted (`None` after `PipelineResult.load()`); `splitter` is, as `splitter.pkl`, so resumed runs keep the step-1 folds (saves from 0.4.1 or earlier load with `None` and resuming rebuilds it on the full store).
 
 ```python
 result.summary(metric=None, ascending=False)   # combined agg DataFrame across all stages

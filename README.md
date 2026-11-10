@@ -177,7 +177,7 @@ result.oof_labels                 # true labels paired with oof_predictions
 result.best_cv_result             # CVResult for the final winning model
 ```
 
-> **Note:** `result.splitter` is not persisted. It will be `None` after `PipelineResult.load()`.
+> **Note:** `result.splitter` is saved with the result. Results saved by h2ml 0.4.1 or earlier load with `result.splitter = None`.
 
 ### Exporting the final model
 

@@ -131,7 +131,7 @@ What to look for:
 
 `lon_col` / `lat_col` (default `1` / `0`) pick the coordinate columns for the x and y axes and assume `[lat, lon]` coords; pass `lon_col=0, lat_col=1` for `[lon, lat]` or projected `[x, y]`. With many AHC clusters, colours of neighbouring block IDs are similar and the colour bar is crowded, so judge compactness by eye rather than by label.
 
-`result.splitter` is not saved, so it is `None` after `PipelineResult.load()`. See [Visualization](guides/visualization.md#spatial-blocks-and-folds) to rebuild it.
+`result.splitter` is saved with the result. Results saved by h2ml 0.4.1 or earlier load without it; see [Visualization](guides/visualization.md#spatial-blocks-and-folds) to rebuild it.
 
 ---
 

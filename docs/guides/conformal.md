@@ -83,7 +83,7 @@ print(final.local_conformal.time_bin_resolution)
 `local_conformal` is `None` when:
 
 - No spatial CV was used (`store.coords` was `None`)
-- `result.splitter` is absent (e.g. after `PipelineResult.load()` — rebuild with `build_final_model()` before saving)
+- `result.splitter` is absent (a result saved by h2ml 0.4.1 or earlier and loaded with `PipelineResult.load()`)
 - Fewer than 2 spatial blocks were found in the OOF data
 - A holdout was used (`holdout_frac > 0`) — the global holdout calibrator applies instead
 

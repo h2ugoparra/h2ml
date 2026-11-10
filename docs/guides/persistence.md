@@ -23,8 +23,9 @@ Creates a directory with:
 | `step1_cv_result.pkl` / `step3_cv_result.pkl` | Raw `CVResult` lists, steps 1 and 3 |
 | `step4_cv_result.pkl` | `CVResult`, step 4 |
 | `holdout_cv_result.pkl` | One-fold `CVResult` of the holdout score |
+| `splitter.pkl` | CV splitter built in step 1, with its fold and block assignment |
 
-`result.splitter` and `result.step3_reduced_stores` are not saved, so both are `None` after loading.
+`result.step3_reduced_stores` is not saved, so it is `None` after loading. The splitter is saved so that `run_from_step3()` and `run_step4_only()` on a loaded result score on the folds steps 1–3 used. Results saved by h2ml 0.4.1 or earlier have no `splitter.pkl`: resuming one rebuilds the splitter from the full feature set.
 
 Reload with:
 

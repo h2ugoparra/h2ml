@@ -1811,6 +1811,52 @@ class TestStep4RejectsTunedWithFailedFolds:
         assert result.best_params == {}
 
 
+def _spcv_reg_store() -> PipelineData:
+    """Spatial regression store whose reduced feature set changes SPCV's covariate view."""
+    rng = np.random.default_rng(1)
+    n = 200
+    coords = rng.uniform(0, 100, size=(n, 2))
+    base = np.column_stack([coords[:, 0] / 50 + rng.normal(size=n), rng.normal(size=n)])
+    # Near-duplicates of the informative columns: the correlation filter drops them
+    X = np.hstack([base, base + 0.05 * rng.normal(size=(n, 2)), rng.normal(size=(n, len(FEATURE_NAMES) - 4))])
+    return PipelineData(X=X, feature_names=FEATURE_NAMES, y=3 * base[:, 0] + rng.normal(size=n), coords=coords)
+
+
+class TestResumeKeepsStep1Folds:
+    """A loaded SPCV result used to get a splitter rebuilt on the reduced features,
+    whose folds differ from step 1's."""
+
+    @staticmethod
+    def _test_folds(cv_result: CVResult) -> list[list[int]]:
+        return [f.test_idx.tolist() for f in cv_result.folds]
+
+    def _steps_1_2(self):
+        # Real selector: the mocked one can't be saved
+        pipeline = H2MLPipeline(models=[_reg_steps()[1]], config=_reg_config(spatial_cv_method="spcv", n_jobs=1))
+        result = pipeline.run_step1_to_step2(_spcv_reg_store())
+        assert result.features_reduced.n_features < result.features.n_features
+        return pipeline, result
+
+    def test_saved_splitter_is_reused(self, tmp_path):
+        pipeline, result = self._steps_1_2()
+        result.save(tmp_path / "run")
+        loaded = PipelineResult.load(str(tmp_path / "run"))
+        np.testing.assert_array_equal(loaded.splitter._fold_of_sample, result.splitter._fold_of_sample)
+
+        resumed = pipeline.run_from_step3(loaded)
+        assert self._test_folds(resumed.step3_cv_result[0]) == self._test_folds(resumed.step1_cv_result[0])
+
+    def test_result_saved_without_splitter_rebuilds_on_full_features(self, tmp_path):
+        pipeline, result = self._steps_1_2()
+        result.save(tmp_path / "run")
+        (tmp_path / "run" / "splitter.pkl").unlink()
+        loaded = PipelineResult.load(str(tmp_path / "run"))
+        assert loaded.splitter is None
+
+        resumed = pipeline.run_from_step3(loaded)
+        assert self._test_folds(resumed.step3_cv_result[0]) == self._test_folds(resumed.step1_cv_result[0])
+
+
 class TestWarningFilters:
     def test_step1_in_process_leaves_warning_filters_alone(self, clf_store):
         """With n_jobs=1 step 1 runs in the caller's process; its "ignore" filter must not outlive it."""

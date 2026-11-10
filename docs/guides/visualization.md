@@ -65,10 +65,11 @@ built them as `np.column_stack([lon, lat])`, pass `lon_col=0, lat_col=1`.
 
 Only available when `result.cv_type == "spatial"`.
 
-`result.splitter` is not persisted, so it is `None` after `PipelineResult.load()`
-(`build_final_model()` does not restore it). Rebuild it from the rows the CV ran on
-(`result.features`, which excludes the holdout) and the same config — the folds are
-deterministic, so they match the ones the pipeline used:
+`result.splitter` is saved with the result, so it is available after
+`PipelineResult.load()`. Results saved by h2ml 0.4.1 or earlier load with
+`result.splitter = None`. Rebuild it from the rows the CV ran on (`result.features`,
+which excludes the holdout) and the same config — the folds are deterministic, so they
+match the ones the pipeline used:
 
 ```python
 from h2ml.core.base import TaskType

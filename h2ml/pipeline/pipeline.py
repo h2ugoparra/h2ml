@@ -398,7 +398,6 @@ class PipelineResult:
                               re-applies it when step 4 did not produce best_params.
         metric:            Short selection metric name, e.g. "AUC" or "R2".
         splitter:             Splitter built once in step 1 and reused in steps 3-4.
-                              Not persisted.
         step3_fold_features:  Feature names selected on each step-3 CV fold's training rows
                               (select_features_in_folds=True), indexed like the splitter's
                               folds; None otherwise.
@@ -459,7 +458,7 @@ class PipelineResult:
     class_weight_balanced: bool = False
     # Short metric name used for model selection, e.g. "AUC" or "R2" (from PipelineConfig)
     metric: Optional[str] = None
-    # Splitter built once in step 1 and reused in steps 3 and 4 (not persisted)
+    # Splitter built once in step 1 and reused in steps 3 and 4
     splitter: Any = field(default=None, repr=False, compare=False)
     # Per-fold feature sets from select_features_in_folds (step 3)
     step3_fold_features: Optional[list[list[str]]] = None
@@ -1089,6 +1088,7 @@ class H2MLPipeline:
         # Lock to the step-1-winning transform — the selector was fitted under that transform,
         # so the selected features are only guaranteed relevant for it.
         # result.features_reduced is already the correct reduced store (built in step 2).
+        self._ensure_splitter(result, transform_stores)
         transform_name = result.y_transform or ""
         reduced_store = result.features_reduced
         inverse_fn = self._get_inverse_fn(reduced_store)
@@ -1100,14 +1100,6 @@ class H2MLPipeline:
             # Score the selection procedure, not a set chosen on every row: each fold
             # runs on the full features with the subset selected on its training rows.
             cv_store = self._full_store(result, transform_stores)
-            if result.splitter is None:  # not persisted — rebuilt as step 1 built it
-                result.splitter = self._cv._build_splitter(
-                    self.config.task_type,
-                    X=cv_store.X,
-                    y=cv_store.y,
-                    coords=cv_store.coords,
-                    spatial=self.config.spatial_cv,
-                )
             result.step3_fold_features = self._fold_feature_sets(result, cv_store)
             fold_columns = self._fold_columns(cv_store, result.step3_fold_features)
         cv_results = self._cv.run_all(
@@ -1204,6 +1196,7 @@ class H2MLPipeline:
             + f" ({self.config.n_trials} trials)"
         )
 
+        self._ensure_splitter(result, transform_stores)
         store_for_opt = self._resolve_opt_store(result, transform_stores)
         X = store_for_opt.X
         y = store_for_opt.y
@@ -1449,6 +1442,23 @@ class H2MLPipeline:
             return transform_stores[result.y_transform]
         assert result.features is not None
         return result.features
+
+    def _ensure_splitter(self, result: PipelineResult, transform_stores: Optional[dict[str, PipelineData]]) -> None:
+        """
+        Rebuild the splitter for a result saved before it was persisted, on the full
+        store as step 1 does. Built on the reduced store, SPCV would assign other folds
+        than step 1 used, and steps 3 and 4 compare scores fold by fold.
+        """
+        if result.splitter is not None:
+            return
+        store = self._full_store(result, transform_stores)
+        result.splitter = self._cv._build_splitter(
+            self.config.task_type,
+            X=store.X,
+            y=store.y,
+            coords=store.coords,
+            spatial=self.config.spatial_cv,
+        )
 
     @staticmethod
     def _all_flat(result: PipelineResult) -> bool:

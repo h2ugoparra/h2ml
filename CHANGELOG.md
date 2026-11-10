@@ -19,6 +19,18 @@ All notable changes to this project will be documented in this file.
 - Step 2 no longer fails with `OOF SHAP: every fold failed` for estimators with nested
   parameters, such as `BaggingClassifier(estimator=DecisionTreeClassifier(...))`. Fold
   models are now cloned instead of rebuilt from `get_params()`.
+- `run_from_step3()` and `run_step4_only()` on a loaded result with
+  `spatial_cv_method="spcv"` scored on different folds than step 1. The splitter was not
+  saved and was rebuilt on the reduced features, which SPCV's fold assignment depends
+  on, so the default-vs-reduced comparison, `ranking_robustness()` and
+  `prefer_reduced_on_tie` paired unmatched folds. `PipelineResult.save()` now writes the
+  splitter (`splitter.pkl`), and resuming a result saved without one rebuilds it on the
+  full feature set.
+
+### Changed
+
+- `result.splitter` is available after `PipelineResult.load()`, so `build_final_model()`
+  on a loaded spatial result builds the local conformal calibration instead of skipping it.
 
 ## [0.4.1] - 2026-11-05
 
