@@ -196,6 +196,46 @@ class TestRunStudy:
         )
         assert len(study.trials) == 4
 
+    @pytest.mark.parametrize("n_hpo_repeats", [1, 2])
+    def test_no_completed_trial_does_not_raise(self, reg_data, n_hpo_repeats):
+        """Every trial is pruned (non-finite back-transform). The progress callback and
+        the repeat comparison used to raise 'No trials are completed yet'."""
+        X, y = reg_data
+        study = run_study(
+            "RandomForestRegressor",
+            X,
+            y,
+            task="regression",
+            n_trials=2 * n_hpo_repeats,
+            n_splits=2,
+            n_hpo_repeats=n_hpo_repeats,
+            y_true=y,
+            inverse_fn=lambda y_pred: np.full_like(y_pred, np.inf),
+            verbose=True,
+        )
+        assert all(t.state == optuna.trial.TrialState.PRUNED for t in study.trials)
+
+    def test_completed_repeat_wins_over_repeat_without_trials(self, reg_data):
+        X, y = reg_data
+        calls = {"n": 0}
+
+        def inverse_fn(y_pred):
+            calls["n"] += 1
+            return np.full_like(y_pred, np.inf) if calls["n"] == 1 else y_pred
+
+        study = run_study(
+            "RandomForestRegressor",
+            X,
+            y,
+            task="regression",
+            n_trials=2,
+            n_splits=2,
+            n_hpo_repeats=2,
+            y_true=y,
+            inverse_fn=inverse_fn,
+        )
+        assert isinstance(study.best_value, float)
+
     def test_invalid_task_raises_value_error(self, clf_data):
         X, y = clf_data
         with pytest.raises(ValueError, match="task must be"):

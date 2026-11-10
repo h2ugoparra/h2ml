@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- `run_step4_only()` on a result that had already been tuned compared the new tuning
+  with the old tuned score, and tuned on all features even when the reduced stage had
+  won. A rejected second tuning left `best_stage="optimized"` with the first tuning's
+  score but no tuned parameters, so `build_final_model()` deployed untuned defaults. It
+  now starts again from the step-3 winner.
+- Step 4 no longer aborts the run when the first Optuna trial is pruned or fails, or when
+  no trial completes. With no completed trial the untuned parameters are kept and a
+  `[selection]` warning is added to `cv_warnings`.
+
 ## [0.4.1] - 2026-11-05
 
 ### Documentation
