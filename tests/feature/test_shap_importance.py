@@ -589,3 +589,18 @@ class TestOofShapFailedFolds:
         step = make_regressor(AlwaysFails(n_estimators=5))
         with pytest.raises(RuntimeError, match="every fold failed"):
             get_oof_shap_values(step, reg_store, TaskType.REGRESSION, n_splits=3)
+
+
+class TestNestedEstimator:
+    def test_oof_shap_runs_for_estimator_with_nested_params(self, clf_store):
+        """Fold models were rebuilt as cls(**get_params()); deep params such as
+        estimator__max_depth aren't constructor arguments, so every fold failed."""
+        from sklearn.ensemble import BaggingClassifier
+        from sklearn.tree import DecisionTreeClassifier
+
+        bagging = BaggingClassifier(estimator=DecisionTreeClassifier(max_depth=2), n_estimators=3, random_state=0)
+        shap_arr, importance = get_oof_shap_values(
+            make_classifier(bagging), clf_store, TaskType.CLASSIFICATION, n_splits=2
+        )
+        assert shap_arr.shape == (N, len(FEATURE_NAMES))
+        assert set(importance.index) == set(FEATURE_NAMES)

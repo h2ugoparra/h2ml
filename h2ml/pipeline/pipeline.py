@@ -956,21 +956,23 @@ class H2MLPipeline:
         def _run_one(transform_name, store, model):
             import warnings
 
-            warnings.filterwarnings("ignore")
             inv = self._get_inverse_fn(store)
             sf = precomputed_scaled_folds if getattr(model, "requires_scaling", False) else None
-            return transform_name, self._cv.run(
-                model,
-                store.X,
-                store.y,
-                y_true=store.y_true,
-                inverse_fn=inv,
-                coords=store.coords,
-                spatial=self.config.spatial_cv,
-                train_target_fn=get_train_target_fn(store.y_transform),
-                _splitter=splitter,
-                _scaled_folds=sf,
-            )
+            # Scoped: with n_jobs=1 this runs in the caller's process, not a worker
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return transform_name, self._cv.run(
+                    model,
+                    store.X,
+                    store.y,
+                    y_true=store.y_true,
+                    inverse_fn=inv,
+                    coords=store.coords,
+                    spatial=self.config.spatial_cv,
+                    train_target_fn=get_train_target_fn(store.y_transform),
+                    _splitter=splitter,
+                    _scaled_folds=sf,
+                )
 
         raw = cast(
             list[tuple[str, CVResult]],

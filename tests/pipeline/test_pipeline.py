@@ -1809,3 +1809,14 @@ class TestStep4RejectsTunedWithFailedFolds:
         pipeline._select_step4(result, {"n_estimators": 10}, {})
         assert result.best_stage == "reduced"
         assert result.best_params == {}
+
+
+class TestWarningFilters:
+    def test_step1_in_process_leaves_warning_filters_alone(self, clf_store):
+        """With n_jobs=1 step 1 runs in the caller's process; its "ignore" filter must not outlive it."""
+        import warnings
+
+        pipeline = H2MLPipeline(models=_lr_only(), config=_clf_config(n_jobs=1))
+        before = list(warnings.filters)
+        pipeline.run_step1_only(clf_store)
+        assert warnings.filters == before

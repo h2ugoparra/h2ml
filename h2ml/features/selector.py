@@ -168,15 +168,14 @@ class FeatureSelector(BasePreprocessor):
             # Full-dataset SHAP: fit once on all training data, then explain.
             # Slightly faster but introduces mild optimistic bias in step 3 scores
             # because the feature subset is chosen with knowledge of all samples.
+            from sklearn.base import clone
             from sklearn.preprocessing import StandardScaler
 
-            estimator_cls = self.step.estimator.__class__
-            estimator_params = self.step.estimator.get_params()
             X_train = store.X
             if getattr(self.step, "requires_scaling", False):
                 X_train = StandardScaler().fit_transform(X_train)
             y_train = store.y if self.train_target_fn is None else self.train_target_fn(store.y)
-            model = estimator_cls(**estimator_params)
+            model = clone(self.step.estimator)
             model.fit(X_train, y_train)
             self.shap_values_, self.feature_importance_ = get_shap_values(
                 model=model,
