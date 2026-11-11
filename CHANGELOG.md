@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-11
+
 ### Fixed
 
 - `run_step4_only()` on a result that had already been tuned compared the new tuning
