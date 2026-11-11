@@ -806,3 +806,15 @@ class TestBuildFoldModel:
         assert fold_step.estimator is not step.estimator
         assert fold_step.name == "RF"
         assert fold_step.requires_scaling is True
+
+
+class TestWarningFilters:
+    def test_run_all_in_process_leaves_warning_filters_alone(self, classification_data):
+        """With n_jobs=1 the "ignore" filter was installed in the caller's process for good."""
+        import warnings
+
+        X, y = classification_data
+        steps = [make_classifier(RandomForestClassifier(n_estimators=5, random_state=42), name="RF")]
+        before = list(warnings.filters)
+        CrossValidator(n_splits=2).run_all(steps, X, y, n_jobs=1)
+        assert warnings.filters == before

@@ -24,6 +24,7 @@ Layout
     holdout/                — raw holdout PipelineData
     holdout_idx.npy         — holdout row indices into the store passed to run()
     holdout_cv_result.pkl   — one-fold CVResult on the holdout
+    splitter.pkl            — CV splitter built in step 1 (fold and block assignment)
 """
 
 from __future__ import annotations
@@ -50,7 +51,6 @@ from h2ml.evaluation.metrics import rename_deprecated_columns, resolve_metric
 _UNSAVED_FIELDS = frozenset(
     {
         "step3_reduced_stores",  # step-4 cache; rebuilt from selector on demand
-        "splitter",  # rebuilt from coords on demand
         "_final_shap_cache",  # plot cache; not needed across sessions
     }
 )
@@ -98,6 +98,7 @@ _SAVED_FIELDS = frozenset(
         "step3_cv_result",
         "step4_cv_result",
         "holdout_cv_result",
+        "splitter",
     }
 )
 
@@ -199,6 +200,10 @@ def save_result(result, path: str | Path) -> None:
         joblib.dump(result.step4_cv_result, root / "step4_cv_result.pkl")
     if result.holdout_cv_result is not None:
         joblib.dump(result.holdout_cv_result, root / "holdout_cv_result.pkl")
+    # Kept so a resumed run scores on the folds steps 1-3 used: SPCV folds depend on X
+    # and y, and cannot be rebuilt from the reduced store.
+    if result.splitter is not None:
+        joblib.dump(result.splitter, root / "splitter.pkl")
 
     # Guard: warn if PipelineResult has fields that aren't in _SAVED_FIELDS or
     # _UNSAVED_FIELDS — catches new fields added without updating this module.
@@ -259,6 +264,7 @@ def load_result(path: str | Path):
         holdout_store=_load_feature_store(root / "holdout"),
         holdout_idx=np.load(holdout_idx_path) if holdout_idx_path.exists() else None,
         holdout_cv_result=_load_pkl(root / "holdout_cv_result.pkl"),
+        splitter=_load_pkl(root / "splitter.pkl"),
         holdout_strategy=meta.get("holdout_strategy"),
         holdout_refit=meta.get("holdout_refit", "dev"),
         selection_scoring=meta.get("selection_scoring", "fold_mean"),

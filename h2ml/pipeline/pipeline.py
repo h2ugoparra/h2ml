@@ -398,7 +398,6 @@ class PipelineResult:
                               re-applies it when step 4 did not produce best_params.
         metric:            Short selection metric name, e.g. "AUC" or "R2".
         splitter:             Splitter built once in step 1 and reused in steps 3-4.
-                              Not persisted.
         step3_fold_features:  Feature names selected on each step-3 CV fold's training rows
                               (select_features_in_folds=True), indexed like the splitter's
                               folds; None otherwise.
@@ -459,7 +458,7 @@ class PipelineResult:
     class_weight_balanced: bool = False
     # Short metric name used for model selection, e.g. "AUC" or "R2" (from PipelineConfig)
     metric: Optional[str] = None
-    # Splitter built once in step 1 and reused in steps 3 and 4 (not persisted)
+    # Splitter built once in step 1 and reused in steps 3 and 4
     splitter: Any = field(default=None, repr=False, compare=False)
     # Per-fold feature sets from select_features_in_folds (step 3)
     step3_fold_features: Optional[list[list[str]]] = None
@@ -881,6 +880,7 @@ class H2MLPipeline:
         assert result.features is not None  # validated above
         self._resolve_class_weights(result.features.y)
         result.class_weight_balanced = self._class_weight_active
+        self._reset_to_step3_winner(result)
         transform_stores = self._rebuild_transform_stores(result, transform_stores)
         result = self._run_step4(result, transform_stores)
         return self._finish(result)
@@ -955,21 +955,23 @@ class H2MLPipeline:
         def _run_one(transform_name, store, model):
             import warnings
 
-            warnings.filterwarnings("ignore")
             inv = self._get_inverse_fn(store)
             sf = precomputed_scaled_folds if getattr(model, "requires_scaling", False) else None
-            return transform_name, self._cv.run(
-                model,
-                store.X,
-                store.y,
-                y_true=store.y_true,
-                inverse_fn=inv,
-                coords=store.coords,
-                spatial=self.config.spatial_cv,
-                train_target_fn=get_train_target_fn(store.y_transform),
-                _splitter=splitter,
-                _scaled_folds=sf,
-            )
+            # Scoped: with n_jobs=1 this runs in the caller's process, not a worker
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return transform_name, self._cv.run(
+                    model,
+                    store.X,
+                    store.y,
+                    y_true=store.y_true,
+                    inverse_fn=inv,
+                    coords=store.coords,
+                    spatial=self.config.spatial_cv,
+                    train_target_fn=get_train_target_fn(store.y_transform),
+                    _splitter=splitter,
+                    _scaled_folds=sf,
+                )
 
         raw = cast(
             list[tuple[str, CVResult]],
@@ -1086,6 +1088,7 @@ class H2MLPipeline:
         # Lock to the step-1-winning transform — the selector was fitted under that transform,
         # so the selected features are only guaranteed relevant for it.
         # result.features_reduced is already the correct reduced store (built in step 2).
+        self._ensure_splitter(result, transform_stores)
         transform_name = result.y_transform or ""
         reduced_store = result.features_reduced
         inverse_fn = self._get_inverse_fn(reduced_store)
@@ -1097,14 +1100,6 @@ class H2MLPipeline:
             # Score the selection procedure, not a set chosen on every row: each fold
             # runs on the full features with the subset selected on its training rows.
             cv_store = self._full_store(result, transform_stores)
-            if result.splitter is None:  # not persisted — rebuilt as step 1 built it
-                result.splitter = self._cv._build_splitter(
-                    self.config.task_type,
-                    X=cv_store.X,
-                    y=cv_store.y,
-                    coords=cv_store.coords,
-                    spatial=self.config.spatial_cv,
-                )
             result.step3_fold_features = self._fold_feature_sets(result, cv_store)
             fold_columns = self._fold_columns(cv_store, result.step3_fold_features)
         cv_results = self._cv.run_all(
@@ -1201,6 +1196,7 @@ class H2MLPipeline:
             + f" ({self.config.n_trials} trials)"
         )
 
+        self._ensure_splitter(result, transform_stores)
         store_for_opt = self._resolve_opt_store(result, transform_stores)
         X = store_for_opt.X
         y = store_for_opt.y
@@ -1247,6 +1243,16 @@ class H2MLPipeline:
             requires_scaling=best_model.requires_scaling,
             selection_scoring=result.selection_scoring,
         )
+        try:
+            tuned_params = study.best_params
+        except ValueError:  # Optuna raises when every trial was pruned or failed
+            msg = (
+                f"[selection] No Optuna trial completed for {result.best_model_name}, "
+                "so the untuned parameters were kept."
+            )
+            logger.warning(msg)
+            result.cv_warnings.append(msg)
+            return None, fixed_params
 
         # best_params are overrides on top of the winner's own estimator — trials,
         # the final CV (_build_fold_model) and build_final_model all apply them via
@@ -1256,7 +1262,7 @@ class H2MLPipeline:
         # overriding sampled values (see _build_objective), so the final model must
         # match — otherwise a sampled class_weight=None from the search space would
         # silently undo handle_imbalance in the deployed params.
-        merged_params = {**study.best_params, **fixed_params}
+        merged_params = {**tuned_params, **fixed_params}
 
         metadata = self._metadata_with(stage="optimized")
         if result.y_transform:
@@ -1387,6 +1393,28 @@ class H2MLPipeline:
         assert result.features is not None  # validated by the callers
         return self._build_transform_stores(result.features, [result.y_transform])
 
+    def _reset_to_step3_winner(self, result: PipelineResult) -> None:
+        """
+        Undo an earlier step 4 before tuning again: best_stage and the score go back to
+        the step-3 winner's. Otherwise the new tuning would be compared with the old
+        tuned score and run on all features even when the reduced stage won.
+        """
+        if result.best_stage != "optimized":
+            return
+        feature_stage = result.best_feature_stage
+        agg = result.step3_agg_df if feature_stage == "reduced" else result.step1_agg_df
+        if feature_stage is None or agg is None:
+            raise ValueError("Cannot redo step 4: the result does not hold the step-3 selection it was tuned from.")
+        rows = agg[agg["Model"] == result.best_model_name]
+        if result.y_transform and "Y_transform" in rows.columns:
+            rows = rows[rows["Y_transform"] == result.y_transform]
+        if rows.empty:
+            raise ValueError(f"Cannot redo step 4: {result.best_model_name} is not in the '{feature_stage}' results.")
+        row = rows.iloc[0]
+        result.best_stage = feature_stage
+        result.best_model_value = float(row[selection_col(self.config.metric, result.selection_scoring)])
+        result.best_model_std = float(row.get(self.config.metric_col.replace("_Mean", "_Std"), float("nan")))
+
     def _resolve_opt_store(
         self,
         result: PipelineResult,
@@ -1414,6 +1442,23 @@ class H2MLPipeline:
             return transform_stores[result.y_transform]
         assert result.features is not None
         return result.features
+
+    def _ensure_splitter(self, result: PipelineResult, transform_stores: Optional[dict[str, PipelineData]]) -> None:
+        """
+        Rebuild the splitter for a result saved before it was persisted, on the full
+        store as step 1 does. Built on the reduced store, SPCV would assign other folds
+        than step 1 used, and steps 3 and 4 compare scores fold by fold.
+        """
+        if result.splitter is not None:
+            return
+        store = self._full_store(result, transform_stores)
+        result.splitter = self._cv._build_splitter(
+            self.config.task_type,
+            X=store.X,
+            y=store.y,
+            coords=store.coords,
+            spatial=self.config.spatial_cv,
+        )
 
     @staticmethod
     def _all_flat(result: PipelineResult) -> bool:

@@ -471,3 +471,15 @@ class TestMinFeatures:
     def test_invalid_min_features_raises(self, clf_step):
         with pytest.raises((ValueError, TypeError)):
             FeatureSelector(clf_step, TaskType.CLASSIFICATION, min_features=0)
+
+
+class TestNestedEstimator:
+    def test_full_dataset_shap_runs_for_estimator_with_nested_params(self, store):
+        """use_oof=False rebuilt the model as cls(**get_params()), which rejects deep params."""
+        from sklearn.ensemble import BaggingClassifier
+        from sklearn.tree import DecisionTreeClassifier
+
+        bagging = BaggingClassifier(estimator=DecisionTreeClassifier(max_depth=2), n_estimators=3, random_state=0)
+        selector = FeatureSelector(make_classifier(bagging), TaskType.CLASSIFICATION, use_oof=False)
+        selector.fit(store)
+        assert selector.n_selected >= 1

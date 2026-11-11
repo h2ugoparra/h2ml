@@ -229,23 +229,25 @@ class CrossValidator:
         def _run_one(step: PredictorStep) -> CVResult:
             import warnings
 
-            warnings.filterwarnings("ignore")
             params = (best_params or {}).get(step.name)
             sf = precomputed_scaled_folds if getattr(step, "requires_scaling", False) else None
-            return self.run(
-                step,
-                X,
-                y,
-                best_params=params,
-                y_true=y_true,
-                inverse_fn=inverse_fn,
-                coords=coords,
-                spatial=spatial,
-                train_target_fn=train_target_fn,
-                fold_columns=fold_columns,
-                _splitter=prebuilt_splitter,
-                _scaled_folds=sf,
-            )
+            # Scoped: with n_jobs=1 this runs in the caller's process, not a worker
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return self.run(
+                    step,
+                    X,
+                    y,
+                    best_params=params,
+                    y_true=y_true,
+                    inverse_fn=inverse_fn,
+                    coords=coords,
+                    spatial=spatial,
+                    train_target_fn=train_target_fn,
+                    fold_columns=fold_columns,
+                    _splitter=prebuilt_splitter,
+                    _scaled_folds=sf,
+                )
 
         if n_jobs == 1:
             return [_run_one(step) for step in steps]

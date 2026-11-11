@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-11
+
+### Fixed
+
+- `run_step4_only()` on a result that had already been tuned compared the new tuning
+  with the old tuned score, and tuned on all features even when the reduced stage had
+  won. A rejected second tuning left `best_stage="optimized"` with the first tuning's
+  score but no tuned parameters, so `build_final_model()` deployed untuned defaults. It
+  now starts again from the step-3 winner.
+- Step 4 no longer aborts the run when the first Optuna trial is pruned or fails, or when
+  no trial completes. With no completed trial the untuned parameters are kept and a
+  `[selection]` warning is added to `cv_warnings`.
+- A run with `n_jobs=1` no longer silences warnings for the rest of the session. The
+  CV's "ignore" filter was installed in the caller's process and never removed.
+- Step 2 no longer fails with `OOF SHAP: every fold failed` for estimators with nested
+  parameters, such as `BaggingClassifier(estimator=DecisionTreeClassifier(...))`. Fold
+  models are now cloned instead of rebuilt from `get_params()`.
+- `run_from_step3()` and `run_step4_only()` on a loaded result with
+  `spatial_cv_method="spcv"` scored on different folds than step 1. The splitter was not
+  saved and was rebuilt on the reduced features, which SPCV's fold assignment depends
+  on, so the default-vs-reduced comparison, `ranking_robustness()` and
+  `prefer_reduced_on_tie` paired unmatched folds. `PipelineResult.save()` now writes the
+  splitter (`splitter.pkl`), and resuming a result saved without one rebuilds it on the
+  full feature set.
+
+### Changed
+
+- `result.splitter` is available after `PipelineResult.load()`, so `build_final_model()`
+  on a loaded spatial result builds the local conformal calibration instead of skipping it.
+
 ## [0.4.1] - 2026-11-05
 
 ### Documentation

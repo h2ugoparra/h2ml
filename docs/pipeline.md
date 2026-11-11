@@ -15,7 +15,9 @@ Classification candidates are ranked by a confidence-bound score (mean − std/�
 
 Step 4 is skipped when the winning model has no enabled search space: `opt_enabled=False` (LogisticRegression, GaussianNB, KNeighborsClassifier, AdaBoost, Bagging — and their regressor equivalents), or an estimator that is not in the registry at all. `best_params` then holds only fixed overrides (e.g. `class_weight`), usually `{}`.
 
-If step 4 runs but does not improve on the step 3 baseline, `best_stage` stays at `"default"` or `"reduced"` and `best_params` holds only fixed overrides — no HPO benefit was found.
+If step 4 runs but does not improve on the step 3 baseline, `best_stage` stays at `"default"` or `"reduced"` and `best_params` holds only fixed overrides — no HPO benefit was found. The same happens when no Optuna trial completes (every trial pruned or failed), with a `[selection]` entry in `cv_warnings`.
+
+`run_step4_only()` can be called again on a result that step 4 already tuned: it starts over from the step-3 selection, so the new tuning is compared against the untuned baseline, not against the earlier tuned score.
 
 With `holdout_frac > 0`, rows are set aside before step 1, all four steps run on the remaining rows, and the final configuration is scored once on the held-out rows — see [Outer holdout](validation.md#outer-holdout).
 
