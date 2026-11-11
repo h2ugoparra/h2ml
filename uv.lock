@@ -1475,7 +1475,7 @@ viz = [
 
 [[package]]
 name = "h2ml"
-version = "0.4.1"
+version = "0.4.2"
 source = { editable = "." }
 dependencies = [
     { name = "h2mare", extra = ["viz"] },
